@@ -1,5 +1,6 @@
 from ast_nodes import (
     Program,
+    Block,
     PrintStatement,
     Assignment,
     IfStatement,
@@ -22,21 +23,33 @@ class Generator:
                 for stmt in node.statements
             )
 
-        # print(...)
+        # Block
+        elif isinstance(node, Block):
+            return "\n".join(
+                self.generate(stmt)
+                for stmt in node.statements
+            )
+
+        # Print
         elif isinstance(node, PrintStatement):
             return f"print({self.generate(node.value)})"
 
-        # variable assignment
+        # Assignment
         elif isinstance(node, Assignment):
             return f"{node.name} = {self.generate(node.value)}"
 
-        # if statement
+        # If statement
         elif isinstance(node, IfStatement):
             condition = self.generate(node.condition)
-            body = self.generate(node.body)
-            return f"if {condition}:\n    {body}"
 
-        # arithmetic
+            body = "\n".join(
+                "    " + line
+                for line in self.generate(node.body).splitlines()
+            )
+
+            return f"if {condition}:\n{body}"
+
+        # Binary operation
         elif isinstance(node, BinaryOperation):
             return (
                 self.generate(node.left)
@@ -46,19 +59,19 @@ class Generator:
                 + self.generate(node.right)
             )
 
-        # number
+        # Number
         elif isinstance(node, Number):
             return str(node.value)
 
-        # string
+        # String
         elif isinstance(node, String):
             return repr(node.value)
 
-        # identifier
+        # Identifier
         elif isinstance(node, Identifier):
             return node.name
 
-        # boolean
+        # Boolean
         elif isinstance(node, Boolean):
             return "True" if node.value else "False"
 

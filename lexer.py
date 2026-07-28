@@ -1,5 +1,4 @@
 from tokens import Token
-
 KEYWORDS = {
     "اذا": "IF",
     "والا": "ELSE",
@@ -13,151 +12,155 @@ KEYWORDS = {
     "ارجع": "RETURN",
 }
 
-
 class Lexer:
     def __init__(self, text):
         self.text = text
         self.position = 0
 
+    def current(self):
+        if self.position < len(self.text):
+            return self.text[self.position]
+        return None
+
+    def advance(self):
+        self.position += 1
+
     def tokenize(self):
         tokens = []
 
-        while self.position < len(self.text):
-            current = self.text[self.position]
+        while self.current() is not None:
+            current = self.current()
 
             # Skip spaces
             if current.isspace():
-                self.position += 1
+                self.advance()
                 continue
 
             # Numbers
             if current.isdigit():
-                number = ""
-
-                while (
-                    self.position < len(self.text)
-                    and self.text[self.position].isdigit()
-                ):
-                    number += self.text[self.position]
-                    self.position += 1
-
-                tokens.append(Token("NUMBER", int(number)))
+                tokens.append(self.read_number())
                 continue
 
             # Strings
             if current == '"':
-                self.position += 1
-                string = ""
-
-                while (
-                    self.position < len(self.text)
-                    and self.text[self.position] != '"'
-                ):
-                    string += self.text[self.position]
-                    self.position += 1
-
-                self.position += 1
-                tokens.append(Token("STRING", string))
+                tokens.append(self.read_string())
                 continue
-                        # Words (Arabic identifiers and keywords)
+
+            # Words (keywords / identifiers)
             if current.isalpha():
-                word = ""
-
-                while (
-                    self.position < len(self.text)
-                    and (
-                        self.text[self.position].isalpha()
-                        or self.text[self.position].isdigit()
-                        or self.text[self.position] == "_"
-                    )
-                ):
-                    word += self.text[self.position]
-                    self.position += 1
-
-                if word in KEYWORDS:
-                    tokens.append(Token(KEYWORDS[word], word))
-                else:
-                    tokens.append(Token("IDENTIFIER", word))
-
-                continue
-            # Two-character operators
-            if current == ">" and self.position + 1 < len(self.text) and self.text[self.position + 1] == "=":
-                tokens.append(Token("GREATER_EQUAL", ">="))
-                self.position += 2
+                tokens.append(self.read_identifier())
                 continue
 
-            if current == "<" and self.position + 1 < len(self.text) and self.text[self.position + 1] == "=":
-                tokens.append(Token("LESS_EQUAL", "<="))
-                self.position += 2
+            # Operators
+            operator = self.read_operator()
+
+            if operator:
+                tokens.append(operator)
                 continue
 
-            if current == "=" and self.position + 1 < len(self.text) and self.text[self.position + 1] == "=":
-                tokens.append(Token("EQUAL_EQUAL", "=="))
-                self.position += 2
-                continue
-
-            if current == "!" and self.position + 1 < len(self.text) and self.text[self.position + 1] == "=":
-                tokens.append(Token("NOT_EQUAL", "!="))
-                self.position += 2
-                continue
-
-            # Single-character operators
-            if current == ">":
-                tokens.append(Token("GREATER", ">"))
-                self.position += 1
-                continue
-
-            if current == "<":
-                tokens.append(Token("LESS", "<"))
-                self.position += 1
-                continue
-
-            if current == "+":
-                tokens.append(Token("PLUS", "+"))
-                self.position += 1
-                continue
-
-            if current == "-":
-                tokens.append(Token("MINUS", "-"))
-                self.position += 1
-                continue
-
-            if current == "*":
-                tokens.append(Token("MULTIPLY", "*"))
-                self.position += 1
-                continue
-
-            if current == "/":
-                tokens.append(Token("DIVIDE", "/"))
-                self.position += 1
-                continue
-
-            if current == "=":
-                tokens.append(Token("EQUALS", "="))
-                self.position += 1
-                continue
-
-            if current == "(":
-                tokens.append(Token("LPAREN", "("))
-                self.position += 1
-                continue
-
-            if current == ")":
-                tokens.append(Token("RPAREN", ")"))
-                self.position += 1
-                continue
-
-            if current == ":":
-                tokens.append(Token("COLON", ":"))
-                self.position += 1
-                continue
-            # Arabic comma
-            if current == "،":
-                tokens.append(Token("COMMA", "،"))
-                self.position += 1
-                continue
-            # Unknown character
             raise Exception(
-                f"Unknown character: {repr(current)} (Unicode: U+{ord(current):04X}) at position {self.position}"
+                f"Unknown character: {repr(current)} "
+                f"(Unicode: U+{ord(current):04X}) "
+                f"at position {self.position}"
             )
+
         return tokens
+
+    def read_number(self):
+        number = ""
+
+        while self.current() and self.current().isdigit():
+            number += self.current()
+            self.advance()
+
+        return Token("NUMBER", int(number))
+
+    def read_string(self):
+        self.advance()  # Skip opening quote
+
+        string = ""
+
+        while self.current() and self.current() != '"':
+            string += self.current()
+            self.advance()
+
+        self.advance()  # Skip closing quote
+
+        return Token("STRING", string)
+
+    def read_identifier(self):
+        word = ""
+
+        while (
+            self.current()
+            and (
+                self.current().isalpha()
+                or self.current().isdigit()
+                or self.current() == "_"
+            )
+        ):
+            word += self.current()
+            self.advance()
+
+        if word in KEYWORDS:
+            return Token(KEYWORDS[word], word)
+
+        return Token("IDENTIFIER", word)
+
+    def read_operator(self):
+        current = self.current()
+
+        # Two-character operators
+        if (
+            current == ">"
+            and self.position + 1 < len(self.text)
+            and self.text[self.position + 1] == "="
+        ):
+            self.position += 2
+            return Token("GREATER_EQUAL", ">=")
+
+        if (
+            current == "<"
+            and self.position + 1 < len(self.text)
+            and self.text[self.position + 1] == "="
+        ):
+            self.position += 2
+            return Token("LESS_EQUAL", "<=")
+
+        if (
+            current == "="
+            and self.position + 1 < len(self.text)
+            and self.text[self.position + 1] == "="
+        ):
+            self.position += 2
+            return Token("EQUAL_EQUAL", "==")
+
+        if (
+            current == "!"
+            and self.position + 1 < len(self.text)
+            and self.text[self.position + 1] == "="
+        ):
+            self.position += 2
+            return Token("NOT_EQUAL", "!=")
+
+        # Single-character operators
+        operators = {
+            ">": ("GREATER", ">"),
+            "<": ("LESS", "<"),
+            "+": ("PLUS", "+"),
+            "-": ("MINUS", "-"),
+            "*": ("MULTIPLY", "*"),
+            "/": ("DIVIDE", "/"),
+            "=": ("EQUALS", "="),
+            "(": ("LPAREN", "("),
+            ")": ("RPAREN", ")"),
+            ":": ("COLON", ":"),
+            "،": ("COMMA", "،"),
+        }
+
+        if current in operators:
+            token_type, value = operators[current]
+            self.advance()
+            return Token(token_type, value)
+
+        return None
