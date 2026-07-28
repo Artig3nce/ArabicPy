@@ -1,12 +1,13 @@
-from astfrom ast_nodes import (
+from ast_nodes import (
     Program,
     PrintStatement,
     Assignment,
     IfStatement,
+    BinaryOperation,
     Number,
     String,
     Identifier,
-    BinaryOperation,
+    Boolean,
 )
 
 
@@ -43,30 +44,44 @@ class Parser:
 
         if token.type == "TRUE":
             self.advance()
-            return Identifier("True")
+            return Boolean(True)
 
         if token.type == "FALSE":
             self.advance()
-            return Identifier("False")
+            return Boolean(False)
+
+        if token.type == "LPAREN":
+            self.advance()
+            expr = self.parse_expression()
+
+            if self.current() and self.current().type == "RPAREN":
+                self.advance()
+
+            return expr
 
         return None
 
     def parse_expression(self):
         left = self.parse_primary()
 
-        token = self.current()
-
-        if (
-            token is not None
-            and hasattr(token, "value")
-            and token.value in ["+", "-", "*", "/"]
+        while self.current() and self.current().type in (
+            "PLUS",
+            "MINUS",
+            "MULTIPLY",
+            "DIVIDE",
+            "GREATER",
+            "LESS",
+            "GREATER_EQUAL",
+            "LESS_EQUAL",
+            "EQUAL_EQUAL",
+            "NOT_EQUAL",
         ):
-            operator = token.value
+            operator = self.current().value
             self.advance()
 
             right = self.parse_primary()
 
-            return BinaryOperation(left, operator, right)
+            left = BinaryOperation(left, operator, right)
 
         return left
 
@@ -82,7 +97,7 @@ class Parser:
 
             condition = self.parse_expression()
 
-            if self.current() and self.current().value == ":":
+            if self.current() and self.current().type == "COLON":
                 self.advance()
 
             body = self.parse_statement()
@@ -93,8 +108,7 @@ class Parser:
         if (
             token.type == "IDENTIFIER"
             and self.position + 1 < len(self.tokens)
-            and hasattr(self.tokens[self.position + 1], "value")
-            and self.tokens[self.position + 1].value == "="
+            and self.tokens[self.position + 1].type == "EQUALS"
         ):
             name = token.value
 
@@ -109,12 +123,12 @@ class Parser:
         if token.type == "PRINT":
             self.advance()
 
-            if self.current() and self.current().value == "(":
+            if self.current() and self.current().type == "LPAREN":
                 self.advance()
 
             value = self.parse_expression()
 
-            if self.current() and self.current().value == ")":
+            if self.current() and self.current().type == "RPAREN":
                 self.advance()
 
             return PrintStatement(value)

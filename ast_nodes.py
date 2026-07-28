@@ -76,3 +76,70 @@ class IfStatement(Statement):
 
     def __repr__(self):
         return f"IfStatement({self.condition}, {self.body})"
+def parse_statement(self):
+    token = self.current()
+
+    if token is None:
+        return None
+
+    # IF
+    if token.type == "IF":
+        self.advance()          # IF
+
+        condition = self.current()
+        self.advance()          # condition
+
+        self.advance()          # :
+
+        body = self.parse_statement()
+
+        return IfStatement(condition, body)
+
+    # Assignment
+    if (
+        token.type == "IDENTIFIER"
+        and self.position + 1 < len(self.tokens)
+        and self.tokens[self.position + 1] == "="
+    ):
+        name = token.value
+
+        self.advance()
+        self.advance()
+
+        value = self.current()
+        self.advance()
+
+        return Assignment(name, value)
+
+    # Print
+    if token.type == "PRINT":
+        self.advance()
+        self.advance()
+
+        value = self.current()
+        self.advance()
+
+        self.advance()
+
+        return PrintStatement(value)
+
+    return None
+
+class Number:
+    def __init__(self, value):
+        self.value = value
+
+
+class String:
+    def __init__(self, value):
+        self.value = value
+
+
+class Identifier:
+    def __init__(self, name):
+        self.name = name
+
+
+class Boolean:
+    def __init__(self, value):
+        self.value = value
