@@ -1,0 +1,120 @@
+from ast_nodes import Program, PrintStatement, Assignment, IfStatement
+if self.current().type == "IF":
+    self.advance()
+
+    condition = self.current()
+    self.advance()
+
+    self.advance()  # Skip :
+
+    statement = self.parse()
+
+    return IfStatement(condition, statement)
+class Parser:
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.position = 0
+
+    def current(self):
+        if self.position < len(self.tokens):
+            return self.tokens[self.position]
+        return None
+
+    def advance(self):
+        self.position += 1
+
+    def parse_statement(self):
+        token = self.current()
+
+        if token is None:
+            return None
+
+        # Assignment
+        if (
+            token.type == "IDENTIFIER"
+            and self.position + 1 < len(self.tokens)
+            and self.tokens[self.position + 1] == "="
+        ):
+            name = token.value
+
+            self.advance()  # identifier
+            self.advance()  # =
+
+            value = self.current()
+            self.advance()
+
+            return Assignment(name, value)
+
+        # Print
+        if token.type == "PRINT":
+            self.advance()  # PRINT
+            self.advance()  # (
+
+            value = self.current()
+            self.advance()  # value
+
+            self.advance()  # )
+
+            return PrintStatement(value)
+
+        return None
+
+    def parse_statement(self):
+        token = self.current()
+    
+        if token is None:
+            return None
+    
+        # IF
+        if token.type == "IF":
+            self.advance()          # IF
+    
+            condition = self.current()
+            self.advance()          # condition
+    
+            self.advance()          # :
+    
+            body = self.parse_statement()
+    
+            return IfStatement(condition, body)
+    
+        # Assignment
+        if (
+            token.type == "IDENTIFIER"
+            and self.position + 1 < len(self.tokens)
+            and self.tokens[self.position + 1] == "="
+        ):
+            name = token.value
+    
+            self.advance()
+            self.advance()
+    
+            value = self.current()
+            self.advance()
+    
+            return Assignment(name, value)
+    
+        # Print
+        if token.type == "PRINT":
+            self.advance()
+            self.advance()
+    
+            value = self.current()
+            self.advance()
+    
+            self.advance()
+    
+            return PrintStatement(value)
+    
+        return None
+        statements = []
+
+        while self.position < len(self.tokens):
+            statement = self.parse_statement()
+
+            if statement is not None:
+                statements.append(statement)
+            else:
+                self.advance()
+
+             return Program(statements)
