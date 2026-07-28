@@ -52,6 +52,7 @@ class Parser:
 
         if token.type == "LPAREN":
             self.advance()
+
             expr = self.parse_expression()
 
             if self.current() and self.current().type == "RPAREN":
@@ -112,8 +113,8 @@ class Parser:
         ):
             name = token.value
 
-            self.advance()
-            self.advance()
+            self.advance()  # identifier
+            self.advance()  # =
 
             value = self.parse_expression()
 

@@ -74,5 +74,11 @@ class Generator:
         # Boolean
         elif isinstance(node, Boolean):
             return "True" if node.value else "False"
-
+        
+        elif isinstance(node, Block):
+            return "\n".join(
+             self.generate(statement)
+                         for statement in node.statements
+    )
         raise Exception(f"Unknown node: {node}")
+
