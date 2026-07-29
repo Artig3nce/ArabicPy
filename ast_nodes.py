@@ -2,15 +2,16 @@ class Program:
     def __init__(self, statements):
         self.statements = statements
 
+    def __repr__(self):
+        return f"Program({self.statements})"
+
+
 class Block:
     def __init__(self, statements):
         self.statements = statements
 
     def __repr__(self):
         return f"Block({self.statements})"
-class Block:
-    def __init__(self, statements):
-        self.statements = statements
 
 
 class PrintStatement:
@@ -31,12 +32,27 @@ class Assignment:
 
 
 class IfStatement:
-    def __init__(self, condition, body):
+    def __init__(self, condition, then_body, else_body=None):
         self.condition = condition
+        self.then_body = then_body
+        self.else_body = else_body
+
+    def __repr__(self):
+        return (
+            f"IfStatement("
+            f"{self.condition}, "
+            f"{self.then_body}, "
+            f"{self.else_body})"
+        )
+
+
+class RepeatStatement:
+    def __init__(self, count, body):
+        self.count = count
         self.body = body
 
     def __repr__(self):
-        return f"IfStatement({self.condition}, {self.body})"
+        return f"RepeatStatement({self.count}, {self.body})"
 
 
 class BinaryOperation:
@@ -46,7 +62,12 @@ class BinaryOperation:
         self.right = right
 
     def __repr__(self):
-        return f"BinaryOperation({self.left}, {self.operator}, {self.right})"
+        return (
+            f"BinaryOperation("
+            f"{self.left}, "
+            f"'{self.operator}', "
+            f"{self.right})"
+        )
 
 
 class Number:
@@ -79,3 +100,47 @@ class Boolean:
 
     def __repr__(self):
         return f"Boolean({self.value})"
+
+
+class WhileStatement:
+    def __init__(self, condition, body):
+        self.condition = condition
+        self.body = body
+
+    def __repr__(self):
+        return f"WhileStatement({self.condition}, {self.body})"   
+
+class FunctionDefinition:
+    def __init__(self, name, parameters, body):
+        self.name = name
+        self.parameters = parameters
+        self.body = body
+
+    def __repr__(self):
+        return (
+            f"FunctionDefinition("
+            f"{self.name}, "
+            f"{self.parameters}, "
+            f"{self.body})"
+        )
+
+
+class ReturnStatement:
+    def __init__(self, value):
+        self.value = value
+
+    def __repr__(self):
+        return f"ReturnStatement({self.value})"
+
+
+class FunctionCall:
+    def __init__(self, name, arguments):
+        self.name = name
+        self.arguments = arguments
+
+    def __repr__(self):
+        return (
+            f"FunctionCall("
+            f"{self.name}, "
+            f"{self.arguments})"
+        )    

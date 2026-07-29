@@ -1,4 +1,5 @@
 from tokens import Token
+
 KEYWORDS = {
     "اذا": "IF",
     "والا": "ELSE",
@@ -8,9 +9,12 @@ KEYWORDS = {
     "في": "IN",
     "صح": "TRUE",
     "خطأ": "FALSE",
-    "دالة": "DEF",
+    "كرر": "REPEAT",
+    "مرات": "TIMES",
+    "دالة": "FUNCTION",
     "ارجع": "RETURN",
 }
+
 
 class Lexer:
     def __init__(self, text):
@@ -31,8 +35,19 @@ class Lexer:
         while self.current() is not None:
             current = self.current()
 
-            # Skip spaces
-            if current.isspace():
+            # Spaces
+            if current == " ":
+                self.advance()
+                continue
+
+            # Tabs
+            if current == "\t":
+                self.advance()
+                continue
+
+            # New line
+            if current == "\n":
+                tokens.append(Token("NEWLINE", "\\n"))
                 self.advance()
                 continue
 
@@ -164,3 +179,4 @@ class Lexer:
             return Token(token_type, value)
 
         return None
+        return tokens

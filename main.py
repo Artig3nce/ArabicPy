@@ -10,8 +10,13 @@ tokens = lexer.tokenize()
 
 parser = Parser(tokens)
 tree = parser.parse()
+print(tree)
 
 generator = Generator()
 python_code = generator.generate(tree)
 
+print(python_code)
 exec(python_code)
+
+for token in tokens:
+    print(token)
