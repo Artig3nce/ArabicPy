@@ -5,26 +5,32 @@ KEYWORDS = {
     "والا": "ELSE",
     "اطبع": "PRINT",
     "بينما": "WHILE",
+    "كرر": "REPEAT",
+    "مرات": "TIMES",
     "لكل": "FOR",
     "في": "IN",
     "صح": "TRUE",
     "خطأ": "FALSE",
-    "كرر": "REPEAT",
-    "مرات": "TIMES",
     "دالة": "FUNCTION",
     "ارجع": "RETURN",
 }
 
 
 class Lexer:
+
     def __init__(self, text):
         self.text = text
         self.position = 0
 
     def current(self):
-        if self.position < len(self.text):
-            return self.text[self.position]
-        return None
+        if self.position >= len(self.text):
+            return None
+        return self.text[self.position]
+
+    def peek(self):
+        if self.position + 1 >= len(self.text):
+            return None
+        return self.text[self.position + 1]
 
     def advance(self):
         self.position += 1
@@ -33,15 +39,11 @@ class Lexer:
         tokens = []
 
         while self.current() is not None:
+
             current = self.current()
 
-            # Spaces
-            if current == " ":
-                self.advance()
-                continue
-
-            # Tabs
-            if current == "\t":
+            # Ignore spaces
+            if current in " \t\r":
                 self.advance()
                 continue
 
@@ -51,22 +53,22 @@ class Lexer:
                 self.advance()
                 continue
 
-            # Numbers
+            # Number
             if current.isdigit():
                 tokens.append(self.read_number())
                 continue
 
-            # Strings
+            # String
             if current == '"':
                 tokens.append(self.read_string())
                 continue
 
-            # Words (keywords / identifiers)
-            if current.isalpha():
+            # Identifier / Keyword
+            if current.isalpha() or current == "_":
                 tokens.append(self.read_identifier())
                 continue
 
-            # Operators
+            # Operator
             operator = self.read_operator()
 
             if operator:
@@ -75,11 +77,11 @@ class Lexer:
 
             raise Exception(
                 f"Unknown character: {repr(current)} "
-                f"(Unicode: U+{ord(current):04X}) "
-                f"at position {self.position}"
+                f"(U+{ord(current):04X})"
             )
 
         return tokens
+
 
     def read_number(self):
         number = ""
@@ -90,28 +92,33 @@ class Lexer:
 
         return Token("NUMBER", int(number))
 
+
     def read_string(self):
         self.advance()  # Skip opening quote
 
         string = ""
 
-        while self.current() and self.current() != '"':
+        while self.current() is not None and self.current() != '"':
             string += self.current()
             self.advance()
+
+        if self.current() != '"':
+            raise Exception("Unterminated string")
 
         self.advance()  # Skip closing quote
 
         return Token("STRING", string)
 
+
     def read_identifier(self):
         word = ""
 
         while (
-            self.current()
+            self.current() is not None
             and (
-                self.current().isalpha()
-                or self.current().isdigit()
+                self.current().isalnum()
                 or self.current() == "_"
+                or self.current().isalpha()
             )
         ):
             word += self.current()
@@ -122,43 +129,31 @@ class Lexer:
 
         return Token("IDENTIFIER", word)
 
+
     def read_operator(self):
         current = self.current()
 
         # Two-character operators
-        if (
-            current == ">"
-            and self.position + 1 < len(self.text)
-            and self.text[self.position + 1] == "="
-        ):
-            self.position += 2
+        if current == ">" and self.peek() == "=":
+            self.advance()
+            self.advance()
             return Token("GREATER_EQUAL", ">=")
 
-        if (
-            current == "<"
-            and self.position + 1 < len(self.text)
-            and self.text[self.position + 1] == "="
-        ):
-            self.position += 2
+        if current == "<" and self.peek() == "=":
+            self.advance()
+            self.advance()
             return Token("LESS_EQUAL", "<=")
 
-        if (
-            current == "="
-            and self.position + 1 < len(self.text)
-            and self.text[self.position + 1] == "="
-        ):
-            self.position += 2
+        if current == "=" and self.peek() == "=":
+            self.advance()
+            self.advance()
             return Token("EQUAL_EQUAL", "==")
 
-        if (
-            current == "!"
-            and self.position + 1 < len(self.text)
-            and self.text[self.position + 1] == "="
-        ):
-            self.position += 2
+        if current == "!" and self.peek() == "=":
+            self.advance()
+            self.advance()
             return Token("NOT_EQUAL", "!=")
 
-        # Single-character operators
         operators = {
             ">": ("GREATER", ">"),
             "<": ("LESS", "<"),
@@ -170,6 +165,7 @@ class Lexer:
             "(": ("LPAREN", "("),
             ")": ("RPAREN", ")"),
             ":": ("COLON", ":"),
+            ",": ("COMMA", ","),
             "،": ("COMMA", "،"),
         }
 
@@ -179,4 +175,3 @@ class Lexer:
             return Token(token_type, value)
 
         return None
-        return tokens
