@@ -1,3 +1,6 @@
+import token
+
+from .ast_nodes import Variable
 from .ast_nodes import *
 from .tokens import *
 (
@@ -13,25 +16,28 @@ from .tokens import *
     BinaryOperation,
     Number,
     String,
-    Identifier,
     Boolean,
     List,  
     ForStatement,
+    Variable,
 )
+
 
 
 class Parser:
 
     def __init__(self, tokens):
+
         self.tokens = tokens
         self.position = 0
 
 
-    # ==========================
+    # =====================
     # Helpers
-    # ==========================
+    # =====================
 
     def current(self):
+
         if self.position >= len(self.tokens):
             return None
 
@@ -39,6 +45,7 @@ class Parser:
 
 
     def peek(self):
+
         if self.position + 1 >= len(self.tokens):
             return None
 
@@ -46,6 +53,7 @@ class Parser:
 
 
     def advance(self):
+
         self.position += 1
 
 
@@ -67,19 +75,21 @@ class Parser:
 
         return token
 
-        # ==========================
-    # Primary Expressions
-    # ==========================
+
+
+    # =====================
+    # Expressions
+    # =====================
 
     def parse_primary(self):
 
         token = self.current()
 
+
         if token is None:
             raise Exception("Unexpected EOF")
 
 
-        # Number
         if token.type == "NUMBER":
 
             self.advance()
@@ -87,7 +97,7 @@ class Parser:
             return Number(token.value)
 
 
-        # String
+
         if token.type == "STRING":
 
             self.advance()
@@ -95,12 +105,13 @@ class Parser:
             return String(token.value)
 
 
-        # Boolean
+
         if token.type == "TRUE":
 
             self.advance()
 
             return Boolean(True)
+
 
 
         if token.type == "FALSE":
@@ -110,7 +121,7 @@ class Parser:
             return Boolean(False)
 
 
-        # Identifier / Function Call
+
         if token.type == "IDENTIFIER":
 
             name = token.value
@@ -118,37 +129,36 @@ class Parser:
             self.advance()
 
 
-            # Function call
+            # function call
+
             if (
-                self.current() is not None
+                self.current()
                 and self.current().type == "LPAREN"
             ):
 
                 self.advance()
 
-                arguments = []
+                args = []
 
 
-                if (
-                    self.current() is not None
+                while (
+                    self.current()
                     and self.current().type != "RPAREN"
                 ):
 
-                    while True:
-
-                        arguments.append(
-                            self.parse_expression()
-                        )
+                    args.append(
+                        self.parse_expression()
+                    )
 
 
-                        if (
-                            self.current() is not None
-                            and self.current().type == "COMMA"
-                        ):
-                            self.advance()
+                    if (
+                        self.current()
+                        and self.current().type == "COMMA"
+                    ):
+                        self.advance()
 
-                        else:
-                            break
+                    else:
+                        break
 
 
                 self.expect("RPAREN")
@@ -156,93 +166,66 @@ class Parser:
 
                 return FunctionCall(
                     name,
-                    arguments
+                    args
                 )
 
 
-            return Identifier(name)
+            return Variable(name)
 
 
 
-        # Parentheses
         if token.type == "LPAREN":
 
             self.advance()
 
-            expression = self.parse_expression()
+            expr = self.parse_expression()
 
             self.expect("RPAREN")
 
-            return expression
-        # List
+            return expr
+
+
+
         if token.type == "LBRACKET":
 
             self.advance()
 
             elements = []
 
-            if (
-                self.current() is not None
+
+            while (
+                self.current()
                 and self.current().type != "RBRACKET"
             ):
 
-                while True:
+                elements.append(
+                    self.parse_expression()
+                )
 
-                    elements.append(
-                        self.parse_expression()
-                    )
 
-                    if (
-                        self.current() is not None
-                        and self.current().type == "COMMA"
-                    ):
-                        self.advance()
+                if (
+                    self.current()
+                    and self.current().type == "COMMA"
+                ):
 
-                    else:
-                        break
+                    self.advance()
+
+                else:
+                    break
 
 
             self.expect("RBRACKET")
 
-            return List(elements)
-        # List
-        if token.type == "LBRACKET":
-
-            self.advance()
-
-            elements = []
-
-            if (
-                self.current() is not None
-                and self.current().type != "RBRACKET"
-            ):
-
-                while True:
-
-                    elements.append(
-                        self.parse_expression()
-                    )
-
-                    if (
-                        self.current() is not None
-                        and self.current().type == "COMMA"
-                    ):
-                        self.advance()
-                    else:
-                        break
-
-            self.expect("RBRACKET")
 
             return List(elements)
+
+
+
         raise Exception(
-            f"Unexpected token: {token.type}"
+            f"Unexpected token {token.type}"
         )
 
 
-
-    # ==========================
-    # Multiplication / Division
-    # ==========================
 
     def parse_factor(self):
 
@@ -250,10 +233,11 @@ class Parser:
 
 
         while (
-            self.current() is not None
-            and self.current().type in (
+            self.current()
+            and self.current().type in
+            (
                 "MULTIPLY",
-                "DIVIDE",
+                "DIVIDE"
             )
         ):
 
@@ -276,20 +260,17 @@ class Parser:
 
 
 
-    # ==========================
-    # Addition / Subtraction
-    # ==========================
-
     def parse_term(self):
 
         left = self.parse_factor()
 
 
         while (
-            self.current() is not None
-            and self.current().type in (
+            self.current()
+            and self.current().type in
+            (
                 "PLUS",
-                "MINUS",
+                "MINUS"
             )
         ):
 
@@ -312,283 +293,48 @@ class Parser:
 
 
 
-    # ==========================
-    # Comparisons
-    # ==========================
-
-    def parse_comparison(self):
-
-        left = self.parse_term()
-
-
-        while (
-            self.current() is not None
-            and self.current().type in (
-                "GREATER",
-                "LESS",
-                "GREATER_EQUAL",
-                "LESS_EQUAL",
-                "EQUAL_EQUAL",
-                "NOT_EQUAL",
-            )
-        ):
-
-            operator = self.current().value
-
-            self.advance()
-
-
-            right = self.parse_term()
-
-
-            left = BinaryOperation(
-                left,
-                operator,
-                right
-            )
-
-
-        return left
-
-
-
-    # ==========================
-    # Expression
-    # ==========================
-
     def parse_expression(self):
 
-        return self.parse_comparison()
-
-        # ==========================
-    # Block
-    # ==========================
-
-    def parse_block(self):
-
-        self.expect("NEWLINE")
-
-        self.expect("INDENT")
-
-
-        statements = []
-
-
-        while (
-            self.current() is not None
-            and self.current().type != "DEDENT"
-        ):
-
-            if self.current().type == "NEWLINE":
-                self.advance()
-                continue
-
-
-            statement = self.parse_statement()
-
-
-            if statement is not None:
-                statements.append(statement)
+        return self.parse_term()
 
 
 
-        self.expect("DEDENT")
-
-
-        return statements
-
-
-
-    # ==========================
-    # Statement
-    # ==========================
+    # =====================
+    # Statements
+    # =====================
 
     def parse_statement(self):
 
         token = self.current()
 
 
-        # Skip empty lines
-         # --------------------------
-        # While
-        # --------------------------
-
-        if token.type == "WHILE":
-
-            self.advance()
-
-            condition = self.parse_expression()
-
-            self.expect("COLON")
-
-            body = self.parse_block()
-
-
-            return WhileStatement(
-                condition,
-                body
-            )
-        
         if token is None:
             return None
-        # --------------------------
-        # Repeat
-        # --------------------------
-
-        if token.type == "REPEAT":
-
-            self.advance()
-
-            count = self.parse_expression()
-
-            self.expect("TIMES")
-
-            self.expect("COLON")
-
-            body = self.parse_block()
-
-
-            return RepeatStatement(
-                count,
-                body
-            )
-        # --------------------------
-        # For
-        # --------------------------
-
-        if token.type == "FOR":
-
-            self.advance()
-
-            variable = self.expect("IDENTIFIER").value
-
-            self.expect("IN")
-
-            iterable = self.parse_expression()
-
-            self.expect("COLON")
-
-            body = self.parse_block()
-
-
-            return ForStatement(
-                variable,
-                iterable,
-                body
-            )
-
-        # --------------------------
-        # Function
-        # --------------------------
-
-        if token.type == "FUNCTION":
-
-            self.advance()
-
-
-            name = self.expect(
-                "IDENTIFIER"
-            ).value
-
-
-            self.expect("LPAREN")
-
-
-            parameters = []
-
-
-            if (
-                self.current() is not None
-                and self.current().type != "RPAREN"
-            ):
-
-                while True:
-
-                    parameters.append(
-                        self.expect(
-                            "IDENTIFIER"
-                        ).value
-                    )
-
-
-                    if (
-                        self.current() is not None
-                        and self.current().type == "COMMA"
-                    ):
-
-                        self.advance()
-
-                    else:
-                        break
 
 
 
-            self.expect("RPAREN")
-
-
-            self.expect("COLON")
-
-
-            body = self.parse_block()
-
-
-            return FunctionDefinition(
-                name,
-                parameters,
-                body
-            )
-
-
-
-        # --------------------------
-        # Return
-        # --------------------------
-
-        if token.type == "RETURN":
-
-            self.advance()
-
-
-            value = self.parse_expression()
-
-
-            return ReturnStatement(
-                value
-            )
-
-
-
-        # --------------------------
-        # Print
-        # --------------------------
+        # print
 
         if token.type == "PRINT":
 
             self.advance()
 
-
             self.expect("LPAREN")
 
-
             value = self.parse_expression()
-
 
             self.expect("RPAREN")
 
 
-            return PrintStatement(
-                value
-            )
+            return PrintStatement(value)
 
 
 
-        # --------------------------
-        # Assignment
-        # --------------------------
+        # assignment
 
         if (
             token.type == "IDENTIFIER"
-            and self.peek() is not None
+            and self.peek()
             and self.peek().type == "EQUALS"
         ):
 
@@ -596,7 +342,6 @@ class Parser:
 
 
             self.advance()
-
             self.advance()
 
 
@@ -610,113 +355,23 @@ class Parser:
 
 
 
-        # --------------------------
-        # --------------------------
-        # If
-        # --------------------------
+        # normal expression
 
-        if token.type == "IF":
-
-            self.advance()
-
-            condition = self.parse_expression()
-
-            self.expect("COLON")
-
-            body = self.parse_block()
-            print("AFTER IF BLOCK:", self.current())
-
-            else_body = None
-
-
-            if (
-                self.current() is not None
-                and self.current().type == "ELSE"
-            ):
-
-                self.advance()
-
-                self.expect("COLON")
-
-                else_body = self.parse_block()
-
-
-            return IfStatement(
-                condition,
-                body,
-                else_body
-            )
-
-        # --------------------------
-        # While
-        # --------------------------
-
-        if token.type == "WHILE":
-
-            self.advance()
-
-
-            condition = self.parse_expression()
-
-
-            self.expect("COLON")
-
-
-            body = self.parse_block()
-
-
-            return WhileStatement(
-                condition,
-                body
-            )
+        return self.parse_expression()
 
 
 
-        # --------------------------
-        # Repeat
-        # --------------------------
-
-        if token.type == "REPEAT":
-
-            self.advance()
-
-
-            count = self.parse_expression()
-
-
-            self.expect("TIMES")
-
-
-            self.expect("COLON")
-
-
-            body = self.parse_block()
-
-
-            return RepeatStatement(
-                count,
-                body
-            )
-
-
-
-        raise Exception(
-            f"Unexpected token: {token.type}"
-        )
-
-        # ==========================
+    # =====================
     # Program
-    # ==========================
+    # =====================
 
     def parse(self):
 
         statements = []
 
 
-        while self.current() is not None:
+        while self.current():
 
-
-            # Skip empty lines
             if self.current().type == "NEWLINE":
 
                 self.advance()
@@ -724,17 +379,12 @@ class Parser:
                 continue
 
 
-
             statement = self.parse_statement()
 
 
-
-            if statement is not None:
+            if statement:
 
                 statements.append(statement)
 
 
-
-        return Program(
-            statements
-        )
+        return Program(statements)

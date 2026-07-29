@@ -14,3 +14,4 @@ KEYWORDS = {
     "نوع": "TYPE",
     "رقم": "NUMBER_CAST",
 }
+

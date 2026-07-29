@@ -1,4 +1,5 @@
 class Program:
+
     def __init__(self, statements):
         self.statements = statements
 
@@ -6,7 +7,9 @@ class Program:
         return f"Program({self.statements})"
 
 
+
 class Block:
+
     def __init__(self, statements):
         self.statements = statements
 
@@ -14,7 +17,9 @@ class Block:
         return f"Block({self.statements})"
 
 
+
 class PrintStatement:
+
     def __init__(self, value):
         self.value = value
 
@@ -22,7 +27,9 @@ class PrintStatement:
         return f"PrintStatement({self.value})"
 
 
+
 class Assignment:
+
     def __init__(self, name, value):
         self.name = name
         self.value = value
@@ -31,34 +38,19 @@ class Assignment:
         return f"Assignment({self.name}, {self.value})"
 
 
-class IfStatement:
 
-    def __init__(self, condition, then_body, else_body=None):
+class Variable:
 
-        self.condition = condition
-        self.then_body = then_body
-        self.else_body = else_body
-
+    def __init__(self, name):
+        self.name = name
 
     def __repr__(self):
+        return f"Variable({self.name})"
 
-        return (
-            f"IfStatement("
-            f"{self.condition}, "
-            f"{self.then_body}, "
-            f"{self.else_body})"
-        )
-
-class RepeatStatement:
-    def __init__(self, count, body):
-        self.count = count
-        self.body = body
-
-    def __repr__(self):
-        return f"RepeatStatement({self.count}, {self.body})"
 
 
 class BinaryOperation:
+
     def __init__(self, left, operator, right):
         self.left = left
         self.operator = operator
@@ -68,12 +60,14 @@ class BinaryOperation:
         return (
             f"BinaryOperation("
             f"{self.left}, "
-            f"'{self.operator}', "
+            f"{self.operator}, "
             f"{self.right})"
         )
 
 
+
 class Number:
+
     def __init__(self, value):
         self.value = value
 
@@ -81,7 +75,9 @@ class Number:
         return f"Number({self.value})"
 
 
+
 class String:
+
     def __init__(self, value):
         self.value = value
 
@@ -89,15 +85,9 @@ class String:
         return f"String({self.value})"
 
 
-class Identifier:
-    def __init__(self, name):
-        self.name = name
-
-    def __repr__(self):
-        return f"Identifier({self.name})"
-
 
 class Boolean:
+
     def __init__(self, value):
         self.value = value
 
@@ -105,15 +95,75 @@ class Boolean:
         return f"Boolean({self.value})"
 
 
+
+class List:
+
+    def __init__(self, elements):
+        self.elements = elements
+
+    def __repr__(self):
+        return f"List({self.elements})"
+
+
+
+class IfStatement:
+
+    def __init__(self, condition, then_body, else_body=None):
+        self.condition = condition
+        self.then_body = then_body
+        self.else_body = else_body
+
+    def __repr__(self):
+        return (
+            f"IfStatement("
+            f"{self.condition}, "
+            f"{self.then_body}, "
+            f"{self.else_body})"
+        )
+
+
+
 class WhileStatement:
+
     def __init__(self, condition, body):
         self.condition = condition
         self.body = body
 
     def __repr__(self):
-        return f"WhileStatement({self.condition}, {self.body})"   
+        return f"WhileStatement({self.condition}, {self.body})"
+
+
+
+class RepeatStatement:
+
+    def __init__(self, count, body):
+        self.count = count
+        self.body = body
+
+    def __repr__(self):
+        return f"RepeatStatement({self.count}, {self.body})"
+
+
+
+class ForStatement:
+
+    def __init__(self, variable, iterable, body):
+        self.variable = variable
+        self.iterable = iterable
+        self.body = body
+
+    def __repr__(self):
+        return (
+            f"ForStatement("
+            f"{self.variable}, "
+            f"{self.iterable}, "
+            f"{self.body})"
+        )
+
+
 
 class FunctionDefinition:
+
     def __init__(self, name, parameters, body):
         self.name = name
         self.parameters = parameters
@@ -128,15 +178,9 @@ class FunctionDefinition:
         )
 
 
-class ReturnStatement:
-    def __init__(self, value):
-        self.value = value
-
-    def __repr__(self):
-        return f"ReturnStatement({self.value})"
-
 
 class FunctionCall:
+
     def __init__(self, name, arguments):
         self.name = name
         self.arguments = arguments
@@ -146,44 +190,14 @@ class FunctionCall:
             f"FunctionCall("
             f"{self.name}, "
             f"{self.arguments})"
-        )    
-
-
-class IfStatement:
-
-    def __init__(self, condition, then_body, else_body=None):
-        self.condition = condition
-        self.then_body = then_body
-        self.else_body = else_body
-
-
-    def __repr__(self):
-        return (
-            f"IfStatement("
-            f"{self.condition}, "
-            f"{self.then_body}, "
-            f"{self.else_body})"
         )
 
-class List:
-    def __init__(self, elements):
-        self.elements = elements
+
+
+class ReturnStatement:
+
+    def __init__(self, value):
+        self.value = value
 
     def __repr__(self):
-        return f"List({self.elements})"    
-
-class ForStatement:
-
-    def __init__(self, variable, iterable, body):
-        self.variable = variable
-        self.iterable = iterable
-        self.body = body
-
-
-    def __repr__(self):
-        return (
-            f"ForStatement("
-            f"{self.variable}, "
-            f"{self.iterable}, "
-            f"{self.body})"
-        )    
+        return f"ReturnStatement({self.value})"
