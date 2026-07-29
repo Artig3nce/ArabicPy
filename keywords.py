@@ -9,5 +9,8 @@ KEYWORDS = {
     "خطأ": "False",
     "دالة": "def",
     "اطبع": "print",
-     "ارجع": "return",
+    "ارجع": "return",
+    "ادخل": "INPUT",
+    "نوع": "TYPE",
+    "رقم": "NUMBER_CAST",
 }

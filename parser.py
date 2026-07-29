@@ -13,6 +13,8 @@ from ast_nodes import (
     String,
     Identifier,
     Boolean,
+    List,  
+    ForStatement,
 )
 
 
@@ -170,8 +172,66 @@ class Parser:
             self.expect("RPAREN")
 
             return expression
+        # List
+        if token.type == "LBRACKET":
+
+            self.advance()
+
+            elements = []
+
+            if (
+                self.current() is not None
+                and self.current().type != "RBRACKET"
+            ):
+
+                while True:
+
+                    elements.append(
+                        self.parse_expression()
+                    )
+
+                    if (
+                        self.current() is not None
+                        and self.current().type == "COMMA"
+                    ):
+                        self.advance()
+
+                    else:
+                        break
 
 
+            self.expect("RBRACKET")
+
+            return List(elements)
+        # List
+        if token.type == "LBRACKET":
+
+            self.advance()
+
+            elements = []
+
+            if (
+                self.current() is not None
+                and self.current().type != "RBRACKET"
+            ):
+
+                while True:
+
+                    elements.append(
+                        self.parse_expression()
+                    )
+
+                    if (
+                        self.current() is not None
+                        and self.current().type == "COMMA"
+                    ):
+                        self.advance()
+                    else:
+                        break
+
+            self.expect("RBRACKET")
+
+            return List(elements)
         raise Exception(
             f"Unexpected token: {token.type}"
         )
@@ -347,21 +407,73 @@ class Parser:
 
 
         # Skip empty lines
-        while (
-            token is not None
-            and token.type == "NEWLINE"
-        ):
+         # --------------------------
+        # While
+        # --------------------------
+
+        if token.type == "WHILE":
 
             self.advance()
 
-            token = self.current()
+            condition = self.parse_expression()
+
+            self.expect("COLON")
+
+            body = self.parse_block()
 
 
-
+            return WhileStatement(
+                condition,
+                body
+            )
+        
         if token is None:
             return None
+        # --------------------------
+        # Repeat
+        # --------------------------
+
+        if token.type == "REPEAT":
+
+            self.advance()
+
+            count = self.parse_expression()
+
+            self.expect("TIMES")
+
+            self.expect("COLON")
+
+            body = self.parse_block()
 
 
+            return RepeatStatement(
+                count,
+                body
+            )
+        # --------------------------
+        # For
+        # --------------------------
+
+        if token.type == "FOR":
+
+            self.advance()
+
+            variable = self.expect("IDENTIFIER").value
+
+            self.expect("IN")
+
+            iterable = self.parse_expression()
+
+            self.expect("COLON")
+
+            body = self.parse_block()
+
+
+            return ForStatement(
+                variable,
+                iterable,
+                body
+            )
 
         # --------------------------
         # Function
@@ -497,6 +609,7 @@ class Parser:
 
 
         # --------------------------
+        # --------------------------
         # If
         # --------------------------
 
@@ -504,22 +617,33 @@ class Parser:
 
             self.advance()
 
-
             condition = self.parse_expression()
-
 
             self.expect("COLON")
 
-
             body = self.parse_block()
+            print("AFTER IF BLOCK:", self.current())
+
+            else_body = None
+
+
+            if (
+                self.current() is not None
+                and self.current().type == "ELSE"
+            ):
+
+                self.advance()
+
+                self.expect("COLON")
+
+                else_body = self.parse_block()
 
 
             return IfStatement(
                 condition,
-                body
+                body,
+                else_body
             )
-
-
 
         # --------------------------
         # While

@@ -1,5 +1,6 @@
 from tokens import Token
 
+
 KEYWORDS = {
     "اذا": "IF",
     "والا": "ELSE",
@@ -34,6 +35,8 @@ class Lexer:
 
     def advance(self):
         self.position += 1
+
+
     def tokenize(self):
         tokens = []
 
@@ -42,18 +45,13 @@ class Lexer:
 
         while self.current() is not None:
 
-            # -------------------------
-            # Beginning of a line
-            # -------------------------
             if start_of_line:
-
                 spaces = 0
 
                 while self.current() == " ":
                     spaces += 1
                     self.advance()
 
-                # Ignore blank lines
                 if self.current() == "\n":
                     tokens.append(Token("NEWLINE", "\\n"))
                     self.advance()
@@ -77,99 +75,120 @@ class Lexer:
 
                 start_of_line = False
 
+
             current = self.current()
 
-            if current is None:
-                break
 
-            # -------------------------
-            # Ignore spaces inside a line
-            # -------------------------
-            if current in " \t\r":
-                self.advance()
+            # Comment
+            if current == "#":
+
+                while (
+                    self.current() is not None
+                    and self.current() != "\n"
+                ):
+                    self.advance()
+
                 continue
 
-            # -------------------------
+
             # Newline
-            # -------------------------
             if current == "\n":
+
                 tokens.append(Token("NEWLINE", "\\n"))
                 self.advance()
                 start_of_line = True
                 continue
 
-            # -------------------------
+
+            # Ignore spaces
+            if current in " \t\r":
+                self.advance()
+                continue
+
+
             # Number
-            # -------------------------
             if current.isdigit():
+
                 tokens.append(self.read_number())
                 continue
 
-            # -------------------------
+
             # String
-            # -------------------------
             if current == '"':
+
                 tokens.append(self.read_string())
                 continue
 
-            # -------------------------
+
             # Identifier / Keyword
-            # -------------------------
             if current.isalpha() or current == "_":
+
                 tokens.append(self.read_identifier())
                 continue
 
-            # -------------------------
+
             # Operator
-            # -------------------------
             operator = self.read_operator()
 
             if operator:
+
                 tokens.append(operator)
                 continue
+
 
             raise Exception(
                 f"Unknown character: {repr(current)} "
                 f"(U+{ord(current):04X})"
             )
 
-        # -------------------------
-        # Close remaining blocks
-        # -------------------------
+
         while len(indent_stack) > 1:
+
             indent_stack.pop()
             tokens.append(Token("DEDENT", 0))
 
+
         return tokens
 
+
+
     def read_number(self):
+
         number = ""
 
         while self.current() and self.current().isdigit():
+
             number += self.current()
             self.advance()
 
         return Token("NUMBER", int(number))
 
 
+
     def read_string(self):
-        self.advance()  # Skip opening quote
+
+        self.advance()
 
         string = ""
 
         while self.current() is not None and self.current() != '"':
+
             string += self.current()
             self.advance()
+
 
         if self.current() != '"':
             raise Exception("Unterminated string")
 
-        self.advance()  # Skip closing quote
+
+        self.advance()
 
         return Token("STRING", string)
 
 
+
     def read_identifier(self):
+
         word = ""
 
         while (
@@ -180,8 +199,10 @@ class Lexer:
                 or self.current().isalpha()
             )
         ):
+
             word += self.current()
             self.advance()
+
 
         if word in KEYWORDS:
             return Token(KEYWORDS[word], word)
@@ -189,31 +210,43 @@ class Lexer:
         return Token("IDENTIFIER", word)
 
 
+
     def read_operator(self):
+
         current = self.current()
 
-        # Two-character operators
+
         if current == ">" and self.peek() == "=":
+
             self.advance()
             self.advance()
             return Token("GREATER_EQUAL", ">=")
 
+
         if current == "<" and self.peek() == "=":
+
             self.advance()
             self.advance()
             return Token("LESS_EQUAL", "<=")
 
+
         if current == "=" and self.peek() == "=":
+
             self.advance()
             self.advance()
             return Token("EQUAL_EQUAL", "==")
 
+
         if current == "!" and self.peek() == "=":
+
             self.advance()
             self.advance()
             return Token("NOT_EQUAL", "!=")
 
+
+
         operators = {
+
             ">": ("GREATER", ">"),
             "<": ("LESS", "<"),
             "+": ("PLUS", "+"),
@@ -221,16 +254,27 @@ class Lexer:
             "*": ("MULTIPLY", "*"),
             "/": ("DIVIDE", "/"),
             "=": ("EQUALS", "="),
+
             "(": ("LPAREN", "("),
             ")": ("RPAREN", ")"),
+
             ":": ("COLON", ":"),
             ",": ("COMMA", ","),
+
             "،": ("COMMA", "،"),
+
+            "[": ("LBRACKET", "["),
+            "]": ("RBRACKET", "]"),
         }
 
+
         if current in operators:
+
             token_type, value = operators[current]
+
             self.advance()
+
             return Token(token_type, value)
+
 
         return None
