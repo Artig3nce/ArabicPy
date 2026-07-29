@@ -1,11 +1,21 @@
 from lexer import Lexer
+from parser import Parser
+from generator import Generator
 
-with open("examples/hello.apy", "r", encoding="utf-8") as file:
-    code = file.read()
+code = """
+دالة مربع(س):
+    ارجع س * س
+
+اطبع(مربع(5))
+"""
 
 lexer = Lexer(code)
-
 tokens = lexer.tokenize()
 
-for token in tokens:
-    print(token)
+parser = Parser(tokens)
+ast = parser.parse()
+
+generator = Generator()
+python_code = generator.generate(ast)
+
+exec(python_code)
