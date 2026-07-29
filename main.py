@@ -15,7 +15,9 @@ tokens = lexer.tokenize()
 parser = Parser(tokens)
 ast = parser.parse()
 
+print(ast)
+
 generator = Generator()
 python_code = generator.generate(ast)
 
-exec(python_code)
+print(python_code)

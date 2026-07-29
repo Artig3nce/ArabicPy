@@ -34,41 +34,94 @@ class Lexer:
 
     def advance(self):
         self.position += 1
-
     def tokenize(self):
         tokens = []
 
+        indent_stack = [0]
+        start_of_line = True
+
         while self.current() is not None:
+
+            # -------------------------
+            # Beginning of a line
+            # -------------------------
+            if start_of_line:
+
+                spaces = 0
+
+                while self.current() == " ":
+                    spaces += 1
+                    self.advance()
+
+                # Ignore blank lines
+                if self.current() == "\n":
+                    tokens.append(Token("NEWLINE", "\\n"))
+                    self.advance()
+                    start_of_line = True
+                    continue
+
+                current_indent = indent_stack[-1]
+
+                if spaces > current_indent:
+                    indent_stack.append(spaces)
+                    tokens.append(Token("INDENT", spaces))
+
+                elif spaces < current_indent:
+
+                    while spaces < indent_stack[-1]:
+                        indent_stack.pop()
+                        tokens.append(Token("DEDENT", spaces))
+
+                    if spaces != indent_stack[-1]:
+                        raise Exception("Invalid indentation")
+
+                start_of_line = False
 
             current = self.current()
 
-            # Ignore spaces
+            if current is None:
+                break
+
+            # -------------------------
+            # Ignore spaces inside a line
+            # -------------------------
             if current in " \t\r":
                 self.advance()
                 continue
 
-            # New line
+            # -------------------------
+            # Newline
+            # -------------------------
             if current == "\n":
                 tokens.append(Token("NEWLINE", "\\n"))
                 self.advance()
+                start_of_line = True
                 continue
 
+            # -------------------------
             # Number
+            # -------------------------
             if current.isdigit():
                 tokens.append(self.read_number())
                 continue
 
+            # -------------------------
             # String
+            # -------------------------
             if current == '"':
                 tokens.append(self.read_string())
                 continue
 
+            # -------------------------
             # Identifier / Keyword
+            # -------------------------
             if current.isalpha() or current == "_":
                 tokens.append(self.read_identifier())
                 continue
 
+            # -------------------------
             # Operator
+            # -------------------------
             operator = self.read_operator()
 
             if operator:
@@ -80,8 +133,14 @@ class Lexer:
                 f"(U+{ord(current):04X})"
             )
 
-        return tokens
+        # -------------------------
+        # Close remaining blocks
+        # -------------------------
+        while len(indent_stack) > 1:
+            indent_stack.pop()
+            tokens.append(Token("DEDENT", 0))
 
+        return tokens
 
     def read_number(self):
         number = ""

@@ -39,14 +39,16 @@ class Generator:
         # -------------------------
         elif isinstance(node, Assignment):
             return f"{node.name} = {self.generate(node.value)}"
-
         # -------------------------
         # If
         # -------------------------
         elif isinstance(node, IfStatement):
             condition = self.generate(node.condition)
 
-            body = self.generate(node.then_body)
+            body = "\n".join(
+                self.generate(statement)
+                for statement in node.body
+            )
 
             body = "\n".join(
                 "    " + line
@@ -61,7 +63,10 @@ class Generator:
         elif isinstance(node, RepeatStatement):
             count = self.generate(node.count)
 
-            body = self.generate(node.body)
+            body = "\n".join(
+                self.generate(statement)
+                for statement in node.body
+            )
 
             body = "\n".join(
                 "    " + line
@@ -94,14 +99,16 @@ class Generator:
         elif isinstance(node, Boolean):
             return "True" if node.value else "False"
 
-                # -------------------------
-                        # -------------------------
+        # -------------------------
         # While
         # -------------------------
         elif isinstance(node, WhileStatement):
             condition = self.generate(node.condition)
 
-            body = self.generate(node.body)
+            body = "\n".join(
+                self.generate(statement)
+                for statement in node.body
+            )
 
             body = "\n".join(
                 "    " + line
@@ -116,7 +123,10 @@ class Generator:
         elif isinstance(node, FunctionDefinition):
             parameters = ", ".join(node.parameters)
 
-            body = self.generate(node.body)
+            body = "\n".join(
+                self.generate(statement)
+                for statement in node.body
+            )
 
             body = "\n".join(
                 "    " + line
@@ -141,7 +151,3 @@ class Generator:
             )
 
             return f"{node.name}({arguments})"
-
-        raise Exception(
-            f"Unknown node type: {type(node).__name__}"
-        )

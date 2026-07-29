@@ -32,19 +32,16 @@ class Assignment:
 
 
 class IfStatement:
-    def __init__(self, condition, then_body, else_body=None):
+    def __init__(self, condition, body):
         self.condition = condition
-        self.then_body = then_body
-        self.else_body = else_body
+        self.body = body
 
     def __repr__(self):
         return (
             f"IfStatement("
             f"{self.condition}, "
-            f"{self.then_body}, "
-            f"{self.else_body})"
+            f"{self.body})"
         )
-
 
 class RepeatStatement:
     def __init__(self, count, body):
@@ -144,3 +141,9 @@ class FunctionCall:
             f"{self.name}, "
             f"{self.arguments})"
         )    
+
+
+class IfStatement:
+    def __init__(self, condition, body):
+        self.condition = condition
+        self.body = body
