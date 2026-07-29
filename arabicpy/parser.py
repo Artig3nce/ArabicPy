@@ -1,4 +1,6 @@
-from ast_nodes import (
+from .ast_nodes import *
+from .tokens import *
+(
     Program,
     PrintStatement,
     Assignment,

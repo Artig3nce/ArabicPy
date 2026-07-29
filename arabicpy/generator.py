@@ -1,4 +1,5 @@
-from ast_nodes import (
+from .ast_nodes import *
+(
     Program,
     PrintStatement,
     Assignment,
