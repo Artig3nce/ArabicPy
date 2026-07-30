@@ -1,4 +1,4 @@
-from .ast_nodes import *
+#from .ast_nodes import *
 
 
 class Generator:
@@ -190,6 +190,14 @@ class Generator:
                 f"def {node.name}():\n"
                 f"{body}"
             )
+        elif isinstance(node, FunctionCall):
+
+            args = ", ".join(
+                self.generate(arg)
+                for arg in node.arguments
+            )
+
+            return f"{node.name}({args})"
 
 
 

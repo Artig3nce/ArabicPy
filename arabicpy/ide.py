@@ -17,11 +17,19 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtCore import Qt
+print("1")
 
 from .lexer import Lexer
+print("2")
+
 from .parser import Parser
+print("3")
+
 from .generator import Generator
+print("4")
+
 from .highlighter import ArabicPyHighlighter
+print("5")
 
 
 
@@ -32,6 +40,7 @@ from .highlighter import ArabicPyHighlighter
 class TitleBar(QWidget):
 
     def __init__(self, parent):
+
         super().__init__(parent)
 
         self.parent = parent
@@ -97,6 +106,7 @@ class TitleBar(QWidget):
 class ArabicPyIDE(QMainWindow):
 
     def __init__(self):
+        print("CREATING WINDOW")
 
         super().__init__()
 
@@ -114,6 +124,7 @@ class ArabicPyIDE(QMainWindow):
             1400,
             900
         )
+        
 
 
         self.setStyleSheet("""
@@ -156,229 +167,230 @@ class ArabicPyIDE(QMainWindow):
         }
 
         """)
-
+        print("CALLING SETUP UI")
 
         self.setup_ui()
 
     def setup_ui(self):
 
-# =========================
-# Widgets
-# =========================
+    # =========================
+    # Widgets
+    # =========================
 
-     self.file_list = QListWidget()
+        self.file_list = QListWidget()
 
-     self.file_list.setMaximumWidth(
-        250
-    )
+        self.file_list.setMaximumWidth(
+            250
+        )
 
 
-    self.editor = QTextEdit()
+        self.editor = QTextEdit()
+        self.editor = QTextEdit()
 
-    self.editor.setFrameShape(
+        self.editor.setFrameShape(
         QFrame.NoFrame
-    )
+         )
 
-    self.editor.setLayoutDirection(
+        self.editor.setLayoutDirection(
         Qt.RightToLeft
-    )
+      )
 
 
-    self.highlighter = ArabicPyHighlighter(
-        self.editor.document()
-    )
+        self.highlighter = ArabicPyHighlighter(
+          self.editor.document()
+          )
 
 
-    self.editor.setPlainText(
-        'اطبع("مرحبا من ArabicPy")'
-    )
+        self.editor.setPlainText(
+            'اطبع("مرحبا من ArabicPy")'
+        )
 
 
-    self.output = QTextEdit()
+        self.output = QTextEdit()
 
-    self.output.setReadOnly(
-        True
-    )
+        self.output.setReadOnly(
+            True
+        )
 
-    self.output.setFrameShape(
-        QFrame.NoFrame
-    )
+        self.output.setFrameShape(
+            QFrame.NoFrame
+        )
 
-
-    # =========================
-    # Buttons
-    # =========================
-
-    self.new_button = QPushButton(
-        "جديد 📄"
-    )
-
-    self.open_button = QPushButton(
-        "فتح 📂"
-    )
-
-    self.save_button = QPushButton(
-        "حفظ 💾"
-    )
-
-    self.find_button = QPushButton(
-        "بحث 🔍"
-    )
-
-    self.run_button = QPushButton(
-        "تشغيل ▶"
-    )
-
-
-    self.new_button.clicked.connect(
-        self.new_file
-    )
-
-    self.open_button.clicked.connect(
-        self.open_file
-    )
-
-    self.save_button.clicked.connect(
-        self.save_file
-    )
-
-    self.find_button.clicked.connect(
-        self.find_text
-    )
-
-    self.run_button.clicked.connect(
-        self.run_code
-    )
-
-
-    # =========================
-    # Main Layout
-    # =========================
-
-    main_layout = QVBoxLayout()
-
-    main_layout.setContentsMargins(
-        0,0,0,0
-    )
-
-    main_layout.setSpacing(
-        0
-    )
-
-
-    self.title_bar = TitleBar(self)
-
-    main_layout.addWidget(
-        self.title_bar
-    )
-
-
-    # Buttons row
-
-    buttons = QHBoxLayout()
-
-    buttons.addWidget(
-        self.new_button
-    )
-
-    buttons.addWidget(
-        self.open_button
-    )
-
-    buttons.addWidget(
-        self.save_button
-    )
-
-    buttons.addWidget(
-        self.find_button
-    )
-
-    buttons.addStretch()
-
-
-    main_layout.addLayout(
-        buttons
-    )
-
-
-    # =========================
-    # Editor / Output
-    # =========================
-
-    editor_splitter = QSplitter(
-        Qt.Horizontal
-    )
-
-
-    editor_splitter.addWidget(
-        self.file_list
-    )
-
-
-    editor_splitter.addWidget(
-        self.editor
-    )
-
-
-    editor_splitter.setSizes(
-        [
-            200,
-            1000
-        ]
-    )
-
-
-    main_splitter = QSplitter(
-        Qt.Vertical
-    )
-
-
-    main_splitter.addWidget(
-        editor_splitter
-    )
-
-
-    main_splitter.addWidget(
-        self.output
-    )
-
-
-    main_splitter.setSizes(
-        [
-            650,
-            200
-        ]
-    )
-
-
-    main_layout.addWidget(
-        main_splitter
-    )
-
-
-    main_layout.addWidget(
-        self.run_button
-    )
-
-
-    # =========================
-    # Container
-    # =========================
-
-    container = QWidget()
-
-    container.setLayout(
-        main_layout
-    )
-
-
-    self.setCentralWidget(
-        container
-    )
 
         # =========================
-    # File System
-    # =========================
+        # Buttons
+        # =========================
+
+        self.new_button = QPushButton(
+            "جديد 📄"
+        )
+
+        self.open_button = QPushButton(
+            "فتح 📂"
+        )
+
+        self.save_button = QPushButton(
+            "حفظ 💾"
+        )
+
+        self.find_button = QPushButton(
+            "بحث 🔍"
+        )
+
+        self.run_button = QPushButton(
+            "تشغيل ▶"
+        )
+
+
+        self.new_button.clicked.connect(
+            self.new_file
+        )
+
+        self.open_button.clicked.connect(
+            self.open_file
+        )
+
+        self.save_button.clicked.connect(
+            self.save_file
+        )
+
+        self.find_button.clicked.connect(
+            self.find_text
+        )
+
+        self.run_button.clicked.connect(
+            self.run_code
+        )
+
+
+        # =========================
+        # Main Layout
+        # =========================
+
+        main_layout = QVBoxLayout()
+
+        main_layout.setContentsMargins(
+            0,0,0,0
+        )
+
+        main_layout.setSpacing(
+            0
+        )
+
+
+        self.title_bar = TitleBar(self)
+
+        main_layout.addWidget(
+          self.title_bar
+        )
+
+
+        # Buttons row
+
+        buttons = QHBoxLayout()
+
+        buttons.addWidget(
+            self.new_button
+        )
+
+        buttons.addWidget(
+            self.open_button
+        )
+
+        buttons.addWidget(
+            self.save_button
+        )
+
+        buttons.addWidget(
+            self.find_button
+        )
+
+        buttons.addStretch()
+
+
+        main_layout.addLayout(
+            buttons
+        )
+
+
+        # =========================
+        # Editor / Output
+        # =========================
+
+        editor_splitter = QSplitter(
+            Qt.Horizontal
+        )
+
+
+        editor_splitter.addWidget(
+            self.file_list
+        )
+
+
+        editor_splitter.addWidget(
+            self.editor
+        )
+
+
+        editor_splitter.setSizes(
+            [
+                200,
+                1000
+            ]
+        )
+
+
+        main_splitter = QSplitter(
+            Qt.Vertical
+        )
+
+
+        main_splitter.addWidget(
+            editor_splitter
+        )
+
+
+        main_splitter.addWidget(
+            self.output
+        )
+
+
+        main_splitter.setSizes(
+            [
+                650,
+                200
+            ]
+        )
+
+
+        main_layout.addWidget(
+            main_splitter
+        )
+
+
+        main_layout.addWidget(
+            self.run_button
+        )
+
+
+        # =========================
+        # Container
+        # =========================
+
+        container = QWidget()
+
+        container.setLayout(
+            main_layout
+        )
+
+
+        self.setCentralWidget(
+            container
+        )
+
+            # =========================
+        # File System
+        # =========================
 
     def new_file(self):
 
@@ -562,7 +574,11 @@ class ArabicPyIDE(QMainWindow):
 
 if __name__ == "__main__":
 
+    print("CREATING APP")
+
     app = QApplication([])
+
+    print("CREATING WINDOW")
 
     window = ArabicPyIDE()
 

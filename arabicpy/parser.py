@@ -1,5 +1,4 @@
-from .ast_nodes import *
-
+#from .ast_nodes import *
 
 class Parser:
 
@@ -178,8 +177,8 @@ class Parser:
                 self.advance()
                 continue
                         
-                if self.current() and self.current().type == "FUNCTION":
-                 return self.parse_function()
+            if self.current() and self.current().type == "FUNCTION":
+                return self.parse_function()
 
             statement = self.parse_statement()
 
@@ -200,349 +199,367 @@ class Parser:
 
 
         return body
-    def parse_primary(self):
-        
+    
+def parse_primary(self):
 
-        token = self.current()
+    token = self.current()
 
-        if token is None:
-            raise Exception("Unexpected EOF")
+    if token is None:
+        raise Exception("Unexpected EOF")
 
 
-        if token.type == "NUMBER":
+    if token.type == "NUMBER":
+
+        self.advance()
+
+        return Number(token.value)
+
+
+    if token.type == "STRING":
+
+        self.advance()
+
+        return String(token.value)
+
+
+    if token.type == "TRUE":
+
+        self.advance()
+
+        return Boolean(True)
+
+
+    if token.type == "FALSE":
+
+        self.advance()
+
+        return Boolean(False)
+
+
+    # =====================
+    # Identifier
+    # Variable or Function Call
+    # =====================
+
+    if token.type == "IDENTIFIER":
+
+        name = token.value
+
+        self.advance()
+
+
+        # Function Call
+        if self.current() and self.current().type == "LPAREN":
 
             self.advance()
 
-            return Number(token.value)
+            arguments = []
 
 
-        if token.type == "STRING":
+            while (
+                self.current()
+                and self.current().type != "RPAREN"
+            ):
 
-            self.advance()
-
-            return String(token.value)
-
-
-        if token.type == "TRUE":
-
-            self.advance()
-
-            return Boolean(True)
-
-
-        if token.type == "FALSE":
-
-            self.advance()
-
-            return Boolean(False)
-        if token.type == "IDENTIFIER":
-
-            name = token.value
-
-            self.advance()
-
-
-            # function call
-            if self.current() and self.current().type == "LPAREN":
-
-                self.advance()  # consume (
-
-                arguments = []
-
-
-                if self.current().type != "RPAREN":
-
-                    arguments.append(
-                        self.parse_expression()
-                    )
-
-
-                    while self.current() and self.current().type == "COMMA":
-
-                        self.advance()
-
-                        arguments.append(
-                            self.parse_expression()
-                        )
-
-
-                self.expect("RPAREN")
-
-
-                return FunctionCall(
-                    name,
-                    arguments
+                arguments.append(
+                    self.parse_expression()
                 )
 
 
-            # normal variable
-            return Variable(name)
+                if (
+                    self.current()
+                    and self.current().type == "COMMA"
+                ):
+                    self.advance()
 
-        if token.type == "LPAREN":
+                else:
+                    break
 
-            self.advance()
-
-            value = self.parse_expression()
 
             self.expect("RPAREN")
 
-            return value
+
+            return FunctionCall(
+                name,
+                arguments
+            )
 
 
-        raise Exception(
-            f"Unexpected token {token.type}"
-        )
+        # Normal Variable
 
+        return Variable(name)
+
+
+
+    # =====================
+    # Parentheses
+    # =====================
+
+    if token.type == "LPAREN":
+
+        self.advance()
+
+        value = self.parse_expression()
+
+        self.expect("RPAREN")
+
+        return value
+
+
+
+    raise Exception(
+        f"Unexpected token {token.type}"
+    )
 
     # =====================
     # Function
     # =====================
-    def parse_function(self):
+def parse_function(self):
 
-        self.advance()  # FUNCTION
+    self.advance()  # FUNCTION
 
-        name = self.expect("IDENTIFIER").value
+    name = self.expect("IDENTIFIER").value
+
+    self.expect("LPAREN")
+    self.expect("RPAREN")
+    self.expect("COLON")
+
+
+    if self.current() and self.current().type == "NEWLINE":
+        self.advance()
+
+
+    if self.current() and self.current().type == "INDENT":
+        self.advance()
+
+
+    statements = []
+
+
+    while self.current() and self.current().type != "DEDENT":
+
+        if self.current().type == "NEWLINE":
+            self.advance()
+            continue
+
+
+        old_position = self.position
+
+        statement = self.parse_statement()
+
+        if statement:
+            statements.append(statement)
+
+
+        if self.position == old_position:
+            print("FUNCTION STUCK AT:", self.current())
+            self.advance()
+
+
+    if self.current() and self.current().type == "DEDENT":
+        self.advance()
+
+
+    return FunctionDefinition(
+        name,
+        [],
+        Block(statements)
+    )
+
+# =====================
+# Statements
+# =====================
+
+def parse_statement(self):
+
+    token = self.current()
+
+
+    if token is None:
+
+        return None
+
+
+
+    if token.type == "NEWLINE":
+
+        self.advance()
+
+        return None
+
+
+
+    # FUNCTION
+
+    if token.type == "FUNCTION":
+
+        return self.parse_function()
+    # PRINT
+
+    if token.type == "PRINT":
+
+        self.advance()
+
 
         self.expect("LPAREN")
-        self.expect("RPAREN")
-        self.expect("COLON")
-
-
-        if self.current() and self.current().type == "NEWLINE":
-            self.advance()
-
-
-        if self.current() and self.current().type == "INDENT":
-            self.advance()
-
-
-        statements = []
-
-
-        while self.current() and self.current().type != "DEDENT":
-
-            if self.current().type == "NEWLINE":
-                self.advance()
-                continue
-
-
-            old_position = self.position
-
-            statement = self.parse_statement()
-
-            if statement:
-                statements.append(statement)
-
-
-            if self.position == old_position:
-                print("FUNCTION STUCK AT:", self.current())
-                self.advance()
-
-
-        if self.current() and self.current().type == "DEDENT":
-            self.advance()
-
-
-        return FunctionDefinition(
-            name,
-            [],
-            Block(statements)
-        )
-
-    # =====================
-    # Statements
-    # =====================
-
-    def parse_statement(self):
-
-        token = self.current()
-
-
-        if token is None:
-
-            return None
-
-
-
-        if token.type == "NEWLINE":
-
-            self.advance()
-
-            return None
-
-
-
-        # FUNCTION
-
-        if token.type == "FUNCTION":
-
-            return self.parse_function()
-        # PRINT
-
-        if token.type == "PRINT":
-
-            self.advance()
-
-
-            self.expect("LPAREN")
-
-
-            value = self.parse_expression()
-
-
-            self.expect("RPAREN")
-
-
-            return PrintStatement(
-                value
-            )
-
-
-
-        # RETURN
-
-        if token.type == "RETURN":
-
-            self.advance()
-
-
-            value = self.parse_expression()
-
-
-            return ReturnStatement(
-                value
-            )
-
-
-
-        # IF
-
-        if token.type == "IF":
-
-            self.advance()
-
-
-            condition = self.parse_expression()
-
-
-            self.expect("COLON")
-
-
-            body = self.parse_block()
-
-
-            else_body = None
-
-
-            if (
-                self.current()
-                and self.current() and self.current().type == "ELSE"
-            ):
-
-                self.advance()
-
-
-                self.expect("COLON")
-
-
-                else_body = self.parse_block()
-
-
-
-            return IfStatement(
-                condition,
-                body,
-                else_body
-            )
-        
-        return None
-    # =====================
-    # Assignment
-    # =====================
-
-    def parse_assignment(self):
-
-        name = self.expect(
-            "IDENTIFIER"
-        ).value
-
-
-        self.expect(
-            "EQUALS"
-        )
 
 
         value = self.parse_expression()
 
 
-        return Assignment(
-            name,
+        self.expect("RPAREN")
+
+
+        return PrintStatement(
             value
         )
 
 
 
-    # =====================
-    # Program
-    # =====================
-    def parse(self):
+    # RETURN
 
-        statements = []
+    if token.type == "RETURN":
 
-        limit = 0
-
-        while self.current():
-
-            limit += 1
-
-            if limit > 1000:
-                raise Exception(
-                    "Parser stuck at: " + str(self.current())
-                )
-
-            if self.current() and self.current().type in (
-                "NEWLINE",
-                "INDENT",
-                "DEDENT"
-            ):
-                self.advance()
-                continue
-
-            # assignment
-
-            if (
-                self.current() and self.current().type == "IDENTIFIER"
-                and self.peek()
-                and self.peek().type == "EQUALS"
-            ):
-
-                statement = self.parse_assignment()
+        self.advance()
 
 
-            else:
-
-                statement = self.parse_statement()
-          
-            # function call
-
-            if (
-                self.current() and self.current().type == "IDENTIFIER"
-                and self.peek().type == "LPAREN"
-            ):
-
-                statement = self.parse_expression()
-
-                return statement
+        value = self.parse_expression()
 
 
-            if statement:
-
-                statements.append(
-                    statement
-                )
+        return ReturnStatement(
+            value
+        )
 
 
 
-        return Program(
-            statements
-        )        
+    # IF
+
+    if token.type == "IF":
+
+        self.advance()
+
+
+        condition = self.parse_expression()
+
+
+        self.expect("COLON")
+
+
+        body = self.parse_block()
+
+
+        else_body = None
+
+
+        if (
+            self.current()
+            and self.current() and self.current().type == "ELSE"
+        ):
+
+            self.advance()
+
+
+            self.expect("COLON")
+
+
+            else_body = self.parse_block()
+
+
+
+        return IfStatement(
+            condition,
+            body,
+            else_body
+        )
+    
+    return None
+# =====================
+# Assignment
+# =====================
+
+def parse_assignment(self):
+
+    name = self.expect(
+        "IDENTIFIER"
+    ).value
+
+
+    self.expect(
+        "EQUALS"
+    )
+
+
+    value = self.parse_expression()
+
+
+    return Assignment(
+        name,
+        value
+    )
+
+
+
+# =====================
+# Program
+# =====================
+def parse(self):
+
+    statements = []
+
+    limit = 0
+
+    while self.current():
+
+        limit += 1
+
+        if limit > 1000:
+            raise Exception(
+                "Parser stuck at: " + str(self.current())
+            )
+
+        if self.current() and self.current().type in (
+            "NEWLINE",
+            "INDENT",
+            "DEDENT"
+        ):
+            self.advance()
+            continue
+
+        # assignment
+
+        if (
+            self.current() and self.current().type == "IDENTIFIER"
+            and self.peek()
+            and self.peek().type == "EQUALS"
+        ):
+
+            statement = self.parse_assignment()
+
+
+        else:
+
+            statement = self.parse_statement()
+    
+        # function call
+
+        if (
+            self.current() and self.current().type == "IDENTIFIER"
+            and self.peek().type == "LPAREN"
+        ):
+
+            statement = self.parse_expression()
+
+            return statement
+
+
+        if statement:
+
+            statements.append(
+                statement
+            )
+
+
+
+    return Program(
+        statements
+    )        
