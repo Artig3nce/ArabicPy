@@ -1,4 +1,3 @@
-import os
 import io
 import contextlib
 
@@ -91,7 +90,6 @@ class TitleBar(QWidget):
 
 
 
-
 # =========================
 # Main IDE
 # =========================
@@ -101,10 +99,12 @@ class ArabicPyIDE(QMainWindow):
     def __init__(self):
 
         super().__init__()
-        self.setWindowFlags(
-        Qt.FramelessWindowHint
-    )
+
         self.current_file = None
+
+        self.setWindowFlags(
+            Qt.FramelessWindowHint
+        )
 
         self.setWindowTitle(
             "ArabicPy IDE"
@@ -119,252 +119,266 @@ class ArabicPyIDE(QMainWindow):
         self.setStyleSheet("""
 
         QMainWindow {
-            background-color: #1e1e1e;
+            background-color:#1e1e1e;
         }
-
 
         QWidget {
-            background-color: #1e1e1e;
+            background-color:#1e1e1e;
         }
-
 
         QTextEdit {
-            background-color: #252526;
-            color: white;
-            border: none;
-            outline: none;
-            font-size: 16px;
-            font-family: Consolas;
+            background-color:#252526;
+            color:white;
+            border:none;
+            font-size:16px;
+            font-family:Consolas;
         }
-
 
         QListWidget {
-            background-color: #181818;
-            color: white;
-            border: none;
+            background-color:#181818;
+            color:white;
+            border:none;
         }
-
 
         QPushButton {
-            background-color: #333333;
-            color: white;
-            border-radius: 6px;
-            padding: 8px;
+            background-color:#333333;
+            color:white;
+            border-radius:6px;
+            padding:8px;
         }
-
 
         QPushButton:hover {
-            background-color: #505050;
+            background-color:#505050;
         }
-
-
-        QSplitter {
-            background-color: #1e1e1e;
-        }
-
 
         QSplitter::handle {
-            background-color: #444444;
-        }
-
-
-        QSplitter::handle:hover {
-            background-color: #666666;
-        }
-
-
-        QSplitter::handle:horizontal {
-            width: 4px;
-        }
-
-
-        QSplitter::handle:vertical {
-            height: 4px;
+            background-color:#444444;
         }
 
         """)
 
-        self.setup_ui() 
+
+        self.setup_ui()
 
     def setup_ui(self):
 
-        # Widgets
+# =========================
+# Widgets
+# =========================
 
-        self.file_list = QListWidget()
-        self.file_list.setLineWidth(0)
-        self.file_list.setMidLineWidth(0)
-        self.file_list.setFrameShape(
-             QFrame.NoFrame
-        )
-        self.file_list.setFrameStyle(0)
+     self.file_list = QListWidget()
 
-        self.editor = QTextEdit()
-        self.editor.setLineWidth(0)
-        self.editor.setMidLineWidth(0)
-
-        self.editor.setFrameShape(
-            QFrame.NoFrame
-        )
-        self.editor.setFrameStyle(0)
-
-        self.editor.setLayoutDirection(
-            Qt.RightToLeft
-        )
-
-        self.highlighter = ArabicPyHighlighter(
-            self.editor.document()
-        )
-
-        self.editor.setPlainText(
-            'اطبع("مرحبا من ArabicPy")'
-        )
-
-        self.output = QTextEdit()
-        self.output.setStyleSheet("""
-    QTextEdit {
-        border-top: 4px solid #444444;
-    }
-""")        
-        self.output.setFrameShape(
-            QFrame.NoFrame
-        )
-        self.output.setFrameStyle(0)
-        self.output.setReadOnly(True)
+     self.file_list.setMaximumWidth(
+        250
+    )
 
 
-        # Buttons
+    self.editor = QTextEdit()
 
-        self.new_button = QPushButton("جديد 📄")
-        self.open_button = QPushButton("فتح 📂")
-        self.save_button = QPushButton("حفظ 💾")
-        self.find_button = QPushButton("بحث 🔍")
-        self.run_button = QPushButton("تشغيل ▶")
+    self.editor.setFrameShape(
+        QFrame.NoFrame
+    )
 
-
-        self.run_button.clicked.connect(
-            self.run_code
-        )
-
-        self.new_button.clicked.connect(
-            self.new_file
-        )
-
-        self.open_button.clicked.connect(
-            self.open_file
-        )
-
-        self.save_button.clicked.connect(
-            self.save_file
-        )
-
-        self.find_button.clicked.connect(
-            self.find_text
-        )
+    self.editor.setLayoutDirection(
+        Qt.RightToLeft
+    )
 
 
-        # Main layout
-
-        main_layout = QVBoxLayout()
-
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-
-        main_layout.setContentsMargins(0,0,0,0)
-        main_layout.setSpacing(0)
-
-        self.title_bar = TitleBar(self)
-
-        main_layout.addWidget(
-            self.title_bar
-        )
+    self.highlighter = ArabicPyHighlighter(
+        self.editor.document()
+    )
 
 
-        buttons = QHBoxLayout()
-
-        buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setSpacing(0)
-
-        buttons.addWidget(self.new_button)
-        buttons.addWidget(self.open_button)
-        buttons.addWidget(self.save_button)
-        buttons.addWidget(self.find_button)
-
-        buttons.addStretch()
-
-        main_layout.addLayout(
-            buttons
-        )
+    self.editor.setPlainText(
+        'اطبع("مرحبا من ArabicPy")'
+    )
 
 
-        # Editor
+    self.output = QTextEdit()
 
-        editor_splitter = QSplitter(
-    Qt.Horizontal
-)
+    self.output.setReadOnly(
+        True
+    )
 
-        editor_splitter.setHandleWidth(4)
-        editor_splitter.setHandleWidth(0)
-        editor_splitter.setContentsMargins(0,0,0,0)
-        editor_splitter.setHandleWidth(1)
-        editor_splitter.setHandleWidth(0)
-        editor_splitter = QSplitter(Qt.Horizontal)
-        editor_splitter.setHandleWidth(0)
-        editor_splitter.setHandleWidth(2)
+    self.output.setFrameShape(
+        QFrame.NoFrame
+    )
 
-        main_splitter = QSplitter(
-          Qt.Vertical
-        )
-
-        main_splitter.setHandleWidth(4)
-        main_splitter.setHandleWidth(8)
-        main_splitter.setHandleWidth(0)
-        main_splitter.setHandleWidth(2)
-
-        editor_splitter.addWidget(
-        self.editor
-)
-
-
-        # Output
-
-        main_splitter = QSplitter(
-            Qt.Vertical
-        )
-        main_splitter.setHandleWidth(0)
-
-        main_splitter.addWidget(
-            editor_splitter
-        )
-
-        main_splitter.addWidget(
-            self.output
-        )
-
-
-        main_layout.addWidget(
-            main_splitter
-        )
-
-
-        main_layout.addWidget(
-            self.run_button
-        )
-
-
-        container = QWidget()
-
-        container.setLayout(
-            main_layout
-        )
-
-
-        self.setCentralWidget(
-            container
-        )  
 
     # =========================
-# File System
-# =========================
+    # Buttons
+    # =========================
+
+    self.new_button = QPushButton(
+        "جديد 📄"
+    )
+
+    self.open_button = QPushButton(
+        "فتح 📂"
+    )
+
+    self.save_button = QPushButton(
+        "حفظ 💾"
+    )
+
+    self.find_button = QPushButton(
+        "بحث 🔍"
+    )
+
+    self.run_button = QPushButton(
+        "تشغيل ▶"
+    )
+
+
+    self.new_button.clicked.connect(
+        self.new_file
+    )
+
+    self.open_button.clicked.connect(
+        self.open_file
+    )
+
+    self.save_button.clicked.connect(
+        self.save_file
+    )
+
+    self.find_button.clicked.connect(
+        self.find_text
+    )
+
+    self.run_button.clicked.connect(
+        self.run_code
+    )
+
+
+    # =========================
+    # Main Layout
+    # =========================
+
+    main_layout = QVBoxLayout()
+
+    main_layout.setContentsMargins(
+        0,0,0,0
+    )
+
+    main_layout.setSpacing(
+        0
+    )
+
+
+    self.title_bar = TitleBar(self)
+
+    main_layout.addWidget(
+        self.title_bar
+    )
+
+
+    # Buttons row
+
+    buttons = QHBoxLayout()
+
+    buttons.addWidget(
+        self.new_button
+    )
+
+    buttons.addWidget(
+        self.open_button
+    )
+
+    buttons.addWidget(
+        self.save_button
+    )
+
+    buttons.addWidget(
+        self.find_button
+    )
+
+    buttons.addStretch()
+
+
+    main_layout.addLayout(
+        buttons
+    )
+
+
+    # =========================
+    # Editor / Output
+    # =========================
+
+    editor_splitter = QSplitter(
+        Qt.Horizontal
+    )
+
+
+    editor_splitter.addWidget(
+        self.file_list
+    )
+
+
+    editor_splitter.addWidget(
+        self.editor
+    )
+
+
+    editor_splitter.setSizes(
+        [
+            200,
+            1000
+        ]
+    )
+
+
+    main_splitter = QSplitter(
+        Qt.Vertical
+    )
+
+
+    main_splitter.addWidget(
+        editor_splitter
+    )
+
+
+    main_splitter.addWidget(
+        self.output
+    )
+
+
+    main_splitter.setSizes(
+        [
+            650,
+            200
+        ]
+    )
+
+
+    main_layout.addWidget(
+        main_splitter
+    )
+
+
+    main_layout.addWidget(
+        self.run_button
+    )
+
+
+    # =========================
+    # Container
+    # =========================
+
+    container = QWidget()
+
+    container.setLayout(
+        main_layout
+    )
+
+
+    self.setCentralWidget(
+        container
+    )
+
+        # =========================
+    # File System
+    # =========================
 
     def new_file(self):
 
@@ -491,17 +505,27 @@ class ArabicPyIDE(QMainWindow):
             tokens = lexer.tokenize()
 
 
-
             parser = Parser(tokens)
 
             ast = parser.parse()
-
 
 
             generator = Generator()
 
             python_code = generator.generate(ast)
 
+
+            print(
+                "======== GENERATED PYTHON ========"
+            )
+
+            print(
+                python_code
+            )
+
+            print(
+                "=================================="
+            )
 
 
             output = io.StringIO()
@@ -515,22 +539,12 @@ class ArabicPyIDE(QMainWindow):
                 )
 
 
-
             result = output.getvalue()
 
 
-            if result.strip():
-
-                self.output.setPlainText(
-                    result
-                )
-
-            else:
-
-                self.output.setPlainText(
-                    python_code
-                )
-
+            self.output.setPlainText(
+                result
+            )
 
 
         except Exception as e:
@@ -548,14 +562,10 @@ class ArabicPyIDE(QMainWindow):
 
 if __name__ == "__main__":
 
-
     app = QApplication([])
-
 
     window = ArabicPyIDE()
 
-
     window.show()
 
-
-    app.exec()       
+    app.exec()

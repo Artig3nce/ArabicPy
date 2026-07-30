@@ -10,10 +10,25 @@ class Generator:
 
         if isinstance(node, Program):
 
+            code = []
+
+            for statement in node.statements:
+                result = self.generate(statement)
+
+                if result:
+                    code.append(result)
+
+            return "\n\n".join(code)
+
+
+
+        elif isinstance(node, Block):
+
             return "\n".join(
                 self.generate(statement)
                 for statement in node.statements
             )
+
 
 
         elif isinstance(node, PrintStatement):
@@ -21,9 +36,14 @@ class Generator:
             return f"print({self.generate(node.value)})"
 
 
+
         elif isinstance(node, Assignment):
 
-            return f"{node.name} = {self.generate(node.value)}"
+            return (
+                f"{node.name} = "
+                f"{self.generate(node.value)}"
+            )
+
 
 
         elif isinstance(node, Variable):
@@ -31,9 +51,11 @@ class Generator:
             return node.name
 
 
+
         elif isinstance(node, Number):
 
             return str(node.value)
+
 
 
         elif isinstance(node, String):
@@ -41,9 +63,20 @@ class Generator:
             return repr(node.value)
 
 
+
         elif isinstance(node, Boolean):
 
             return "True" if node.value else "False"
+
+
+
+        elif isinstance(node, List):
+
+            return "[" + ", ".join(
+                self.generate(x)
+                for x in node.elements
+            ) + "]"
+
 
 
         elif isinstance(node, BinaryOperation):
@@ -55,21 +88,10 @@ class Generator:
             )
 
 
-        elif isinstance(node, List):
-
-            return "[" + ", ".join(
-                self.generate(item)
-                for item in node.elements
-            ) + "]"
 
         elif isinstance(node, IfStatement):
 
-            condition = self.generate(node.condition)
-
-            body = "\n".join(
-                self.generate(statement)
-                for statement in node.then_body
-            )
+            body = self.generate(node.then_body)
 
             body = "\n".join(
                 "    " + line
@@ -77,74 +99,74 @@ class Generator:
             )
 
 
-            result = f"if {condition}:\n{body}"
+            result = (
+                f"if {self.generate(node.condition)}:\n"
+                f"{body}"
+            )
 
 
             if node.else_body:
 
-                else_body = "\n".join(
-                    self.generate(statement)
-                    for statement in node.else_body
-                )
+                else_body = self.generate(node.else_body)
 
                 else_body = "\n".join(
                     "    " + line
                     for line in else_body.splitlines()
                 )
 
-                result += f"\nelse:\n{else_body}"
+                result += (
+                    f"\nelse:\n"
+                    f"{else_body}"
+                )
 
 
             return result
 
 
+
         elif isinstance(node, WhileStatement):
 
-            condition = self.generate(node.condition)
-
-            body = "\n".join(
-                self.generate(statement)
-                for statement in node.body
-            )
+            body = self.generate(node.body)
 
             body = "\n".join(
                 "    " + line
                 for line in body.splitlines()
             )
 
-            return f"while {condition}:\n{body}"
+
+            return (
+                f"while {self.generate(node.condition)}:\n"
+                f"{body}"
+            )
 
 
 
         elif isinstance(node, RepeatStatement):
 
-            count = self.generate(node.count)
-
-            body = "\n".join(
-                self.generate(statement)
-                for statement in node.body
-            )
+            body = self.generate(node.body)
 
             body = "\n".join(
                 "    " + line
                 for line in body.splitlines()
             )
 
-            return f"for _ in range({count}):\n{body}"
+
+            return (
+                f"for _ in range({self.generate(node.count)}):\n"
+                f"{body}"
+            )
 
 
 
         elif isinstance(node, ForStatement):
 
-            body = "\n".join(
-                self.generate(statement)
-                for statement in node.body
-            )
+            body = self.generate(node.body)
 
             body = "\n".join(
                 "    " + line
                 for line in body.splitlines()
             )
+
 
             return (
                 f"for {node.variable} "
@@ -155,27 +177,19 @@ class Generator:
 
 
         elif isinstance(node, FunctionDefinition):
- 
 
-            params = ", ".join(node.parameters)
-
-            body = "\n".join(
-                self.generate(statement)
-                for statement in node.body
-            )
+            body = self.generate(node.body)
 
             body = "\n".join(
                 "    " + line
                 for line in body.splitlines()
             )
 
-            return f"def {node.name}({params}):\n{body}"
 
-        
-
-        elif isinstance(node, ReturnStatement):
-
-            return f"return {self.generate(node.value)}"
+            return (
+                f"def {node.name}():\n"
+                f"{body}"
+            )
 
 
 
@@ -207,7 +221,13 @@ class Generator:
 
 
 
-        print("UNKNOWN NODE:", type(node))
+        elif isinstance(node, ReturnStatement):
+
+            return (
+                f"return "
+                f"{self.generate(node.value)}"
+            )
+
+
 
         return ""
-

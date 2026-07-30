@@ -61,7 +61,7 @@ class Parser:
 
         while (
             self.current()
-            and self.current().type in (
+            and self.current() and self.current().type in (
                 "MULTIPLY",
                 "DIVIDE"
             )
@@ -88,7 +88,7 @@ class Parser:
 
         while (
             self.current()
-            and self.current().type in (
+            and self.current() and self.current().type in (
                 "PLUS",
                 "MINUS"
             )
@@ -115,7 +115,7 @@ class Parser:
 
         while (
             self.current()
-            and self.current().type in (
+            and self.current() and self.current().type in (
                 "GREATER",
                 "LESS",
                 "EQUAL_EQUAL",
@@ -155,14 +155,14 @@ class Parser:
 
         if (
             self.current()
-            and self.current().type == "NEWLINE"
+            and self.current() and self.current().type == "NEWLINE"
         ):
             self.advance()
 
 
         if (
             self.current()
-            and self.current().type == "INDENT"
+            and self.current() and self.current().type == "INDENT"
         ):
             self.advance()
 
@@ -170,14 +170,16 @@ class Parser:
 
         while (
             self.current()
-            and self.current().type != "DEDENT"
+            and self.current() and self.current().type != "DEDENT"
         ):
 
-            if self.current().type == "NEWLINE":
+            if self.current() and self.current().type == "NEWLINE":
 
                 self.advance()
                 continue
-
+                        
+                if self.current() and self.current().type == "FUNCTION":
+                 return self.parse_function()
 
             statement = self.parse_statement()
 
@@ -190,7 +192,7 @@ class Parser:
 
         if (
             self.current()
-            and self.current().type == "DEDENT"
+            and self.current() and self.current().type == "DEDENT"
         ):
 
             self.advance()
@@ -233,16 +235,48 @@ class Parser:
             self.advance()
 
             return Boolean(False)
-
-
         if token.type == "IDENTIFIER":
 
             name = token.value
 
             self.advance()
 
-            return Variable(name)
 
+            # function call
+            if self.current() and self.current().type == "LPAREN":
+
+                self.advance()  # consume (
+
+                arguments = []
+
+
+                if self.current().type != "RPAREN":
+
+                    arguments.append(
+                        self.parse_expression()
+                    )
+
+
+                    while self.current() and self.current().type == "COMMA":
+
+                        self.advance()
+
+                        arguments.append(
+                            self.parse_expression()
+                        )
+
+
+                self.expect("RPAREN")
+
+
+                return FunctionCall(
+                    name,
+                    arguments
+                )
+
+
+            # normal variable
+            return Variable(name)
 
         if token.type == "LPAREN":
 
@@ -263,68 +297,57 @@ class Parser:
     # =====================
     # Function
     # =====================
-
     def parse_function(self):
 
-        self.expect("FUNCTION")
+        self.advance()  # FUNCTION
 
-
-        name = self.expect(
-            "IDENTIFIER"
-        ).value
-
-
-        parameters = []
-
+        name = self.expect("IDENTIFIER").value
 
         self.expect("LPAREN")
-
-
-        while (
-            self.current()
-            and self.current().type != "RPAREN"
-        ):
-
-            parameter = self.expect(
-                "IDENTIFIER"
-            ).value
-
-
-            parameters.append(
-                parameter
-            )
-
-
-            if (
-                self.current()
-                and self.current().type == "COMMA"
-            ):
-
-                self.advance()
-
-            else:
-
-                break
-
-
-
         self.expect("RPAREN")
-
-
         self.expect("COLON")
 
 
-        body = self.parse_block()
+        if self.current() and self.current().type == "NEWLINE":
+            self.advance()
 
+
+        if self.current() and self.current().type == "INDENT":
+            self.advance()
+
+
+        statements = []
+
+
+        while self.current() and self.current().type != "DEDENT":
+
+            if self.current().type == "NEWLINE":
+                self.advance()
+                continue
+
+
+            old_position = self.position
+
+            statement = self.parse_statement()
+
+            if statement:
+                statements.append(statement)
+
+
+            if self.position == old_position:
+                print("FUNCTION STUCK AT:", self.current())
+                self.advance()
+
+
+        if self.current() and self.current().type == "DEDENT":
+            self.advance()
 
 
         return FunctionDefinition(
             name,
-            parameters,
-            body
+            [],
+            Block(statements)
         )
-
-
 
     # =====================
     # Statements
@@ -354,9 +377,6 @@ class Parser:
         if token.type == "FUNCTION":
 
             return self.parse_function()
-
-
-
         # PRINT
 
         if token.type == "PRINT":
@@ -416,7 +436,7 @@ class Parser:
 
             if (
                 self.current()
-                and self.current().type == "ELSE"
+                and self.current() and self.current().type == "ELSE"
             ):
 
                 self.advance()
@@ -465,28 +485,33 @@ class Parser:
     # =====================
     # Program
     # =====================
-
     def parse(self):
 
         statements = []
 
+        limit = 0
 
         while self.current():
 
-            if self.current().type in (
+            limit += 1
+
+            if limit > 1000:
+                raise Exception(
+                    "Parser stuck at: " + str(self.current())
+                )
+
+            if self.current() and self.current().type in (
                 "NEWLINE",
+                "INDENT",
                 "DEDENT"
             ):
-
                 self.advance()
                 continue
-
-
 
             # assignment
 
             if (
-                self.current().type == "IDENTIFIER"
+                self.current() and self.current().type == "IDENTIFIER"
                 and self.peek()
                 and self.peek().type == "EQUALS"
             ):
@@ -497,7 +522,17 @@ class Parser:
             else:
 
                 statement = self.parse_statement()
+          
+            # function call
 
+            if (
+                self.current() and self.current().type == "IDENTIFIER"
+                and self.peek().type == "LPAREN"
+            ):
+
+                statement = self.parse_expression()
+
+                return statement
 
 
             if statement:
