@@ -17,19 +17,19 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtCore import Qt
-print("1")
+
 
 from .lexer import Lexer
-print("2")
+
 
 from .parser import Parser
-print("3")
+
 
 from .generator import Generator
-print("4")
+
 
 from .highlighter import ArabicPyHighlighter
-print("5")
+
 
 
 
@@ -106,7 +106,6 @@ class TitleBar(QWidget):
 class ArabicPyIDE(QMainWindow):
 
     def __init__(self):
-        print("CREATING WINDOW")
 
         super().__init__()
 
@@ -167,7 +166,6 @@ class ArabicPyIDE(QMainWindow):
         }
 
         """)
-        print("CALLING SETUP UI")
 
         self.setup_ui()
 
@@ -506,7 +504,7 @@ class ArabicPyIDE(QMainWindow):
     # =========================
 
     def run_code(self):
-
+        print("RUN CLICKED")
         try:
 
             source = self.editor.toPlainText()
@@ -525,20 +523,6 @@ class ArabicPyIDE(QMainWindow):
             generator = Generator()
 
             python_code = generator.generate(ast)
-
-
-            print(
-                "======== GENERATED PYTHON ========"
-            )
-
-            print(
-                python_code
-            )
-
-            print(
-                "=================================="
-            )
-
 
             output = io.StringIO()
 
@@ -574,11 +558,7 @@ class ArabicPyIDE(QMainWindow):
 
 if __name__ == "__main__":
 
-    print("CREATING APP")
-
     app = QApplication([])
-
-    print("CREATING WINDOW")
 
     window = ArabicPyIDE()
 

@@ -1,12 +1,9 @@
-#from .ast_nodes import *
 
+from .ast_nodes import *
 
 class Generator:
-
     def generate(self, node):
-
-        print("GENERATE:", type(node).__name__, node)
-
+        print(type(node))
 
         if isinstance(node, Program):
 
