@@ -62,7 +62,6 @@ class Generator:
                 for item in node.elements
             ) + "]"
 
-
         elif isinstance(node, IfStatement):
 
             condition = self.generate(node.condition)
@@ -97,7 +96,6 @@ class Generator:
 
 
             return result
-
 
 
         elif isinstance(node, WhileStatement):

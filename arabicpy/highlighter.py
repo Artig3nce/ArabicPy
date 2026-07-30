@@ -1,10 +1,4 @@
-from PySide6.QtGui import (
-    QSyntaxHighlighter,
-    QTextCharFormat,
-    QColor,
-    QFont,
-)
-
+from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 from PySide6.QtCore import QRegularExpression
 
 
@@ -15,79 +9,67 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
 
         self.rules = []
 
-
-        # ==========================
         # Keywords
-        # ==========================
-
         keyword_format = QTextCharFormat()
-
-        keyword_format.setForeground(
-            QColor("#007acc")
-        )
-
-        keyword_format.setFontWeight(
-            QFont.Bold
-        )
-
+        keyword_format.setForeground(QColor("#569CD6"))
+        keyword_format.setFontWeight(QFont.Bold)
 
         keywords = [
+            "اذا",
+            "وإلا",
+            "لكل",
+            "بينما",
             "دالة",
             "ارجع",
-            "اطبع",
-            "اذا",
-            "والا",
-            "بينما",
-            "كرر",
-            "مرات",
-            "صح",
-            "خطأ",
+            "صنف",
+            "استورد",
+            "من",
+            "حاول",
+            "إلا",
+            "نهاية",
+            
+            # english
+            "if",
+            "else",
+            "for",
+            "while",
+            "def",
+            "class",
+            "import",
+            "from",
+            "return",
+            "try",
+            "except"
         ]
 
-
         for word in keywords:
-
             self.rules.append(
                 (
-                    QRegularExpression(word),
+                    QRegularExpression(
+                        rf"\b{word}\b"
+                    ),
                     keyword_format
                 )
             )
 
 
-
-        # ==========================
         # Strings
-        # ==========================
-
         string_format = QTextCharFormat()
-
-        string_format.setForeground(
-            QColor("#008000")
-        )
-
+        string_format.setForeground(QColor("#CE9178"))
 
         self.rules.append(
             (
                 QRegularExpression(
-                    r'"[^"]*"'
+                    r'".*?"|\' .*?\''
                 ),
                 string_format
             )
         )
 
 
-
-        # ==========================
         # Numbers
-        # ==========================
-
         number_format = QTextCharFormat()
-
-        number_format.setForeground(
-            QColor("#b8860b")
-        )
-
+        number_format.setForeground(QColor("#B5CEA8"))
 
         self.rules.append(
             (
@@ -99,17 +81,10 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
         )
 
 
-
-        # ==========================
         # Comments
-        # ==========================
-
         comment_format = QTextCharFormat()
-
-        comment_format.setForeground(
-            QColor("#808080")
-        )
-
+        comment_format.setForeground(QColor("#6A9955"))
+        comment_format.setFontItalic(True)
 
         self.rules.append(
             (
@@ -121,25 +96,42 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
         )
 
 
+        # Built-in functions
+        builtin_format = QTextCharFormat()
+        builtin_format.setForeground(QColor("#DCDCAA"))
 
-    # ==========================
-    # Apply highlighting
-    # ==========================
+        builtins = [
+            "اطبع",
+            "طباعة",
+            "print",
+            "input",
+            "len",
+            "range"
+        ]
+
+        for func in builtins:
+            self.rules.append(
+                (
+                    QRegularExpression(
+                        rf"\b{func}\b"
+                    ),
+                    builtin_format
+                )
+            )
+
 
     def highlightBlock(self, text):
 
-        for pattern, format in self.rules:
+        for pattern, fmt in self.rules:
 
-            matches = pattern.globalMatch(text)
+            iterator = pattern.globalMatch(text)
 
+            while iterator.hasNext():
 
-            while matches.hasNext():
-
-                match = matches.next()
-
+                match = iterator.next()
 
                 self.setFormat(
                     match.capturedStart(),
                     match.capturedLength(),
-                    format
+                    fmt
                 )

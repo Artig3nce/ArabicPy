@@ -4,6 +4,8 @@ arabicpy/__init__.py
 arabicpy/__main__.py
 arabicpy/ast_nodes.py
 arabicpy/generator.py
+arabicpy/highlighter.py
+arabicpy/ide.py
 arabicpy/keywords.py
 arabicpy/lexer.py
 arabicpy/parser.py
