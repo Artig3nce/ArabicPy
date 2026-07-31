@@ -13,8 +13,10 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
         keyword_format.setForeground(QColor("#569cd6"))
         keyword_format.setFontWeight(QFont.Bold)
         keywords = [
-            "اذا", "وإلا", "لكل", "بينما", "دالة", "ارجع", "صنف", "استورد", "من", "حاول", "إلا", "نهاية",
-            "if", "else", "for", "while", "def", "class", "import", "from", "return", "try", "except",
+            "اذا", "والا", "وإلا", "لكل", "في", "بينما", "كرر", "مرات",
+            "دالة", "ارجع", "صح", "خطأ", "صنف", "استورد", "من", "حاول", "إلا", "نهاية",
+            "if", "else", "for", "in", "while", "def", "class", "import", "from",
+            "return", "try", "except", "True", "False",
         ]
         self._add_words(keywords, keyword_format)
 
@@ -37,7 +39,12 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
 
     def _add_words(self, words, text_format):
         for word in words:
-            self.rules.append((QRegularExpression(rf"\b{word}\b"), text_format))
+            # PCRE's default \b handling does not reliably treat Arabic
+            # letters as word characters. Explicit Unicode-aware boundaries
+            # give ArabicPy and Python equivalents the same semantic colour.
+            escaped_word = QRegularExpression.escape(word)
+            pattern = rf"(?<![\w\x{{0600}}-\x{{06FF}}]){escaped_word}(?![\w\x{{0600}}-\x{{06FF}}])"
+            self.rules.append((QRegularExpression(pattern), text_format))
 
     def highlightBlock(self, text):
         for pattern, text_format in self.rules:

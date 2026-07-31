@@ -2,12 +2,16 @@ import contextlib
 import io
 import os
 
-from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat
+from PySide6.QtCore import QTimer, QRect, QSize, Qt
+from PySide6.QtGui import (
+    QColor, QFont, QPainter, QTextBlockFormat, QTextCharFormat, QTextCursor,
+    QTextFormat,
+)
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
+    QApplication, QBoxLayout, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QPlainTextEdit,
-    QPushButton, QMenu, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QPushButton, QMenu, QSplitter, QTabBar, QTabWidget, QTextEdit, QVBoxLayout,
+    QWidget,
 )
 
 from .generator import Generator
@@ -37,7 +41,9 @@ class CodeEditor(QPlainTextEdit):
         super().__init__()
         self.line_number_area = LineNumberArea(self)
         self.setObjectName("codeEditor")
-        self.setFont(QFont("Tahoma", 13))
+        # Segoe UI provides taller Arabic glyph metrics than Tahoma, avoiding
+        # collisions between dots/diacritics on adjacent source lines.
+        self.setFont(QFont("Segoe UI", 13))
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
         self.setLayoutDirection(Qt.RightToLeft)
         # QTextEdit's layout direction alone does not change paragraph
@@ -46,11 +52,27 @@ class CodeEditor(QPlainTextEdit):
         text_option.setAlignment(Qt.AlignRight | Qt.AlignAbsolute)
         self.document().setDefaultTextOption(text_option)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.error_line = None
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
+        self.apply_line_spacing()
+
+    def setPlainText(self, text):
+        """Load plain text and enforce Arabic-safe spacing on every block."""
+        super().setPlainText(text)
+        self.apply_line_spacing()
+
+    def apply_line_spacing(self):
+        cursor = QTextCursor(self.document())
+        cursor.select(QTextCursor.Document)
+        block_format = QTextBlockFormat()
+        # PySide6 releases disagree on accepting the scoped enum here. The
+        # stable overload is (float, int); 1 is ProportionalHeight in Qt.
+        block_format.setLineHeight(145.0, 1)
+        cursor.mergeBlockFormat(block_format)
 
     def line_number_area_width(self):
         digits = len(str(max(1, self.blockCount())))
@@ -73,12 +95,45 @@ class CodeEditor(QPlainTextEdit):
         self.line_number_area.setGeometry(QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height()))
 
     def highlight_current_line(self):
-        selection = QTextEdit.ExtraSelection()
-        selection.format.setBackground(QColor("#2a2d2e"))
-        selection.format.setProperty(QTextFormat.FullWidthSelection, True)
-        selection.cursor = self.textCursor()
-        selection.cursor.clearSelection()
-        self.setExtraSelections([selection])
+        selections = []
+
+        current_line = QTextEdit.ExtraSelection()
+        current_line.format.setBackground(QColor("#2a2d2e"))
+        current_line.format.setProperty(QTextFormat.FullWidthSelection, True)
+        current_line.cursor = self.textCursor()
+        current_line.cursor.clearSelection()
+        selections.append(current_line)
+
+        if self.error_line is not None:
+            block = self.document().findBlockByNumber(self.error_line - 1)
+            if block.isValid():
+                error_selection = QTextEdit.ExtraSelection()
+                error_selection.cursor = QTextCursor(block)
+                error_selection.cursor.select(QTextCursor.LineUnderCursor)
+                error_selection.format.setBackground(QColor("#4b2025"))
+                error_selection.format.setUnderlineColor(QColor("#f14c4c"))
+                error_selection.format.setUnderlineStyle(QTextCharFormat.WaveUnderline)
+                error_selection.format.setProperty(QTextFormat.FullWidthSelection, True)
+                selections.append(error_selection)
+
+        self.setExtraSelections(selections)
+
+    def show_error_line(self, line):
+        """Mark a one-based source line and move the editor cursor to it."""
+        if line is None or line < 1 or line > self.blockCount():
+            self.error_line = None
+            self.highlight_current_line()
+            return
+
+        self.error_line = line
+        block = self.document().findBlockByNumber(line - 1)
+        self.setTextCursor(QTextCursor(block))
+        self.centerCursor()
+        self.highlight_current_line()
+
+    def clear_error_line(self):
+        self.error_line = None
+        self.highlight_current_line()
 
     def paint_line_numbers(self, event):
         painter = QPainter(self.line_number_area)
@@ -117,12 +172,14 @@ class TitleBar(QWidget):
         layout.addWidget(brand)
         layout.addWidget(document)
         layout.addStretch()
-        for label, action, name in [("—", parent.showMinimized, "windowButton"), ("□", parent.showMaximized, "windowButton"), ("×", parent.close, "closeButton")]:
+        for label, action, name in [("—", parent.showMinimized, "windowButton"), ("□", parent.toggle_maximized, "windowButton"), ("×", parent.close, "closeButton")]:
             button = QPushButton(label)
             button.setObjectName(name)
             button.setFixedSize(46, 35)
             button.clicked.connect(action)
             layout.addWidget(button)
+            if label == "□":
+                parent.maximize_button = button
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -142,11 +199,18 @@ class ArabicPyIDE(QMainWindow):
     def __init__(self):
         super().__init__()
         self.current_file = None
+        self.syncing_code_views = False
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setWindowTitle("ArabicPy IDE")
         self.resize(1400, 900)
         self.setStyleSheet(self.stylesheet())
         self.setup_ui()
+
+    def toggle_maximized(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     def stylesheet(self):
         return """
@@ -169,14 +233,20 @@ class ArabicPyIDE(QMainWindow):
         #fileList { background: #252526; border: none; outline: none; color: #cccccc; padding: 2px 6px; }
         #fileList::item { padding: 6px 8px; border-radius: 3px; } #fileList::item:selected { background: #37373d; color: white; }
         #tabBar { background: #252526; border-bottom: 1px solid #1e1e1e; } #activeTab { background: #1e1e1e; color: #ffffff; border-top: 1px solid #007acc; padding: 10px 16px; }
-        #codeEditor { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Tahoma'; font-size: 14px; }
+        #pythonTabSpacer { background: #1e1e1e; border-bottom: 1px solid #1e1e1e; }
+        #codeEditor { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Segoe UI'; font-size: 15px; }
+        #codePaneTitle { background: #252526; color: #cccccc; border-bottom: 1px solid #333333; padding: 7px 12px; font-weight: 600; }
+        #pythonPreview { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Segoe UI'; font-size: 15px; }
         #outputHeader { background: #252526; border-top: 1px solid #333333; } #outputTitle { color: #cccccc; font-weight: 600; padding: 7px 12px; }
         #output { background: #1e1e1e; color: #e0e0e0; border: none; font-family: 'Tahoma'; font-size: 14px; padding: 9px; }
         #statusBar { background: #007acc; color: white; } #statusLabel { background: transparent; color: white; padding: 3px 10px; font-size: 12px; }
         QSplitter::handle { background: #333333; } QSplitter::handle:hover { background: #007acc; }
+        QTabWidget QTabBar { background: #252526; }
         QTabWidget QTabBar::tab { background: #2d2d2d; color: #c8c8c8; border: none; border-top: 2px solid transparent; padding: 9px 18px; }
         QTabWidget QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; border-top: 2px solid #007acc; }
         QTabWidget QTabBar::tab:hover { background: #37373d; color: #ffffff; }
+        #tabCloseButton { background: transparent; color: #c8c8c8; border: none; border-radius: 3px; font-size: 16px; font-weight: 600; padding: 0; }
+        #tabCloseButton:hover { background: #c42b1c; color: #ffffff; }
         """
 
     def make_button(self, text, callback, name="toolButton"):
@@ -189,7 +259,9 @@ class ArabicPyIDE(QMainWindow):
         """Create a real, clickable top-level menu instead of a decorative label."""
         button = QPushButton(text)
         button.setObjectName("menuItem")
+        button.setLayoutDirection(Qt.RightToLeft)
         menu = QMenu(button)
+        menu.setLayoutDirection(Qt.RightToLeft)
         for label, callback in actions:
             menu.addAction(label, callback)
         button.setMenu(menu)
@@ -204,6 +276,7 @@ class ArabicPyIDE(QMainWindow):
 
         menu_bar = QWidget(objectName="menuBar")
         menu_layout = QHBoxLayout(menu_bar)
+        menu_layout.setDirection(QBoxLayout.RightToLeft)
         menu_layout.setContentsMargins(8, 1, 8, 1)
         menu_layout.addWidget(self.make_menu_button("ملف", [
             ("ملف جديد", self.new_file), ("فتح ملف...", self.open_file),
@@ -233,6 +306,7 @@ class ArabicPyIDE(QMainWindow):
 
         command_bar = QWidget(objectName="commandBar")
         command_layout = QHBoxLayout(command_bar)
+        command_layout.setDirection(QBoxLayout.RightToLeft)
         command_layout.setContentsMargins(10, 4, 10, 4)
         command_layout.setSpacing(4)
         command_layout.addWidget(self.make_button("＋ جديد", self.new_file))
@@ -244,6 +318,7 @@ class ArabicPyIDE(QMainWindow):
         layout.addWidget(command_bar)
 
         workspace = QHBoxLayout()
+        workspace.setDirection(QBoxLayout.RightToLeft)
         workspace.setSpacing(0)
         activity = QWidget(objectName="activityBar")
         activity_layout = QVBoxLayout(activity)
@@ -264,7 +339,9 @@ class ArabicPyIDE(QMainWindow):
         workspace.addWidget(activity)
 
         editor_splitter = QSplitter(Qt.Horizontal)
+        editor_splitter.setLayoutDirection(Qt.RightToLeft)
         sidebar = QWidget(objectName="sideBar")
+        sidebar.setLayoutDirection(Qt.RightToLeft)
         self.sidebar = sidebar
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
@@ -273,6 +350,7 @@ class ArabicPyIDE(QMainWindow):
         project = QLabel("⌄  ARABICPY", objectName="panelTitle")
         sidebar_layout.addWidget(project)
         self.file_list = QListWidget(objectName="fileList")
+        self.file_list.setLayoutDirection(Qt.RightToLeft)
         self.file_list.itemDoubleClicked.connect(self.open_project_file)
         sidebar_layout.addWidget(self.file_list)
         editor_splitter.addWidget(sidebar)
@@ -290,18 +368,52 @@ class ArabicPyIDE(QMainWindow):
         editor_layout.addWidget(tabs)
         tabs.hide()
         self.tab_widget = QTabWidget()
-        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.setLayoutDirection(Qt.RightToLeft)
+        self.tab_widget.setTabsClosable(False)
         self.tab_widget.setMovable(True)
-        self.tab_widget.tabCloseRequested.connect(self.close_tab)
         self.tab_widget.currentChanged.connect(self.switch_tab)
         add_tab = self.make_button("+", self.new_file)
         add_tab.setFixedWidth(30)
-        self.tab_widget.setCornerWidget(add_tab, Qt.TopRightCorner)
-        editor_layout.addWidget(self.tab_widget)
+        self.tab_widget.setCornerWidget(add_tab, Qt.TopLeftCorner)
+
+        code_splitter = QSplitter(Qt.Horizontal)
+        code_splitter.setLayoutDirection(Qt.RightToLeft)
+        source_panel = QWidget()
+        source_layout = QVBoxLayout(source_panel)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.setSpacing(0)
+        source_title = QLabel("ArabicPy — الكود العربي", objectName="codePaneTitle")
+        source_title.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        source_layout.addWidget(source_title)
+        source_layout.addWidget(self.tab_widget)
+        code_splitter.addWidget(source_panel)
+
+        python_panel = QWidget()
+        python_layout = QVBoxLayout(python_panel)
+        python_layout.setContentsMargins(0, 0, 0, 0)
+        python_layout.setSpacing(0)
+        python_title = QLabel("Python — كود بايثون", objectName="codePaneTitle")
+        python_title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        python_layout.addWidget(python_title)
+        self.python_tab_spacer = QWidget(objectName="pythonTabSpacer")
+        python_layout.addWidget(self.python_tab_spacer)
+        self.python_preview = CodeEditor()
+        self.python_preview.setObjectName("pythonPreview")
+        self.python_preview.setLayoutDirection(Qt.LeftToRight)
+        python_text_option = self.python_preview.document().defaultTextOption()
+        python_text_option.setAlignment(Qt.AlignLeft | Qt.AlignAbsolute)
+        self.python_preview.document().setDefaultTextOption(python_text_option)
+        self.python_preview.setFont(QFont("Segoe UI", 13))
+        self.python_preview.setReadOnly(True)
+        self.python_preview.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.python_highlighter = ArabicPyHighlighter(self.python_preview.document())
+        python_layout.addWidget(self.python_preview)
+        code_splitter.addWidget(python_panel)
+        code_splitter.setSizes([650, 650])
+        editor_layout.addWidget(code_splitter)
         self.editor = CodeEditor()
         self.highlighter = ArabicPyHighlighter(self.editor.document())
         self.editor.setPlainText(
-            '# آلة حاسبة بسيطة بـ ArabicPy\n\n'
             'الرقم_الأول = 20\n'
             'الرقم_الثاني = 5\n\n'
             'جمع = الرقم_الأول + الرقم_الثاني\n'
@@ -318,8 +430,20 @@ class ArabicPyIDE(QMainWindow):
             'اطبع(القسمة)'
         )
         self.editor.document().modificationChanged.connect(self.update_tab_title)
+        self.editor.textChanged.connect(self.update_python_preview)
+        self.editor.cursorPositionChanged.connect(self.sync_arabic_cursor_to_python)
+        self.editor.verticalScrollBar().valueChanged.connect(
+            lambda value, editor=self.editor: self.sync_scrollbars(editor, self.python_preview, value)
+        )
+        self.python_preview.cursorPositionChanged.connect(self.sync_python_cursor_to_arabic)
+        self.python_preview.verticalScrollBar().valueChanged.connect(
+            lambda value: self.sync_scrollbars(self.python_preview, self.editor, value)
+        )
         self.editor.file_path = None
-        self.tab_widget.addTab(self.editor, "غير محفوظ.apy")
+        initial_index = self.tab_widget.addTab(self.editor, "غير محفوظ.apy")
+        self.add_tab_close_button(initial_index, self.editor)
+        QTimer.singleShot(0, self.align_code_pane_headers)
+        self.update_python_preview()
         editor_splitter.addWidget(editor_panel)
         editor_splitter.setSizes([245, 1100])
 
@@ -332,6 +456,7 @@ class ArabicPyIDE(QMainWindow):
         output_layout.setSpacing(0)
         header = QWidget(objectName="outputHeader")
         header_layout = QHBoxLayout(header)
+        header_layout.setDirection(QBoxLayout.RightToLeft)
         header_layout.setContentsMargins(0, 0, 8, 0)
         header_layout.addWidget(QLabel("المخرجات", objectName="outputTitle"))
         header_layout.addStretch()
@@ -339,6 +464,10 @@ class ArabicPyIDE(QMainWindow):
         header_layout.addWidget(clear)
         output_layout.addWidget(header)
         self.output = QPlainTextEdit(objectName="output")
+        self.output.setLayoutDirection(Qt.RightToLeft)
+        output_text_option = self.output.document().defaultTextOption()
+        output_text_option.setAlignment(Qt.AlignRight | Qt.AlignAbsolute)
+        self.output.document().setDefaultTextOption(output_text_option)
         self.output.setReadOnly(True)
         self.output.setPlainText("جاهز للتشغيل.")
         output_layout.addWidget(self.output)
@@ -349,6 +478,7 @@ class ArabicPyIDE(QMainWindow):
 
         status = QWidget(objectName="statusBar")
         status_layout = QHBoxLayout(status)
+        status_layout.setDirection(QBoxLayout.RightToLeft)
         status_layout.setContentsMargins(4, 0, 4, 0)
         status_layout.addWidget(QLabel("◉  ArabicPy", objectName="statusLabel"))
         status_layout.addStretch()
@@ -369,6 +499,10 @@ class ArabicPyIDE(QMainWindow):
                 item.setData(Qt.UserRole, os.path.join(root, filename))
                 self.file_list.addItem(item)
 
+    def align_code_pane_headers(self):
+        """Match Python's header height to ArabicPy's document-tab row."""
+        self.python_tab_spacer.setFixedHeight(self.tab_widget.tabBar().height())
+
     def update_tab_title(self, modified=False):
         index = self.tab_widget.indexOf(self.editor)
         if index >= 0:
@@ -384,6 +518,7 @@ class ArabicPyIDE(QMainWindow):
             self.editor = self.tab_widget.widget(index)
             self.current_file = getattr(self.editor, "file_path", None)
             self.update_position()
+            self.update_python_preview()
 
     def add_editor_tab(self, content="", path=None):
         editor = CodeEditor()
@@ -393,10 +528,30 @@ class ArabicPyIDE(QMainWindow):
         editor.document().setModified(False)
         editor.document().modificationChanged.connect(lambda changed: self.update_tab_title(changed))
         editor.cursorPositionChanged.connect(self.update_position)
+        editor.cursorPositionChanged.connect(self.sync_arabic_cursor_to_python)
+        editor.textChanged.connect(self.update_python_preview)
+        editor.verticalScrollBar().valueChanged.connect(
+            lambda value, source_editor=editor: self.sync_scrollbars(
+                source_editor, self.python_preview, value
+            )
+        )
         name = os.path.basename(path) if path else "غير محفوظ.apy"
-        self.tab_widget.addTab(editor, name)
+        index = self.tab_widget.addTab(editor, name)
+        self.add_tab_close_button(index, editor)
         self.tab_widget.setCurrentWidget(editor)
         return editor
+
+    def add_tab_close_button(self, index, editor):
+        close_button = QPushButton("×")
+        close_button.setObjectName("tabCloseButton")
+        close_button.setFixedSize(20, 20)
+        close_button.setToolTip("إغلاق")
+        close_button.clicked.connect(
+            lambda: self.close_tab(self.tab_widget.indexOf(editor))
+        )
+        self.tab_widget.tabBar().setTabButton(
+            index, QTabBar.ButtonPosition.LeftSide, close_button
+        )
 
     def close_tab(self, index):
         editor = self.tab_widget.widget(index)
@@ -404,6 +559,123 @@ class ArabicPyIDE(QMainWindow):
         editor.deleteLater()
         if self.tab_widget.count() == 0:
             self.add_editor_tab()
+
+    def update_python_preview(self):
+        """Translate the active ArabicPy document into a live Python preview."""
+        if not hasattr(self, "python_preview") or not hasattr(self, "editor"):
+            return
+
+        source = self.editor.toPlainText()
+        if not source.strip():
+            self.set_python_preview_text(
+                "# اكتب كود ArabicPy في الجهة اليمنى\n"
+                "# The generated Python code will appear here."
+            )
+            return
+
+        try:
+            tokens = Lexer(source).tokenize()
+            ast = Parser(tokens).parse()
+            python_code = Generator().generate(ast)
+            python_code = self.match_source_spacing(source, python_code)
+            self.set_python_preview_text(
+                python_code or "# No Python code has been generated yet."
+            )
+        except Exception as error:
+            line = getattr(error, "line", None)
+            column = getattr(error, "column", None)
+            location = ""
+            if line is not None:
+                location = f"\n# Error at line {line}, column {column or 1}."
+            self.set_python_preview_text(
+                "# Fix or complete the ArabicPy code to generate Python."
+                f"{location}"
+            )
+
+    def set_python_preview_text(self, text):
+        """Refresh generated code without moving the Arabic editing cursor."""
+        self.syncing_code_views = True
+        try:
+            self.python_preview.setPlainText(text)
+        finally:
+            self.syncing_code_views = False
+        self.sync_cursor_line(self.editor, self.python_preview)
+
+    @staticmethod
+    def match_source_spacing(source, python_code):
+        """Keep blank lines and comments aligned for one-line statements."""
+        source_lines = source.splitlines()
+        generated_lines = python_code.splitlines()
+        source_code_lines = [
+            line for line in source_lines
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+
+        # Compound statements can expand into a different number of Python
+        # lines. In that case, retain the generator's structurally correct
+        # formatting rather than guessing at a misleading alignment.
+        if len(source_code_lines) != len(generated_lines):
+            return python_code
+
+        aligned_lines = []
+        generated_index = 0
+        for source_line in source_lines:
+            if not source_line.strip():
+                aligned_lines.append("")
+            elif source_line.lstrip().startswith("#"):
+                aligned_lines.append(source_line)
+            else:
+                aligned_lines.append(generated_lines[generated_index])
+                generated_index += 1
+
+        return "\n".join(aligned_lines)
+
+    def sync_arabic_cursor_to_python(self):
+        if self.syncing_code_views or self.sender() is not self.editor:
+            return
+        self.sync_cursor_line(self.editor, self.python_preview)
+
+    def sync_python_cursor_to_arabic(self):
+        if self.syncing_code_views:
+            return
+        self.sync_cursor_line(self.python_preview, self.editor)
+
+    def sync_cursor_line(self, source_editor, target_editor):
+        """Highlight the corresponding row when both views are line-aligned."""
+        if source_editor.blockCount() != target_editor.blockCount():
+            return
+
+        line = source_editor.textCursor().blockNumber()
+        target_block = target_editor.document().findBlockByNumber(line)
+        if not target_block.isValid():
+            return
+
+        self.syncing_code_views = True
+        try:
+            target_editor.setTextCursor(QTextCursor(target_block))
+            target_editor.ensureCursorVisible()
+        finally:
+            self.syncing_code_views = False
+
+    def sync_scrollbars(self, source_editor, target_editor, value):
+        """Mirror scroll position proportionally between the two code panes."""
+        if self.syncing_code_views or source_editor is not self.editor and source_editor is not self.python_preview:
+            return
+
+        source_bar = source_editor.verticalScrollBar()
+        target_bar = target_editor.verticalScrollBar()
+        source_range = source_bar.maximum() - source_bar.minimum()
+        target_range = target_bar.maximum() - target_bar.minimum()
+        target_value = target_bar.minimum()
+        if source_range > 0:
+            ratio = (value - source_bar.minimum()) / source_range
+            target_value += round(ratio * target_range)
+
+        self.syncing_code_views = True
+        try:
+            target_bar.setValue(target_value)
+        finally:
+            self.syncing_code_views = False
 
     def update_position(self):
         cursor = self.editor.textCursor()
@@ -526,8 +798,17 @@ class ArabicPyIDE(QMainWindow):
                     "arabicpy_ai_reply": arabicpy_ai_reply,
                 })
             result = output.getvalue()
+            self.editor.clear_error_line()
             self.output.setPlainText(result if result else "تم التنفيذ بنجاح — لا توجد مخرجات.")
         except Exception as error:
+            line = getattr(error, "line", None)
+            if line is None:
+                traceback = error.__traceback__
+                while traceback:
+                    if traceback.tb_frame.f_code.co_filename == "<string>":
+                        line = traceback.tb_lineno
+                    traceback = traceback.tb_next
+            self.editor.show_error_line(line)
             self.output.setPlainText(format_error(error, source))
 
 

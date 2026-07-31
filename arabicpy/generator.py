@@ -47,7 +47,10 @@ class Generator:
                     code.append(generated)
 
 
-            return "\n\n".join(code)
+            # Keep generated Python visually aligned with ArabicPy: one source
+            # statement should occupy one output line without an extra blank
+            # line being inserted between every statement.
+            return "\n".join(code)
 
 
 
