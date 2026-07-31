@@ -1,7 +1,8 @@
-print("LOADED PARSER FILE")
 from .ast_nodes import *
 
+
 class Parser:
+
 
     def __init__(self, tokens):
         self.tokens = tokens
@@ -177,9 +178,14 @@ class Parser:
 
                 self.advance()
                 continue
-                        
             if self.current() and self.current().type == "FUNCTION":
-                return self.parse_function()
+
+                statement = self.parse_function()
+
+                if statement:
+                    body.append(statement)
+
+                    continue
 
             statement = self.parse_statement()
 
@@ -199,7 +205,7 @@ class Parser:
 
 
 
-        return body
+        return Block(body)
         
     def parse_primary(self):
 
@@ -467,12 +473,21 @@ class Parser:
 
 
 
-            return IfStatement(
+                return IfStatement(
                 condition,
                 body,
                 else_body
             )
-        
+
+
+        # FUNCTION CALL
+        if token.type == "IDENTIFIER":
+
+            if self.peek() and self.peek().type == "LPAREN":
+
+                return self.parse_expression()
+
+
         return None
     # =====================
     # Assignment
@@ -518,7 +533,7 @@ class Parser:
                     "Parser stuck at: " + str(self.current())
                 )
 
-            if self.current() and self.current().type in (
+            if self.current().type in (
                 "NEWLINE",
                 "INDENT",
                 "DEDENT"
@@ -526,40 +541,23 @@ class Parser:
                 self.advance()
                 continue
 
-            # assignment
 
             if (
-                self.current() and self.current().type == "IDENTIFIER"
+                self.current().type == "IDENTIFIER"
                 and self.peek()
                 and self.peek().type == "EQUALS"
             ):
-
                 statement = self.parse_assignment()
 
-
             else:
-
                 statement = self.parse_statement()
-        
-            # function call
-
-            if (
-                self.current() and self.current().type == "IDENTIFIER"
-                and self.peek().type == "LPAREN"
-            ):
-
-                statement = self.parse_expression()
-
-                return statement
 
 
             if statement:
+                statements.append(statement)
 
-                statements.append(
-                    statement
-                )
-        print("BEFORE RETURN")
-        print(Program)
+
+
         return Program(
             statements
-        )        
+        )

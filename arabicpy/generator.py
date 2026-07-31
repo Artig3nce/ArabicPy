@@ -3,7 +3,6 @@ from .ast_nodes import *
 
 class Generator:
     def generate(self, node):
-        print(type(node))
 
         if isinstance(node, Program):
 
@@ -182,20 +181,10 @@ class Generator:
                 for line in body.splitlines()
             )
 
-
             return (
                 f"def {node.name}():\n"
                 f"{body}"
             )
-        elif isinstance(node, FunctionCall):
-
-            args = ", ".join(
-                self.generate(arg)
-                for arg in node.arguments
-            )
-
-            return f"{node.name}({args})"
-
 
 
         elif isinstance(node, FunctionCall):
@@ -234,5 +223,5 @@ class Generator:
             )
 
 
-
         return ""
+

@@ -504,7 +504,7 @@ class ArabicPyIDE(QMainWindow):
     # =========================
 
     def run_code(self):
-        print("RUN CLICKED")
+
         try:
 
             source = self.editor.toPlainText()
@@ -531,8 +531,8 @@ class ArabicPyIDE(QMainWindow):
 
                 exec(
                     python_code,
-                    {}
-                )
+                    globals()
+    )
 
 
             result = output.getvalue()
