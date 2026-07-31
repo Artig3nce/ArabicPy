@@ -3,6 +3,7 @@ import sys
 from .lexer import Lexer
 from .parser import Parser
 from .generator import Generator
+from .ai import reply as arabicpy_ai_reply
 
 
 VERSION = "0.1.0"
@@ -71,7 +72,10 @@ def run():
         generator = Generator()
         python_code = generator.generate(ast)
 
-        exec(python_code)
+        exec(python_code, {
+            "__name__": "__main__",
+            "arabicpy_ai_reply": arabicpy_ai_reply,
+        })
 
 
     except FileNotFoundError:

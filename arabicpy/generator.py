@@ -1,22 +1,33 @@
-
 from .ast_nodes import *
+
 
 class Generator:
 
     def clean_name(self, name):
-        return name
+        replacements = {
+            "أ": "a",
+            "ب": "b",
+            "ج": "c",
+            "د": "d",
+            "هـ": "h",
+            "و": "w",
+            "ي": "y"
+        }
+
+        return replacements.get(name, name)
+
+
     def generate(self, node):
+
         if isinstance(node, Program):
 
             functions = []
             other = []
 
-
             for statement in node.statements:
 
                 if isinstance(statement, FunctionDefinition):
                     functions.append(statement)
-
                 else:
                     other.append(statement)
 
@@ -24,31 +35,34 @@ class Generator:
             code = []
 
 
-            # functions first
             for function in functions:
-                code.append(
-                    self.generate(function)
-                )
+                generated = self.generate(function)
+                if generated is not None:
+                    code.append(generated)
 
 
-            # calls and normal code after
             for statement in other:
-                code.append(
-                    self.generate(statement)
-                )
+                generated = self.generate(statement)
+                if generated is not None:
+                    code.append(generated)
 
 
             return "\n\n".join(code)
+
+
+
         elif isinstance(node, Block):
 
             results = []
 
             for statement in node.statements:
                 generated = self.generate(statement)
-                print("BLOCK GENERATED:", generated)
-                results.append(generated)
+                if generated is not None:
+                    results.append(generated)
+
 
             return "\n".join(results)
+
 
 
         elif isinstance(node, PrintStatement):
@@ -60,7 +74,7 @@ class Generator:
         elif isinstance(node, Assignment):
 
             return (
-                f"{node.name} = "
+                f"{self.clean_name(node.name)} = "
                 f"{self.generate(node.value)}"
             )
 
@@ -69,6 +83,7 @@ class Generator:
         elif isinstance(node, Variable):
 
             return self.clean_name(node.name)
+
 
 
         elif isinstance(node, Number):
@@ -117,6 +132,7 @@ class Generator:
                 for line in body.splitlines()
             )
 
+
             result = (
                 f"if {self.generate(node.condition)}:\n"
                 f"{body}"
@@ -140,6 +156,8 @@ class Generator:
 
             return result
 
+
+
         elif isinstance(node, WhileStatement):
 
             body = self.generate(node.body)
@@ -149,11 +167,14 @@ class Generator:
                 for line in body.splitlines()
             )
 
+
             return (
                 f"while {self.generate(node.condition)}:\n"
                 f"{body}"
             )
-        
+
+
+
         elif isinstance(node, ForStatement):
 
             body = self.generate(node.body)
@@ -163,6 +184,7 @@ class Generator:
                 for line in body.splitlines()
             )
 
+
             return (
                 f"for {node.variable} "
                 f"in {self.generate(node.iterable)}:\n"
@@ -170,15 +192,14 @@ class Generator:
             )
 
 
+
         elif isinstance(node, FunctionDefinition):
-            print("FUNCTION NAME:", node.name)
-            print("FUNCTION BODY:", node.body)
-            print("FUNCTION BODY:", node.body.statements)
 
-            params = ", ".join(node.parameters)
-            print("PARAMS:", node.parameters)
+            params = ", ".join(
+                self.clean_name(x)
+                for x in node.parameters
+            )
 
-            params = ", ".join(node.parameters)
 
             body = self.generate(node.body)
 
@@ -187,15 +208,15 @@ class Generator:
                 for line in body.splitlines()
             )
 
+
             return (
                 f"def {self.clean_name(node.name)}({params}):\n"
                 f"{body}"
             )
 
-        elif isinstance(node, FunctionCall):
 
-            print("FUNCTION:", node.name)
-            print("ARGS:", node.arguments)
+
+        elif isinstance(node, FunctionCall):
 
             args = ", ".join(
                 self.generate(arg)
@@ -206,36 +227,43 @@ class Generator:
             if node.name == "ادخل":
                 return "input()"
 
+            if node.name == "\u0627\u062f\u062e\u0644":
+                return "input()"
+
+
             if node.name == "طول":
                 return f"len({args})"
+
 
             if node.name == "رقم":
                 return f"int({args})"
 
+
             if node.name == "نوع":
                 return f"type({args})"
 
+            # اطبع(اسأل("مرحبا")): a dependency-free, built-in AI helper.
+            if node.name == "\u0627\u0633\u0623\u0644":
+                return f"arabicpy_ai_reply({args})"
 
-            return f"{self.clean_name(node.name)}({args})"
+
+            return (
+                f"{self.clean_name(node.name)}({args})"
+            )
+
+
 
         elif isinstance(node, ReturnStatement):
 
             value = self.generate(node.value)
 
-            print("RETURN:", value)
-
             return f"return {value}"
 
-        def clean_name(self, name):
+        elif isinstance(node, IndexAccess):
 
-            replacements = {
-                "أ": "a",
-                "ب": "b",
-                "ج": "c",
-                "د": "d",
-                "هـ": "h",
-                "و": "w",
-                "ي": "y"
-            }
+            return (
+                f"{self.generate(node.value)}"
+                f"[{self.generate(node.index)}]"
+            )
 
-            return replacements.get(name, name)
+        raise TypeError(f"Cannot generate Python for {type(node).__name__}")

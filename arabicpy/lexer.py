@@ -19,21 +19,17 @@ KEYWORDS = {
 
 class Lexer:
 
-    def __init__(self, text):
-        self.text = text
+    def __init__(self, code):
+        self.code = code
         self.position = 0
 
 
     def current(self):
-        if self.position >= len(self.text):
-            return None
-        return self.text[self.position]
 
-
-    def peek(self):
-        if self.position + 1 >= len(self.text):
+        if self.position >= len(self.code):
             return None
-        return self.text[self.position + 1]
+
+        return self.code[self.position]
 
 
     def advance(self):
@@ -50,9 +46,7 @@ class Lexer:
 
 
         while self.current() is not None:
-            print("BEFORE CHECKS")
 
-            print("CURRENT:", repr(self.current()), "POS:", self.position)
 
             # indentation
             if start_of_line:
@@ -65,7 +59,6 @@ class Lexer:
 
 
                 if self.current() == "\n":
-
                     tokens.append(
                         Token("NEWLINE", "\\n")
                     )
@@ -88,7 +81,6 @@ class Lexer:
 
                 elif spaces < current_indent:
 
-
                     while spaces < indent_stack[-1]:
 
                         indent_stack.pop()
@@ -107,7 +99,6 @@ class Lexer:
 
 
             # comments
-
             if current == "#":
 
                 while (
@@ -121,7 +112,6 @@ class Lexer:
 
 
             # newline
-
             if current == "\n":
 
                 tokens.append(
@@ -137,7 +127,6 @@ class Lexer:
 
 
             # spaces
-
             if current in " \t\r":
 
                 self.advance()
@@ -147,7 +136,6 @@ class Lexer:
 
 
             # numbers
-
             if current.isdigit():
 
                 tokens.append(
@@ -159,7 +147,6 @@ class Lexer:
 
 
             # strings
-
             if current == '"':
 
                 tokens.append(
@@ -170,15 +157,10 @@ class Lexer:
 
 
 
-            # identifiers / keywords
-
+            # identifiers
             if (
                 current.isalpha()
-                or (
-                "\u0600" <= current <= "\u06FF"
-                and current not in "،؛؟"
-                )
-                
+                or "\u0600" <= current <= "\u06FF"
             ):
 
                 tokens.append(
@@ -190,17 +172,16 @@ class Lexer:
 
 
             # operators
-            print("TRY OPERATOR:", repr(current))
-
             operator = self.read_operator()
 
-            print("RESULT:", operator, "NEW POS:", self.position)
 
             if operator:
+
                 tokens.append(operator)
+
                 continue
 
-            print("ABOUT TO RAISE")
+
 
             raise Exception(
                 f"Unknown character: {current}"
@@ -218,6 +199,7 @@ class Lexer:
 
 
         return tokens
+
 
 
 
@@ -249,7 +231,7 @@ class Lexer:
 
         self.advance()
 
-        string = ""
+        value = ""
 
 
         while (
@@ -257,26 +239,21 @@ class Lexer:
             and self.current() != '"'
         ):
 
-            string += self.current()
+            value += self.current()
 
             self.advance()
 
 
+        if self.current() == '"':
 
-        if self.current() != '"':
-
-            raise Exception(
-                "Unterminated string"
-            )
-
-
-        self.advance()
+            self.advance()
 
 
         return Token(
             "STRING",
-            string
+            value
         )
+
 
 
 
@@ -291,10 +268,7 @@ class Lexer:
             and (
                 self.current().isalnum()
                 or self.current() == "_"
-                or (
-                    "\u0621" <= self.current() <= "\u063A"
-                    or "\u0641" <= self.current() <= "\u064A"
-            )
+                or "\u0600" <= self.current() <= "\u06FF"
             )
         ):
 
@@ -318,9 +292,15 @@ class Lexer:
             token_type,
             word
         )
+
+
+
+
+
     def read_operator(self):
 
         current = self.current()
+
 
         operators = {
 
@@ -347,15 +327,18 @@ class Lexer:
         }
 
 
+
         if current in operators:
 
             token_type, value = operators[current]
 
             self.advance()
 
+
             return Token(
                 token_type,
                 value
             )
+
 
         return None

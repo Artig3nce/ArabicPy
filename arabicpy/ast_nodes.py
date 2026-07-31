@@ -201,3 +201,17 @@ class ReturnStatement:
 
     def __repr__(self):
         return f"ReturnStatement({self.value})"
+
+
+class WhileStatement:
+
+    def __init__(self, condition, body):
+      self.condition = condition
+      self.body = body
+
+
+class IndexAccess:
+
+    def __init__(self, value, index):
+        self.value = value
+        self.index = index

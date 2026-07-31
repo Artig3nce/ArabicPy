@@ -54,8 +54,65 @@ class Parser:
         self.advance()
 
         return token
-    
+    def parse_while(self):
 
+        self.expect("WHILE")
+
+        condition = self.parse_expression()
+
+        self.expect("COLON")
+
+        return WhileStatement(
+            condition,
+            # parse_block consumes newlines/indentation and ignores blank lines.
+            # The previous loop appended None for every newline, which later
+            # caused Generator to fail while joining the generated code.
+            self.parse_block()
+        )
+
+    def parse_if(self):
+
+        self.expect("IF")
+
+        condition = self.parse_expression()
+
+        self.expect("COLON")
+
+        self.expect("NEWLINE")
+
+        self.expect("INDENT")
+
+        body = self.parse_block()
+
+        self.expect("DEDENT")
+
+
+        else_body = None
+
+
+        if (
+            self.current()
+            and self.current().type == "ELSE"
+        ):
+
+            self.advance()
+
+            self.expect("COLON")
+
+            self.expect("NEWLINE")
+
+            self.expect("INDENT")
+
+            else_body = self.parse_block()
+
+            self.expect("DEDENT")
+
+
+        return IfStatement(
+            condition,
+            body,
+            else_body
+        )
     def parse_factor(self):
 
         left = self.parse_primary()
@@ -243,6 +300,21 @@ class Parser:
             return Boolean(False)
 
 
+        # List literal: [10, 20, 30]
+        if token.type == "LBRACKET":
+            self.advance()
+            elements = []
+
+            while self.current() and self.current().type != "RBRACKET":
+                elements.append(self.parse_expression())
+                if self.current() and self.current().type == "COMMA":
+                    self.advance()
+                else:
+                    break
+
+            self.expect("RBRACKET")
+            return List(elements)
+
         # =====================
         # Identifier
         # Variable or Function Call
@@ -253,7 +325,6 @@ class Parser:
             name = token.value
 
             self.advance()
-
 
             # Function Call
             if self.current() and self.current().type == "LPAREN":
@@ -286,17 +357,22 @@ class Parser:
                 self.expect("RPAREN")
 
 
-                return FunctionCall(
+                value = FunctionCall(
                     name,
                     arguments
                 )
+            else:
+                value = Variable(name)
 
+            # Index access must be handled before returning the identifier.
+            # A loop also supports chained indexing such as بيانات[0][1].
+            while self.current() and self.current().type == "LBRACKET":
+                self.advance()
+                index = self.parse_expression()
+                self.expect("RBRACKET")
+                value = IndexAccess(value, index)
 
-            # Normal Variable
-
-            return Variable(name)
-
-
+            return value
 
         # =====================
         # Parentheses
@@ -407,7 +483,9 @@ class Parser:
                 else_body
             )
         # ASSIGNMENT
-
+        elif self.current().type == "WHILE":
+            return self.parse_while()
+        
         if (
             token.type == "IDENTIFIER"
             and self.peek()
@@ -417,7 +495,7 @@ class Parser:
             return self.parse_assignment()
 
         return None
-
+        
 
     # =====================
     # Function Definition
@@ -556,3 +634,5 @@ class Parser:
         return Program(
             statements
         )
+
+    
