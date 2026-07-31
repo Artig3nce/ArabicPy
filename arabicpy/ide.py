@@ -505,53 +505,53 @@ class ArabicPyIDE(QMainWindow):
 
     def run_code(self):
 
+        print("RUN BUTTON PRESSED")
+
+        print("BEFORE GET TEXT")
+        source = self.editor.toPlainText()
+        print("AFTER GET TEXT")
+        print(source)
+
         try:
-
-            source = self.editor.toPlainText()
-
-
+            print("START LEXER")
             lexer = Lexer(source)
 
             tokens = lexer.tokenize()
 
+            print("AFTER LEXER")
 
             parser = Parser(tokens)
 
+            print("BEFORE PARSE")
             ast = parser.parse()
-
+            print("AFTER PARSE")
 
             generator = Generator()
 
+            print("BEFORE GENERATE")
             python_code = generator.generate(ast)
+            print("AFTER GENERATE")
 
+            print(python_code)
             output = io.StringIO()
-
 
             with contextlib.redirect_stdout(output):
 
                 exec(
                     python_code,
                     globals()
-    )
-
+                )
 
             result = output.getvalue()
 
+            print("===== PROGRAM OUTPUT =====")
+            print(result)
 
-            self.output.setPlainText(
-                result
-            )
-
+            self.output.setPlainText(result)
 
         except Exception as e:
-
-
-            self.output.setPlainText(
-                "خطأ:\n" + str(e)
-            )
-
-
-
+            print("ERROR:", e)
+            raise
 # =========================
 # Start
 # =========================

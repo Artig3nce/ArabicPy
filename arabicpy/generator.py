@@ -2,29 +2,53 @@
 from .ast_nodes import *
 
 class Generator:
-    def generate(self, node):
 
+    def clean_name(self, name):
+        return name
+    def generate(self, node):
         if isinstance(node, Program):
+
+            functions = []
+            other = []
+
+
+            for statement in node.statements:
+
+                if isinstance(statement, FunctionDefinition):
+                    functions.append(statement)
+
+                else:
+                    other.append(statement)
+
 
             code = []
 
-            for statement in node.statements:
-                result = self.generate(statement)
 
-                if result:
-                    code.append(result)
+            # functions first
+            for function in functions:
+                code.append(
+                    self.generate(function)
+                )
+
+
+            # calls and normal code after
+            for statement in other:
+                code.append(
+                    self.generate(statement)
+                )
+
 
             return "\n\n".join(code)
-
-
-
         elif isinstance(node, Block):
 
-            return "\n".join(
-                self.generate(statement)
-                for statement in node.statements
-            )
+            results = []
 
+            for statement in node.statements:
+                generated = self.generate(statement)
+                print("BLOCK GENERATED:", generated)
+                results.append(generated)
+
+            return "\n".join(results)
 
 
         elif isinstance(node, PrintStatement):
@@ -44,8 +68,7 @@ class Generator:
 
         elif isinstance(node, Variable):
 
-            return node.name
-
+            return self.clean_name(node.name)
 
 
         elif isinstance(node, Number):
@@ -94,7 +117,6 @@ class Generator:
                 for line in body.splitlines()
             )
 
-
             result = (
                 f"if {self.generate(node.condition)}:\n"
                 f"{body}"
@@ -118,8 +140,6 @@ class Generator:
 
             return result
 
-
-
         elif isinstance(node, WhileStatement):
 
             body = self.generate(node.body)
@@ -129,31 +149,11 @@ class Generator:
                 for line in body.splitlines()
             )
 
-
             return (
                 f"while {self.generate(node.condition)}:\n"
                 f"{body}"
             )
-
-
-
-        elif isinstance(node, RepeatStatement):
-
-            body = self.generate(node.body)
-
-            body = "\n".join(
-                "    " + line
-                for line in body.splitlines()
-            )
-
-
-            return (
-                f"for _ in range({self.generate(node.count)}):\n"
-                f"{body}"
-            )
-
-
-
+        
         elif isinstance(node, ForStatement):
 
             body = self.generate(node.body)
@@ -163,7 +163,6 @@ class Generator:
                 for line in body.splitlines()
             )
 
-
             return (
                 f"for {node.variable} "
                 f"in {self.generate(node.iterable)}:\n"
@@ -171,8 +170,15 @@ class Generator:
             )
 
 
-
         elif isinstance(node, FunctionDefinition):
+            print("FUNCTION NAME:", node.name)
+            print("FUNCTION BODY:", node.body)
+            print("FUNCTION BODY:", node.body.statements)
+
+            params = ", ".join(node.parameters)
+            print("PARAMS:", node.parameters)
+
+            params = ", ".join(node.parameters)
 
             body = self.generate(node.body)
 
@@ -182,12 +188,14 @@ class Generator:
             )
 
             return (
-                f"def {node.name}():\n"
+                f"def {self.clean_name(node.name)}({params}):\n"
                 f"{body}"
             )
 
-
         elif isinstance(node, FunctionCall):
+
+            print("FUNCTION:", node.name)
+            print("ARGS:", node.arguments)
 
             args = ", ".join(
                 self.generate(arg)
@@ -198,30 +206,36 @@ class Generator:
             if node.name == "ادخل":
                 return "input()"
 
-
             if node.name == "طول":
                 return f"len({args})"
 
-
             if node.name == "رقم":
                 return f"int({args})"
-
 
             if node.name == "نوع":
                 return f"type({args})"
 
 
-            return f"{node.name}({args})"
-
-
+            return f"{self.clean_name(node.name)}({args})"
 
         elif isinstance(node, ReturnStatement):
 
-            return (
-                f"return "
-                f"{self.generate(node.value)}"
-            )
+            value = self.generate(node.value)
 
+            print("RETURN:", value)
 
-        return ""
+            return f"return {value}"
 
+        def clean_name(self, name):
+
+            replacements = {
+                "أ": "a",
+                "ب": "b",
+                "ج": "c",
+                "د": "d",
+                "هـ": "h",
+                "و": "w",
+                "ي": "y"
+            }
+
+            return replacements.get(name, name)

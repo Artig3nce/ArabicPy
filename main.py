@@ -26,6 +26,18 @@ ast = parser.parse()
 
 generator = Generator()
 
+print("=== BEFORE GENERATE ===")
+
 python_code = generator.generate(ast)
 
+print("=== GENERATED CODE ===")
+print(python_code)
+
 exec(python_code)
+
+with contextlib.redirect_stdout(output):
+
+    exec(
+        python_code,
+        globals()
+    )

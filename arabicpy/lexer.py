@@ -50,7 +50,9 @@ class Lexer:
 
 
         while self.current() is not None:
+            print("BEFORE CHECKS")
 
+            print("CURRENT:", repr(self.current()), "POS:", self.position)
 
             # indentation
             if start_of_line:
@@ -172,8 +174,11 @@ class Lexer:
 
             if (
                 current.isalpha()
-                or current == "_"
-                or "\u0600" <= current <= "\u06FF"
+                or (
+                "\u0600" <= current <= "\u06FF"
+                and current not in "،؛؟"
+                )
+                
             ):
 
                 tokens.append(
@@ -185,17 +190,17 @@ class Lexer:
 
 
             # operators
+            print("TRY OPERATOR:", repr(current))
 
             operator = self.read_operator()
 
+            print("RESULT:", operator, "NEW POS:", self.position)
 
             if operator:
-
                 tokens.append(operator)
-
                 continue
 
-
+            print("ABOUT TO RAISE")
 
             raise Exception(
                 f"Unknown character: {current}"
@@ -286,7 +291,10 @@ class Lexer:
             and (
                 self.current().isalnum()
                 or self.current() == "_"
-                or "\u0600" <= self.current() <= "\u06FF"
+                or (
+                    "\u0621" <= self.current() <= "\u063A"
+                    or "\u0641" <= self.current() <= "\u064A"
+            )
             )
         ):
 
@@ -310,46 +318,14 @@ class Lexer:
             token_type,
             word
         )
-
-
-
-
-
+    
     def read_operator(self):
 
         current = self.current()
 
-
-
-        if current == "=" and self.peek() == "=":
-
-            self.advance()
-            self.advance()
-
-            return Token(
-                "EQUAL_EQUAL",
-                "=="
-            )
-
-
-
-        if current == "!" and self.peek() == "=":
-
-            self.advance()
-            self.advance()
-
-            return Token(
-                "NOT_EQUAL",
-                "!="
-            )
-
-
+        print("READ OP:", repr(current), "POS:", self.position)
 
         operators = {
-
-            ">": ("GREATER", ">"),
-            "<": ("LESS", "<"),
-
             "+": ("PLUS", "+"),
             "-": ("MINUS", "-"),
             "*": ("MULTIPLY", "*"),
@@ -364,24 +340,19 @@ class Lexer:
 
             ",": ("COMMA", ","),
             "،": ("COMMA", "،"),
-
-            "[": ("LBRACKET", "["),
-            "]": ("RBRACKET", "]"),
-
         }
-
-
 
         if current in operators:
 
             token_type, value = operators[current]
 
+            print("FOUND OPERATOR", token_type)
+
             self.advance()
+
+            print("NEW POS:", self.position)
 
             return Token(
                 token_type,
                 value
             )
-
-
-        return None

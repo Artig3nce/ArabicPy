@@ -321,174 +321,163 @@ class Parser:
         # =====================
         # Function
         # =====================
-    def parse_function(self):
-
-        self.advance()  # FUNCTION
-
-        name = self.expect("IDENTIFIER").value
-
-        self.expect("LPAREN")
-        self.expect("RPAREN")
-        self.expect("COLON")
-
-
-        if self.current() and self.current().type == "NEWLINE":
-            self.advance()
-
-
-        if self.current() and self.current().type == "INDENT":
-            self.advance()
-
-
-        statements = []
-
-
-        while self.current() and self.current().type != "DEDENT":
-
-            if self.current().type == "NEWLINE":
-                self.advance()
-                continue
-
-
-            old_position = self.position
-
-            statement = self.parse_statement()
-
-            if statement:
-                statements.append(statement)
-
-
-            if self.position == old_position:
-                print("FUNCTION STUCK AT:", self.current())
-                self.advance()
-
-
-        if self.current() and self.current().type == "DEDENT":
-            self.advance()
-
-
-        return FunctionDefinition(
-            name,
-            [],
-            Block(statements)
-        )
-
-    # =====================
-    # Statements
-    # =====================
-
     def parse_statement(self):
 
         token = self.current()
 
 
         if token is None:
-
             return None
 
 
-
+        # NEWLINE
         if token.type == "NEWLINE":
-
             self.advance()
-
             return None
-
 
 
         # FUNCTION
-
         if token.type == "FUNCTION":
-
             return self.parse_function()
-        # PRINT
 
+
+        # PRINT
         if token.type == "PRINT":
 
             self.advance()
 
-
             self.expect("LPAREN")
-
 
             value = self.parse_expression()
 
-
             self.expect("RPAREN")
 
-
-            return PrintStatement(
-                value
-            )
+            return PrintStatement(value)
 
 
 
         # RETURN
-
         if token.type == "RETURN":
 
             self.advance()
 
-
             value = self.parse_expression()
 
+            return ReturnStatement(value)
 
-            return ReturnStatement(
-                value
-            )
+
+
+        # FUNCTION CALL
+        if (
+            token.type == "IDENTIFIER"
+            and self.peek()
+            and self.peek().type == "LPAREN"
+        ):
+
+            return self.parse_expression()
 
 
 
         # IF
-
         if token.type == "IF":
 
             self.advance()
 
-
             condition = self.parse_expression()
-
 
             self.expect("COLON")
 
-
             body = self.parse_block()
-
 
             else_body = None
 
 
-            if (
-                self.current()
-                and self.current() and self.current().type == "ELSE"
-            ):
+            if self.current() and self.current().type == "ELSE":
 
                 self.advance()
 
-
                 self.expect("COLON")
-
 
                 else_body = self.parse_block()
 
 
-
-                return IfStatement(
+            return IfStatement(
                 condition,
                 body,
                 else_body
             )
+        # ASSIGNMENT
 
+        if (
+            token.type == "IDENTIFIER"
+            and self.peek()
+            and self.peek().type == "EQUALS"
+        ):
 
-        # FUNCTION CALL
-        if token.type == "IDENTIFIER":
-
-            if self.peek() and self.peek().type == "LPAREN":
-
-                return self.parse_expression()
-
+            return self.parse_assignment()
 
         return None
+
+
+    # =====================
+    # Function Definition
+    # =====================
+
+    def parse_function(self):
+
+        # دالة
+        self.advance()
+
+
+        # function name
+        name = self.expect(
+            "IDENTIFIER"
+        ).value
+
+
+        self.expect("LPAREN")
+
+
+        parameters = []
+
+
+        while (
+            self.current()
+            and self.current().type != "RPAREN"
+        ):
+
+            parameters.append(
+                self.expect("IDENTIFIER").value
+            )
+
+
+            if (
+                self.current()
+                and self.current().type == "COMMA"
+            ):
+                self.advance()
+
+            else:
+                break
+
+
+        self.expect("RPAREN")
+
+
+        self.expect("COLON")
+
+
+        body = self.parse_block()
+
+
+        return FunctionDefinition(
+            name,
+            parameters,
+            body
+        )
+
+
+
     # =====================
     # Assignment
     # =====================
@@ -514,7 +503,6 @@ class Parser:
         )
 
 
-
     # =====================
     # Program
     # =====================
@@ -524,14 +512,17 @@ class Parser:
 
         limit = 0
 
+
         while self.current():
 
             limit += 1
+
 
             if limit > 1000:
                 raise Exception(
                     "Parser stuck at: " + str(self.current())
                 )
+
 
             if self.current().type in (
                 "NEWLINE",
@@ -542,15 +533,19 @@ class Parser:
                 continue
 
 
+
             if (
                 self.current().type == "IDENTIFIER"
                 and self.peek()
                 and self.peek().type == "EQUALS"
             ):
+
                 statement = self.parse_assignment()
 
             else:
+
                 statement = self.parse_statement()
+
 
 
             if statement:
