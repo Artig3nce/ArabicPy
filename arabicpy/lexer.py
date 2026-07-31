@@ -318,14 +318,15 @@ class Lexer:
             token_type,
             word
         )
-    
     def read_operator(self):
 
         current = self.current()
 
-        print("READ OP:", repr(current), "POS:", self.position)
-
         operators = {
+
+            ">": ("GREATER", ">"),
+            "<": ("LESS", "<"),
+
             "+": ("PLUS", "+"),
             "-": ("MINUS", "-"),
             "*": ("MULTIPLY", "*"),
@@ -340,19 +341,21 @@ class Lexer:
 
             ",": ("COMMA", ","),
             "،": ("COMMA", "،"),
+
+            "[": ("LBRACKET", "["),
+            "]": ("RBRACKET", "]"),
         }
+
 
         if current in operators:
 
             token_type, value = operators[current]
 
-            print("FOUND OPERATOR", token_type)
-
             self.advance()
-
-            print("NEW POS:", self.position)
 
             return Token(
                 token_type,
                 value
             )
+
+        return None
