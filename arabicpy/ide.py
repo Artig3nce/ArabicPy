@@ -294,6 +294,7 @@ class ArabicPyIDE(QMainWindow):
         menu_layout.addWidget(self.make_menu_button("عرض", [
             ("إظهار / إخفاء المستكشف", self.toggle_sidebar),
             ("إظهار / إخفاء المخرجات", self.toggle_output),
+            ("إظهار / إخفاء كود Python", self.toggle_python_preview),
         ]))
         menu_layout.addWidget(self.make_menu_button("تشغيل", [
             ("تشغيل البرنامج", self.run_code), ("مسح المخرجات", self.clear_output),
@@ -313,6 +314,10 @@ class ArabicPyIDE(QMainWindow):
         command_layout.addWidget(self.make_button("فتح", self.open_file))
         command_layout.addWidget(self.make_button("حفظ", self.save_file))
         command_layout.addWidget(self.make_button("⌕ بحث", self.find_text))
+        self.python_toggle_button = self.make_button("◀", self.toggle_python_preview)
+        self.python_toggle_button.setFixedWidth(34)
+        self.python_toggle_button.setToolTip("إظهار كود Python")
+        command_layout.addWidget(self.python_toggle_button)
         command_layout.addStretch()
         command_layout.addWidget(self.make_button("▶ تشغيل", self.run_code, "runButton"))
         layout.addWidget(command_bar)
@@ -378,6 +383,7 @@ class ArabicPyIDE(QMainWindow):
 
         code_splitter = QSplitter(Qt.Horizontal)
         code_splitter.setLayoutDirection(Qt.RightToLeft)
+        self.code_splitter = code_splitter
         source_panel = QWidget()
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(0, 0, 0, 0)
@@ -389,6 +395,7 @@ class ArabicPyIDE(QMainWindow):
         code_splitter.addWidget(source_panel)
 
         python_panel = QWidget()
+        self.python_panel = python_panel
         python_layout = QVBoxLayout(python_panel)
         python_layout.setContentsMargins(0, 0, 0, 0)
         python_layout.setSpacing(0)
@@ -410,6 +417,7 @@ class ArabicPyIDE(QMainWindow):
         python_layout.addWidget(self.python_preview)
         code_splitter.addWidget(python_panel)
         code_splitter.setSizes([650, 650])
+        python_panel.hide()
         editor_layout.addWidget(code_splitter)
         self.editor = CodeEditor()
         self.highlighter = ArabicPyHighlighter(self.editor.document())
@@ -690,6 +698,18 @@ class ArabicPyIDE(QMainWindow):
     def toggle_output(self):
         output_widget = self.main_splitter.widget(1)
         output_widget.setVisible(not output_widget.isVisible())
+
+    def toggle_python_preview(self):
+        visible = not self.python_panel.isVisible()
+        self.python_panel.setVisible(visible)
+        if visible:
+            self.code_splitter.setSizes([700, 700])
+            self.python_toggle_button.setText("▶")
+            self.python_toggle_button.setToolTip("إخفاء كود Python")
+            QTimer.singleShot(0, self.align_code_pane_headers)
+        else:
+            self.python_toggle_button.setText("◀")
+            self.python_toggle_button.setToolTip("إظهار كود Python")
 
     def set_active_activity(self, active_button):
         for button in self.activity_buttons:

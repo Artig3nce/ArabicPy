@@ -1,6 +1,6 @@
-from lexer import Lexer
-from parser import Parser
-from generator import Generator
+from arabicpy.generator import Generator
+from arabicpy.lexer import Lexer
+from arabicpy.parser import Parser
 
 
 def test_math():
@@ -21,11 +21,6 @@ def test_math():
     python_code = generator.generate(tree)
 
     assert "print" in python_code
-
-from lexer import Lexer
-from parser import Parser
-from generator import Generator
-
 
 def test_if_statement():
     code = """

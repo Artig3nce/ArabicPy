@@ -115,6 +115,20 @@ class Generator:
             ) + "]"
 
 
+        elif isinstance(node, Dictionary):
+
+            return "{" + ", ".join(
+                f"{self.generate(key)}: {self.generate(value)}"
+                for key, value in node.pairs
+            ) + "}"
+
+
+        elif isinstance(node, UnaryOperation):
+
+            separator = " " if node.operator == "not" else ""
+            return f"{node.operator}{separator}{self.generate(node.operand)}"
+
+
 
         elif isinstance(node, BinaryOperation):
 
@@ -128,7 +142,7 @@ class Generator:
 
         elif isinstance(node, IfStatement):
 
-            body = self.generate(node.then_body)
+            body = self.generate(node.then_body) or "pass"
 
             body = "\n".join(
                 "    " + line
@@ -144,7 +158,7 @@ class Generator:
 
             if node.else_body:
 
-                else_body = self.generate(node.else_body)
+                else_body = self.generate(node.else_body) or "pass"
 
                 else_body = "\n".join(
                     "    " + line
@@ -163,7 +177,7 @@ class Generator:
 
         elif isinstance(node, WhileStatement):
 
-            body = self.generate(node.body)
+            body = self.generate(node.body) or "pass"
 
             body = "\n".join(
                 "    " + line
@@ -180,7 +194,7 @@ class Generator:
 
         elif isinstance(node, ForStatement):
 
-            body = self.generate(node.body)
+            body = self.generate(node.body) or "pass"
 
             body = "\n".join(
                 "    " + line
@@ -189,7 +203,7 @@ class Generator:
 
 
             return (
-                f"for {node.variable} "
+                f"for {self.clean_name(node.variable)} "
                 f"in {self.generate(node.iterable)}:\n"
                 f"{body}"
             )
@@ -204,7 +218,7 @@ class Generator:
             )
 
 
-            body = self.generate(node.body)
+            body = self.generate(node.body) or "pass"
 
             body = "\n".join(
                 "    " + line
@@ -261,6 +275,18 @@ class Generator:
             value = self.generate(node.value)
 
             return f"return {value}"
+
+        elif isinstance(node, BreakStatement):
+
+            return "break"
+
+        elif isinstance(node, ContinueStatement):
+
+            return "continue"
+
+        elif isinstance(node, PassStatement):
+
+            return "pass"
 
         elif isinstance(node, IndexAccess):
 

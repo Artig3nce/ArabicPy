@@ -105,6 +105,37 @@ class List:
         return f"List({self.elements})"
 
 
+class Dictionary:
+
+    def __init__(self, pairs):
+        self.pairs = pairs
+
+    def __repr__(self):
+        return f"Dictionary({self.pairs})"
+
+
+class UnaryOperation:
+
+    def __init__(self, operator, operand):
+        self.operator = operator
+        self.operand = operand
+
+    def __repr__(self):
+        return f"UnaryOperation({self.operator}, {self.operand})"
+
+
+class BreakStatement:
+    pass
+
+
+class ContinueStatement:
+    pass
+
+
+class PassStatement:
+    pass
+
+
 
 class IfStatement:
 

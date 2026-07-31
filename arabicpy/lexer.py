@@ -15,6 +15,13 @@ KEYWORDS = {
     "خطأ": "FALSE",
     "دالة": "FUNCTION",
     "ارجع": "RETURN",
+    "و": "AND",
+    "او": "OR",
+    "أو": "OR",
+    "ليس": "NOT",
+    "توقف": "BREAK",
+    "استمر": "CONTINUE",
+    "تجاوز": "PASS",
 }
 
 
@@ -169,7 +176,7 @@ class Lexer:
             # identifiers
             if (
                 current.isalpha()
-                or "\u0600" <= current <= "\u06FF"
+                or current == "_"
             ):
 
                 tokens.append(
@@ -276,7 +283,6 @@ class Lexer:
             and (
                 self.current().isalnum()
                 or self.current() == "_"
-                or "\u0600" <= self.current() <= "\u06FF"
             )
         ):
 
@@ -309,6 +315,19 @@ class Lexer:
         start = self.position
         current = self.current()
 
+        two_character_operators = {
+            "==": ("EQUAL_EQUAL", "=="),
+            "!=": ("NOT_EQUAL", "!="),
+            ">=": ("GREATER_EQUAL", ">="),
+            "<=": ("LESS_EQUAL", "<="),
+        }
+        pair = self.code[self.position:self.position + 2]
+        if pair in two_character_operators:
+            token_type, value = two_character_operators[pair]
+            self.advance()
+            self.advance()
+            return self.make_token(token_type, value, start)
+
 
         operators = {
 
@@ -332,6 +351,8 @@ class Lexer:
 
             "[": ("LBRACKET", "["),
             "]": ("RBRACKET", "]"),
+            "{": ("LBRACE", "{"),
+            "}": ("RBRACE", "}"),
         }
 
 

@@ -1,4 +1,4 @@
-from lexer import Lexer
+from arabicpy.lexer import Lexer
 
 
 def test_variable_assignment():

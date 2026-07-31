@@ -14,9 +14,11 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
         keyword_format.setFontWeight(QFont.Bold)
         keywords = [
             "اذا", "والا", "وإلا", "لكل", "في", "بينما", "كرر", "مرات",
-            "دالة", "ارجع", "صح", "خطأ", "صنف", "استورد", "من", "حاول", "إلا", "نهاية",
+            "دالة", "ارجع", "صح", "خطأ", "و", "او", "أو", "ليس",
+            "توقف", "استمر", "تجاوز", "صنف", "استورد", "من", "حاول", "إلا", "نهاية",
             "if", "else", "for", "in", "while", "def", "class", "import", "from",
-            "return", "try", "except", "True", "False",
+            "return", "and", "or", "not", "break", "continue", "pass",
+            "try", "except", "True", "False",
         ]
         self._add_words(keywords, keyword_format)
 

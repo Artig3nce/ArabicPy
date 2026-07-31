@@ -1,636 +1,262 @@
-from .ast_nodes import *
+from .ast_nodes import (
+    Assignment, BinaryOperation, Block, Boolean, BreakStatement,
+    ContinueStatement, Dictionary, ForStatement, FunctionCall,
+    FunctionDefinition, IfStatement, IndexAccess, List, Number,
+    PassStatement, PrintStatement, Program, ReturnStatement, String,
+    UnaryOperation, Variable, WhileStatement,
+)
 from .errors import ArabicPyError
 
 
 class Parser:
-
+    """Recursive-descent parser for the supported ArabicPy grammar."""
 
     def __init__(self, tokens):
         self.tokens = tokens
         self.position = 0
-    
-
-    # =====================
-    # Helpers
-    # =====================
 
     def current(self):
+        return self.tokens[self.position] if self.position < len(self.tokens) else None
 
-        if self.position >= len(self.tokens):
-            return None
-
-        return self.tokens[self.position]
-
-
-    def peek(self):
-
-        if self.position + 1 >= len(self.tokens):
-            return None
-
-        return self.tokens[self.position + 1]
-
+    def peek(self, distance=1):
+        index = self.position + distance
+        return self.tokens[index] if index < len(self.tokens) else None
 
     def advance(self):
+        token = self.current()
+        if token is not None:
+            self.position += 1
+        return token
 
-        self.position += 1
-
+    def match(self, *token_types):
+        token = self.current()
+        if token is not None and token.type in token_types:
+            self.advance()
+            return token
+        return None
 
     def expect(self, token_type):
-
         token = self.current()
-
         if token is None:
-            raise ArabicPyError(f"انتهى البرنامج قبل الرمز المتوقع: {token_type}")
-
-
+            previous = self.tokens[-1] if self.tokens else None
+            raise ArabicPyError(
+                f"انتهى البرنامج قبل الرمز المتوقع: {token_type}",
+                getattr(previous, "line", None), getattr(previous, "column", None),
+            )
         if token.type != token_type:
-
             raise ArabicPyError(
                 f"المتوقع: {token_type}، لكن وُجد: {token.type}",
                 token.line, token.column,
             )
+        return self.advance()
 
+    def skip_newlines(self):
+        while self.match("NEWLINE"):
+            pass
 
-        self.advance()
+    def parse(self):
+        statements = []
+        self.skip_newlines()
+        while self.current() is not None:
+            if self.match("INDENT", "DEDENT"):
+                self.skip_newlines()
+                continue
+            statements.append(self.parse_statement())
+            self.skip_newlines()
+        return Program(statements)
 
-        return token
-    def parse_while(self):
+    def parse_statement(self):
+        token = self.current()
+        if token is None:
+            raise ArabicPyError("تعليمة مفقودة")
 
-        self.expect("WHILE")
-
-        condition = self.parse_expression()
-
-        self.expect("COLON")
-
-        return WhileStatement(
-            condition,
-            # parse_block consumes newlines/indentation and ignores blank lines.
-            # The previous loop appended None for every newline, which later
-            # caused Generator to fail while joining the generated code.
-            self.parse_block()
-        )
-
-    def parse_if(self):
-
-        self.expect("IF")
-
-        condition = self.parse_expression()
-
-        self.expect("COLON")
-
-        self.expect("NEWLINE")
-
-        self.expect("INDENT")
-
-        body = self.parse_block()
-
-        self.expect("DEDENT")
-
-
-        else_body = None
-
-
-        if (
-            self.current()
-            and self.current().type == "ELSE"
-        ):
-
+        handlers = {
+            "IF": self.parse_if,
+            "WHILE": self.parse_while,
+            "FOR": self.parse_for,
+            "FUNCTION": self.parse_function,
+        }
+        if token.type in handlers:
+            return handlers[token.type]()
+        if self.match("PRINT"):
+            self.expect("LPAREN")
+            value = self.parse_expression()
+            self.expect("RPAREN")
+            return PrintStatement(value)
+        if self.match("RETURN"):
+            return ReturnStatement(self.parse_expression())
+        if self.match("BREAK"):
+            return BreakStatement()
+        if self.match("CONTINUE"):
+            return ContinueStatement()
+        if self.match("PASS"):
+            return PassStatement()
+        if token.type == "IDENTIFIER" and self.peek() and self.peek().type == "EQUALS":
+            name = self.advance().value
             self.advance()
+            return Assignment(name, self.parse_expression())
 
-            self.expect("COLON")
+        if token.type in ("IDENTIFIER", "LPAREN", "LBRACKET", "LBRACE", "NUMBER", "STRING"):
+            return self.parse_expression()
 
-            self.expect("NEWLINE")
-
-            self.expect("INDENT")
-
-            else_body = self.parse_block()
-
-            self.expect("DEDENT")
-
-
-        return IfStatement(
-            condition,
-            body,
-            else_body
-        )
-    def parse_factor(self):
-
-        left = self.parse_primary()
-
-        while (
-            self.current()
-            and self.current() and self.current().type in (
-                "MULTIPLY",
-                "DIVIDE"
-            )
-        ):
-
-            operator = self.current().value
-            self.advance()
-
-            right = self.parse_primary()
-
-            left = BinaryOperation(
-                left,
-                operator,
-                right
-            )
-
-        return left
-
-
-
-    def parse_term(self):
-
-        left = self.parse_factor()
-
-        while (
-            self.current()
-            and self.current() and self.current().type in (
-                "PLUS",
-                "MINUS"
-            )
-        ):
-
-            operator = self.current().value
-            self.advance()
-
-            right = self.parse_factor()
-
-            left = BinaryOperation(
-                left,
-                operator,
-                right
-            )
-
-        return left
-
-
-
-    def parse_comparison(self):
-
-        left = self.parse_term()
-
-        while (
-            self.current()
-            and self.current() and self.current().type in (
-                "GREATER",
-                "LESS",
-                "EQUAL_EQUAL",
-                "NOT_EQUAL",
-                "GREATER_EQUAL",
-                "LESS_EQUAL"
-            )
-        ):
-
-            operator = self.current().value
-            self.advance()
-
-            right = self.parse_term()
-
-            left = BinaryOperation(
-                left,
-                operator,
-                right
-            )
-
-        return left
-
-
-
-    def parse_expression(self):
-
-        return self.parse_comparison()
-
-    # =====================
-    # Blocks
-    # =====================
+        raise ArabicPyError(f"تعليمة غير متوقعة: {token.value}", token.line, token.column)
 
     def parse_block(self):
+        self.expect("NEWLINE")
+        self.skip_newlines()
+        self.expect("INDENT")
+        statements = []
+        self.skip_newlines()
+        while self.current() is not None and self.current().type != "DEDENT":
+            statements.append(self.parse_statement())
+            self.skip_newlines()
+        self.expect("DEDENT")
+        return Block(statements)
 
-        body = []
+    def parse_if(self):
+        self.expect("IF")
+        condition = self.parse_expression()
+        self.expect("COLON")
+        then_body = self.parse_block()
+        self.skip_newlines()
+        else_body = None
+        if self.match("ELSE"):
+            self.expect("COLON")
+            else_body = self.parse_block()
+        return IfStatement(condition, then_body, else_body)
 
+    def parse_while(self):
+        self.expect("WHILE")
+        condition = self.parse_expression()
+        self.expect("COLON")
+        return WhileStatement(condition, self.parse_block())
 
-        if (
-            self.current()
-            and self.current() and self.current().type == "NEWLINE"
-        ):
-            self.advance()
+    def parse_for(self):
+        self.expect("FOR")
+        variable = self.expect("IDENTIFIER").value
+        self.expect("IN")
+        iterable = self.parse_expression()
+        self.expect("COLON")
+        return ForStatement(variable, iterable, self.parse_block())
 
+    def parse_function(self):
+        self.expect("FUNCTION")
+        name = self.expect("IDENTIFIER").value
+        self.expect("LPAREN")
+        parameters = []
+        if self.current() and self.current().type != "RPAREN":
+            parameters.append(self.expect("IDENTIFIER").value)
+            while self.match("COMMA"):
+                parameters.append(self.expect("IDENTIFIER").value)
+        self.expect("RPAREN")
+        self.expect("COLON")
+        return FunctionDefinition(name, parameters, self.parse_block())
 
-        if (
-            self.current()
-            and self.current() and self.current().type == "INDENT"
-        ):
-            self.advance()
+    def parse_expression(self):
+        return self.parse_or()
 
+    def parse_or(self):
+        expression = self.parse_and()
+        while self.match("OR"):
+            expression = BinaryOperation(expression, "or", self.parse_and())
+        return expression
 
+    def parse_and(self):
+        expression = self.parse_not()
+        while self.match("AND"):
+            expression = BinaryOperation(expression, "and", self.parse_not())
+        return expression
 
-        while (
-            self.current()
-            and self.current() and self.current().type != "DEDENT"
-        ):
+    def parse_not(self):
+        if self.match("NOT"):
+            return UnaryOperation("not", self.parse_not())
+        return self.parse_comparison()
 
-            if self.current() and self.current().type == "NEWLINE":
+    def parse_comparison(self):
+        expression = self.parse_term()
+        comparison_types = {
+            "GREATER", "LESS", "EQUAL_EQUAL", "NOT_EQUAL",
+            "GREATER_EQUAL", "LESS_EQUAL", "IN",
+        }
+        while self.current() and self.current().type in comparison_types:
+            operator_token = self.advance()
+            operator = "in" if operator_token.type == "IN" else operator_token.value
+            expression = BinaryOperation(expression, operator, self.parse_term())
+        return expression
 
-                self.advance()
-                continue
-            if self.current() and self.current().type == "FUNCTION":
+    def parse_term(self):
+        expression = self.parse_factor()
+        while self.current() and self.current().type in ("PLUS", "MINUS"):
+            operator = self.advance().value
+            expression = BinaryOperation(expression, operator, self.parse_factor())
+        return expression
 
-                statement = self.parse_function()
+    def parse_factor(self):
+        expression = self.parse_unary()
+        while self.current() and self.current().type in ("MULTIPLY", "DIVIDE"):
+            operator = self.advance().value
+            expression = BinaryOperation(expression, operator, self.parse_unary())
+        return expression
 
-                if statement:
-                    body.append(statement)
+    def parse_unary(self):
+        if self.match("MINUS"):
+            return UnaryOperation("-", self.parse_unary())
+        return self.parse_primary()
 
-                    continue
-
-            statement = self.parse_statement()
-
-
-            if statement:
-
-                body.append(statement)
-
-
-
-        if (
-            self.current()
-            and self.current() and self.current().type == "DEDENT"
-        ):
-
-            self.advance()
-
-
-
-        return Block(body)
-        
     def parse_primary(self):
-
         token = self.current()
-
         if token is None:
-            raise ArabicPyError("انتهى البرنامج بشكل غير متوقع")
+            raise ArabicPyError("انتهى التعبير بشكل غير متوقع")
 
-
-        if token.type == "NUMBER":
-
-            self.advance()
-
-            return Number(token.value)
-
-
-        if token.type == "STRING":
-
-            self.advance()
-
-            return String(token.value)
-
-
-        if token.type == "TRUE":
-
-            self.advance()
-
-            return Boolean(True)
-
-
-        if token.type == "FALSE":
-
-            self.advance()
-
-            return Boolean(False)
-
-
-        # List literal: [10, 20, 30]
-        if token.type == "LBRACKET":
-            self.advance()
-            elements = []
-
-            while self.current() and self.current().type != "RBRACKET":
-                elements.append(self.parse_expression())
-                if self.current() and self.current().type == "COMMA":
-                    self.advance()
-                else:
-                    break
-
-            self.expect("RBRACKET")
-            return List(elements)
-
-        # =====================
-        # Identifier
-        # Variable or Function Call
-        # =====================
-
-        if token.type == "IDENTIFIER":
-
-            name = token.value
-
-            self.advance()
-
-            # Function Call
-            if self.current() and self.current().type == "LPAREN":
-
-                self.advance()
-
-                arguments = []
-
-
-                while (
-                    self.current()
-                    and self.current().type != "RPAREN"
-                ):
-
-                    arguments.append(
-                        self.parse_expression()
-                    )
-
-
-                    if (
-                        self.current()
-                        and self.current().type == "COMMA"
-                    ):
-                        self.advance()
-
-                    else:
+        if self.match("NUMBER"):
+            value = Number(token.value)
+        elif self.match("STRING"):
+            value = String(token.value)
+        elif self.match("TRUE"):
+            value = Boolean(True)
+        elif self.match("FALSE"):
+            value = Boolean(False)
+        elif self.match("IDENTIFIER"):
+            value = Variable(token.value)
+        elif self.match("LPAREN"):
+            value = self.parse_expression()
+            self.expect("RPAREN")
+        elif self.match("LBRACKET"):
+            elements = self.parse_comma_separated("RBRACKET")
+            value = List(elements)
+        elif self.match("LBRACE"):
+            pairs = []
+            if self.current() and self.current().type != "RBRACE":
+                while True:
+                    key = self.parse_expression()
+                    self.expect("COLON")
+                    pairs.append((key, self.parse_expression()))
+                    if not self.match("COMMA"):
                         break
+            self.expect("RBRACE")
+            value = Dictionary(pairs)
+        else:
+            raise ArabicPyError(f"رمز غير متوقع: {token.value}", token.line, token.column)
 
-
-                self.expect("RPAREN")
-
-
-                value = FunctionCall(
-                    name,
-                    arguments
-                )
-            else:
-                value = Variable(name)
-
-            # Index access must be handled before returning the identifier.
-            # A loop also supports chained indexing such as بيانات[0][1].
-            while self.current() and self.current().type == "LBRACKET":
-                self.advance()
+        while True:
+            if self.match("LPAREN"):
+                if not isinstance(value, Variable):
+                    raise ArabicPyError("يمكن استدعاء الدوال بالاسم فقط", token.line, token.column)
+                arguments = self.parse_comma_separated("RPAREN")
+                value = FunctionCall(value.name, arguments)
+            elif self.match("LBRACKET"):
                 index = self.parse_expression()
                 self.expect("RBRACKET")
                 value = IndexAccess(value, index)
-
-            return value
-
-        # =====================
-        # Parentheses
-        # =====================
-
-        if token.type == "LPAREN":
-
-            self.advance()
-
-            value = self.parse_expression()
-
-            self.expect("RPAREN")
-
-            return value
-
-
-
-        raise ArabicPyError(f"رمز غير متوقع: {token.type}", token.line, token.column)
-
-        # =====================
-        # Function
-        # =====================
-    def parse_statement(self):
-
-        token = self.current()
-
-
-        if token is None:
-            return None
-
-
-        # NEWLINE
-        if token.type == "NEWLINE":
-            self.advance()
-            return None
-
-
-        # FUNCTION
-        if token.type == "FUNCTION":
-            return self.parse_function()
-
-
-        # PRINT
-        if token.type == "PRINT":
-
-            self.advance()
-
-            self.expect("LPAREN")
-
-            value = self.parse_expression()
-
-            self.expect("RPAREN")
-
-            return PrintStatement(value)
-
-
-
-        # RETURN
-        if token.type == "RETURN":
-
-            self.advance()
-
-            value = self.parse_expression()
-
-            return ReturnStatement(value)
-
-
-
-        # FUNCTION CALL
-        if (
-            token.type == "IDENTIFIER"
-            and self.peek()
-            and self.peek().type == "LPAREN"
-        ):
-
-            return self.parse_expression()
-
-
-
-        # IF
-        if token.type == "IF":
-
-            self.advance()
-
-            condition = self.parse_expression()
-
-            self.expect("COLON")
-
-            body = self.parse_block()
-
-            else_body = None
-
-
-            if self.current() and self.current().type == "ELSE":
-
-                self.advance()
-
-                self.expect("COLON")
-
-                else_body = self.parse_block()
-
-
-            return IfStatement(
-                condition,
-                body,
-                else_body
-            )
-        # ASSIGNMENT
-        elif self.current().type == "WHILE":
-            return self.parse_while()
-        
-        if (
-            token.type == "IDENTIFIER"
-            and self.peek()
-            and self.peek().type == "EQUALS"
-        ):
-
-            return self.parse_assignment()
-
-        return None
-        
-
-    # =====================
-    # Function Definition
-    # =====================
-
-    def parse_function(self):
-
-        # دالة
-        self.advance()
-
-
-        # function name
-        name = self.expect(
-            "IDENTIFIER"
-        ).value
-
-
-        self.expect("LPAREN")
-
-
-        parameters = []
-
-
-        while (
-            self.current()
-            and self.current().type != "RPAREN"
-        ):
-
-            parameters.append(
-                self.expect("IDENTIFIER").value
-            )
-
-
-            if (
-                self.current()
-                and self.current().type == "COMMA"
-            ):
-                self.advance()
-
             else:
                 break
+        return value
 
-
-        self.expect("RPAREN")
-
-
-        self.expect("COLON")
-
-
-        body = self.parse_block()
-
-
-        return FunctionDefinition(
-            name,
-            parameters,
-            body
-        )
-
-
-
-    # =====================
-    # Assignment
-    # =====================
-
-    def parse_assignment(self):
-
-        name = self.expect(
-            "IDENTIFIER"
-        ).value
-
-
-        self.expect(
-            "EQUALS"
-        )
-
-
-        value = self.parse_expression()
-
-
-        return Assignment(
-            name,
-            value
-        )
-
-
-    # =====================
-    # Program
-    # =====================
-    def parse(self):
-
-        statements = []
-
-        limit = 0
-
-
-        while self.current():
-
-            limit += 1
-
-
-            if limit > 1000:
-                raise Exception(
-                    "Parser stuck at: " + str(self.current())
-                )
-
-
-            if self.current().type in (
-                "NEWLINE",
-                "INDENT",
-                "DEDENT"
-            ):
-                self.advance()
-                continue
-
-
-
-            if (
-                self.current().type == "IDENTIFIER"
-                and self.peek()
-                and self.peek().type == "EQUALS"
-            ):
-
-                statement = self.parse_assignment()
-
-            else:
-
-                statement = self.parse_statement()
-
-
-
-            if statement:
-                statements.append(statement)
-
-
-
-        return Program(
-            statements
-        )
-
-    
+    def parse_comma_separated(self, closing_type):
+        values = []
+        if self.current() and self.current().type != closing_type:
+            values.append(self.parse_expression())
+            while self.match("COMMA"):
+                values.append(self.parse_expression())
+        self.expect(closing_type)
+        return values
