@@ -1,4 +1,5 @@
 from .tokens import Token
+from .errors import ArabicPyError
 
 
 KEYWORDS = {
@@ -35,6 +36,14 @@ class Lexer:
     def advance(self):
         self.position += 1
 
+    def make_token(self, token_type, value, position=None):
+        position = self.position if position is None else position
+        return Token(
+            token_type, value,
+            self.code.count("\n", 0, position) + 1,
+            position - self.code.rfind("\n", 0, position),
+        )
+
 
 
     def tokenize(self):
@@ -60,7 +69,7 @@ class Lexer:
 
                 if self.current() == "\n":
                     tokens.append(
-                        Token("NEWLINE", "\\n")
+                        self.make_token("NEWLINE", "\\n")
                     )
 
                     self.advance()
@@ -75,7 +84,7 @@ class Lexer:
                     indent_stack.append(spaces)
 
                     tokens.append(
-                        Token("INDENT", spaces)
+                        self.make_token("INDENT", spaces)
                     )
 
 
@@ -86,7 +95,7 @@ class Lexer:
                         indent_stack.pop()
 
                         tokens.append(
-                            Token("DEDENT", spaces)
+                            self.make_token("DEDENT", spaces)
                         )
 
 
@@ -115,7 +124,7 @@ class Lexer:
             if current == "\n":
 
                 tokens.append(
-                    Token("NEWLINE", "\\n")
+                    self.make_token("NEWLINE", "\\n")
                 )
 
                 self.advance()
@@ -183,9 +192,7 @@ class Lexer:
 
 
 
-            raise Exception(
-                f"Unknown character: {current}"
-            )
+            raise ArabicPyError(f"رمز غير معروف: {current}", *self.location())
 
 
 
@@ -194,7 +201,7 @@ class Lexer:
             indent_stack.pop()
 
             tokens.append(
-                Token("DEDENT", 0)
+                self.make_token("DEDENT", 0)
             )
 
 
@@ -205,7 +212,7 @@ class Lexer:
 
 
     def read_number(self):
-
+        start = self.position
         number = ""
 
 
@@ -219,16 +226,16 @@ class Lexer:
             self.advance()
 
 
-        return Token(
+        return self.make_token(
             "NUMBER",
-            int(number)
+            int(number), start
         )
 
 
 
 
     def read_string(self):
-
+        start = self.position
         self.advance()
 
         value = ""
@@ -244,14 +251,15 @@ class Lexer:
             self.advance()
 
 
-        if self.current() == '"':
+        if self.current() != '"':
+            raise ArabicPyError("نص غير مغلق بعلامة اقتباس", *self.location(start))
 
-            self.advance()
+        self.advance()
 
 
-        return Token(
+        return self.make_token(
             "STRING",
-            value
+            value, start
         )
 
 
@@ -259,7 +267,7 @@ class Lexer:
 
 
     def read_identifier(self):
-
+        start = self.position
         word = ""
 
 
@@ -288,9 +296,9 @@ class Lexer:
 
 
 
-        return Token(
+        return self.make_token(
             token_type,
-            word
+            word, start
         )
 
 
@@ -298,7 +306,7 @@ class Lexer:
 
 
     def read_operator(self):
-
+        start = self.position
         current = self.current()
 
 
@@ -335,10 +343,17 @@ class Lexer:
             self.advance()
 
 
-            return Token(
+            return self.make_token(
                 token_type,
-                value
+                value, start
             )
 
 
         return None
+
+    def location(self, position=None):
+        position = self.position if position is None else position
+        return (
+            self.code.count("\n", 0, position) + 1,
+            position - self.code.rfind("\n", 0, position),
+        )

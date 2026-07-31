@@ -1,5 +1,5 @@
-from lexer import Lexer
-from parser import Parser
+from arabicpy.lexer import Lexer
+from arabicpy.parser import Parser
 
 
 def test_assignment():

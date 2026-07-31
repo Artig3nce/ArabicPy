@@ -4,6 +4,7 @@ from .lexer import Lexer
 from .parser import Parser
 from .generator import Generator
 from .ai import reply as arabicpy_ai_reply
+from .errors import format_error
 
 
 VERSION = "0.1.0"
@@ -83,8 +84,7 @@ def run():
 
 
     except Exception as e:
-        print("ArabicPy Error:")
-        print(e)
+        print(format_error(e, code if "code" in locals() else ""))
 
 
 if __name__ == "__main__":

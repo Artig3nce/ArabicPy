@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QPlainTextEdit,
-    QPushButton, QMenu, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QPushButton, QMenu, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .generator import Generator
@@ -15,6 +15,7 @@ from .highlighter import ArabicPyHighlighter
 from .lexer import Lexer
 from .parser import Parser
 from .ai import reply as arabicpy_ai_reply
+from .errors import format_error
 
 
 class LineNumberArea(QWidget):
@@ -36,7 +37,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__()
         self.line_number_area = LineNumberArea(self)
         self.setObjectName("codeEditor")
-        self.setFont(QFont("Cascadia Code", 12))
+        self.setFont(QFont("Tahoma", 13))
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
         self.setLayoutDirection(Qt.RightToLeft)
         # QTextEdit's layout direction alone does not change paragraph
@@ -149,7 +150,7 @@ class ArabicPyIDE(QMainWindow):
 
     def stylesheet(self):
         return """
-        QMainWindow, QWidget { background: #1e1e1e; color: #cccccc; font-family: 'Segoe UI'; font-size: 13px; }
+        QMainWindow, QWidget { background: #1e1e1e; color: #cccccc; font-family: 'Tahoma'; font-size: 13px; }
         #titleBar { background: #181818; border-bottom: 1px solid #2b2b2b; }
         #brand { color: #ffffff; font-weight: 600; font-size: 14px; }
         #titleDocument { color: #969696; }
@@ -168,11 +169,14 @@ class ArabicPyIDE(QMainWindow):
         #fileList { background: #252526; border: none; outline: none; color: #cccccc; padding: 2px 6px; }
         #fileList::item { padding: 6px 8px; border-radius: 3px; } #fileList::item:selected { background: #37373d; color: white; }
         #tabBar { background: #252526; border-bottom: 1px solid #1e1e1e; } #activeTab { background: #1e1e1e; color: #ffffff; border-top: 1px solid #007acc; padding: 10px 16px; }
-        #codeEditor { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; }
+        #codeEditor { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Tahoma'; font-size: 14px; }
         #outputHeader { background: #252526; border-top: 1px solid #333333; } #outputTitle { color: #cccccc; font-weight: 600; padding: 7px 12px; }
-        #output { background: #1e1e1e; color: #cccccc; border: none; font-family: 'Cascadia Mono'; font-size: 12px; padding: 7px; }
+        #output { background: #1e1e1e; color: #e0e0e0; border: none; font-family: 'Tahoma'; font-size: 14px; padding: 9px; }
         #statusBar { background: #007acc; color: white; } #statusLabel { background: transparent; color: white; padding: 3px 10px; font-size: 12px; }
         QSplitter::handle { background: #333333; } QSplitter::handle:hover { background: #007acc; }
+        QTabWidget QTabBar::tab { background: #2d2d2d; color: #c8c8c8; border: none; border-top: 2px solid transparent; padding: 9px 18px; }
+        QTabWidget QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; border-top: 2px solid #007acc; }
+        QTabWidget QTabBar::tab:hover { background: #37373d; color: #ffffff; }
         """
 
     def make_button(self, text, callback, name="toolButton"):
@@ -284,6 +288,16 @@ class ArabicPyIDE(QMainWindow):
         tabs_layout.addWidget(self.active_tab)
         tabs_layout.addStretch()
         editor_layout.addWidget(tabs)
+        tabs.hide()
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.setMovable(True)
+        self.tab_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_widget.currentChanged.connect(self.switch_tab)
+        add_tab = self.make_button("+", self.new_file)
+        add_tab.setFixedWidth(30)
+        self.tab_widget.setCornerWidget(add_tab, Qt.TopRightCorner)
+        editor_layout.addWidget(self.tab_widget)
         self.editor = CodeEditor()
         self.highlighter = ArabicPyHighlighter(self.editor.document())
         self.editor.setPlainText(
@@ -304,7 +318,8 @@ class ArabicPyIDE(QMainWindow):
             'اطبع(القسمة)'
         )
         self.editor.document().modificationChanged.connect(self.update_tab_title)
-        editor_layout.addWidget(self.editor)
+        self.editor.file_path = None
+        self.tab_widget.addTab(self.editor, "غير محفوظ.apy")
         editor_splitter.addWidget(editor_panel)
         editor_splitter.setSizes([245, 1100])
 
@@ -355,8 +370,40 @@ class ArabicPyIDE(QMainWindow):
                 self.file_list.addItem(item)
 
     def update_tab_title(self, modified=False):
+        index = self.tab_widget.indexOf(self.editor)
+        if index >= 0:
+            name = os.path.basename(getattr(self.editor, "file_path", "") or "غير محفوظ.apy")
+            marker = "● " if modified else ""
+            self.tab_widget.setTabText(index, marker + name)
+        return
         name = os.path.basename(self.current_file) if self.current_file else "غير محفوظ.apy"
         self.active_tab.setText(f"  {'●' if modified else '◇'}  {name}    ×")
+
+    def switch_tab(self, index):
+        if index >= 0:
+            self.editor = self.tab_widget.widget(index)
+            self.current_file = getattr(self.editor, "file_path", None)
+            self.update_position()
+
+    def add_editor_tab(self, content="", path=None):
+        editor = CodeEditor()
+        editor.file_path = path
+        editor.highlighter = ArabicPyHighlighter(editor.document())
+        editor.setPlainText(content)
+        editor.document().setModified(False)
+        editor.document().modificationChanged.connect(lambda changed: self.update_tab_title(changed))
+        editor.cursorPositionChanged.connect(self.update_position)
+        name = os.path.basename(path) if path else "غير محفوظ.apy"
+        self.tab_widget.addTab(editor, name)
+        self.tab_widget.setCurrentWidget(editor)
+        return editor
+
+    def close_tab(self, index):
+        editor = self.tab_widget.widget(index)
+        self.tab_widget.removeTab(index)
+        editor.deleteLater()
+        if self.tab_widget.count() == 0:
+            self.add_editor_tab()
 
     def update_position(self):
         cursor = self.editor.textCursor()
@@ -391,6 +438,8 @@ class ArabicPyIDE(QMainWindow):
         self.output.setPlainText("ArabicPy IDE\n\nمحرر بسيط لكتابة وتشغيل برامج ArabicPy.\nاستخدم ملف > فتح أو زر فتح لبدء العمل.")
 
     def new_file(self):
+        self.add_editor_tab().setFocus()
+        return
         self.current_file = None
         self.editor.clear()
         self.editor.document().setModified(False)
@@ -406,7 +455,15 @@ class ArabicPyIDE(QMainWindow):
             self.load_file(path)
 
     def load_file(self, path):
+        for index in range(self.tab_widget.count()):
+            editor = self.tab_widget.widget(index)
+            if getattr(editor, "file_path", None) == path:
+                self.tab_widget.setCurrentIndex(index)
+                return
         try:
+            with open(path, "r", encoding="utf-8") as file:
+                self.add_editor_tab(file.read(), path)
+            return
             with open(path, "r", encoding="utf-8") as file:
                 self.editor.setPlainText(file.read())
             self.current_file = path
@@ -416,6 +473,23 @@ class ArabicPyIDE(QMainWindow):
             self.output.setPlainText(f"تعذر فتح الملف:\n{error}")
 
     def save_file(self):
+        editor = self.editor
+        if not getattr(editor, "file_path", None):
+            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", "", "ArabicPy (*.apy)")
+            if not path:
+                return
+            editor.file_path = path
+        try:
+            with open(editor.file_path, "w", encoding="utf-8") as file:
+                file.write(editor.toPlainText())
+            editor.document().setModified(False)
+            self.current_file = editor.file_path
+            self.update_tab_title(False)
+            self.refresh_file_list()
+            return
+        except OSError as error:
+            self.output.setPlainText(f"تعذر حفظ الملف:\n{error}")
+            return
         if not self.current_file:
             path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", "", "ArabicPy (*.apy)")
             if not path:
@@ -454,7 +528,7 @@ class ArabicPyIDE(QMainWindow):
             result = output.getvalue()
             self.output.setPlainText(result if result else "تم التنفيذ بنجاح — لا توجد مخرجات.")
         except Exception as error:
-            self.output.setPlainText(f"حدث خطأ أثناء التشغيل:\n{type(error).__name__}: {error}")
+            self.output.setPlainText(format_error(error, source))
 
 
 if __name__ == "__main__":

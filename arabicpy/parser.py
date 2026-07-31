@@ -1,4 +1,5 @@
 from .ast_nodes import *
+from .errors import ArabicPyError
 
 
 class Parser:
@@ -39,15 +40,14 @@ class Parser:
         token = self.current()
 
         if token is None:
-            raise Exception(
-                f"Expected {token_type}, got EOF"
-            )
+            raise ArabicPyError(f"انتهى البرنامج قبل الرمز المتوقع: {token_type}")
 
 
         if token.type != token_type:
 
-            raise Exception(
-                f"Expected {token_type}, got {token.type}"
+            raise ArabicPyError(
+                f"المتوقع: {token_type}، لكن وُجد: {token.type}",
+                token.line, token.column,
             )
 
 
@@ -269,7 +269,7 @@ class Parser:
         token = self.current()
 
         if token is None:
-            raise Exception("Unexpected EOF")
+            raise ArabicPyError("انتهى البرنامج بشكل غير متوقع")
 
 
         if token.type == "NUMBER":
@@ -390,9 +390,7 @@ class Parser:
 
 
 
-        raise Exception(
-            f"Unexpected token {token.type}"
-        )
+        raise ArabicPyError(f"رمز غير متوقع: {token.type}", token.line, token.column)
 
         # =====================
         # Function

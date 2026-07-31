@@ -1,0 +1,16 @@
+"""Windows executable entry point for ArabicPy IDE."""
+
+from PySide6.QtWidgets import QApplication
+
+from arabicpy.ide import ArabicPyIDE
+
+
+def main():
+    app = QApplication([])
+    window = ArabicPyIDE()
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

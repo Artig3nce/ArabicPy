@@ -1,6 +1,6 @@
-from lexer import Lexer
-from parser import Parser
-from generator import Generator
+from arabicpy.lexer import Lexer
+from arabicpy.parser import Parser
+from arabicpy.generator import Generator
 
 
 def test_generate_assignment():
