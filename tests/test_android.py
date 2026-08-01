@@ -299,3 +299,39 @@ def test_numbered_natural_text_elements():
         ("نص_1", "نص", "مرحباً بك"),
         ("نص_2", "نص", "كيف حالك؟"),
     ]
+
+
+def test_standalone_function_uses_latest_button_and_existing_click_event():
+    source = '''اسم التطبيق هو الباء
+انشئ زر اضغط هنا
+عند النقر
+    اذهب الى صفحة قوة كلمة المرور
+
+دالة فحص قوة كلمة المرور:
+    اطبع("تم الفحص")
+'''
+
+    program = parse_android(source)
+
+    assert len(program.events) == 1
+    assert program.events[0].button == "زر_اضغط_هنا"
+    assert program.events[0].function_name == "فحص قوة كلمة المرور"
+    assert program.events[0].actions == [
+        ("__page__", "قوة كلمة المرور"),
+        ("__print__", "تم الفحص"),
+    ]
+
+
+def test_comments_are_ignored_inside_password_rules():
+    source = '''اسم التطبيق هو الباء
+في صفحة قوة كلمة المرور
+    أنشئ حقلًا اسمه "كلمة المرور"
+شروط كلمة المرور
+    ## طولها لا يقل عن 8
+    ## تحتوي على رقم
+    ## تحتوي على رمز
+'''
+
+    program = parse_android(source)
+
+    assert program.widgets[0].kind == "كلمة_مرور"

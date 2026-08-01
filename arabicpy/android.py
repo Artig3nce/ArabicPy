@@ -137,6 +137,9 @@ def parse_android(source):
                     continue
                 if not candidate[:1].isspace():
                     break
+                if candidate.strip().startswith("#"):
+                    index += 1
+                    continue
                 bottom_navigation.append(candidate.strip())
                 index += 1
             if not bottom_navigation:
@@ -156,13 +159,29 @@ def parse_android(source):
         if function_definition:
             function_name = function_definition.group("function").strip()
             button = pending_functions.get(function_name)
+            reused_event = False
             if button is None:
-                raise ArabicPyError(f"لا يوجد زر مرتبط بالدالة: {function_name}", line_number, 1)
-            event = AndroidEvent(button, function_name=function_name)
+                if last_button is None:
+                    raise ArabicPyError(f"لا يوجد زر مرتبط بالدالة: {function_name}", line_number, 1)
+                button = last_button.name
+                event = next(
+                    (item for item in reversed(events) if item.button == button),
+                    None,
+                )
+                if event is not None:
+                    event.function_name = function_name
+                    reused_event = True
+                else:
+                    event = AndroidEvent(button, function_name=function_name)
+            else:
+                event = AndroidEvent(button, function_name=function_name)
             index += 1
             while index < len(lines):
                 action_line = lines[index].strip()
                 if not action_line:
+                    index += 1
+                    continue
+                if action_line.startswith("#"):
                     index += 1
                     continue
                 action_match = SET_TEXT_PATTERN.match(action_line)
@@ -187,7 +206,8 @@ def parse_android(source):
                 index += 1
             if not event.actions:
                 raise ArabicPyError("الدالة تحتاج إلى تعليمة واحدة على الأقل", line_number, 1)
-            events.append(event)
+            if not reused_event:
+                events.append(event)
             continue
 
         if PASSWORD_FUNCTION_PATTERN.match(stripped):
@@ -337,6 +357,9 @@ def parse_android(source):
                 if not candidate[:1].isspace():
                     break
                 rule = candidate.strip()
+                if rule.startswith("#"):
+                    index += 1
+                    continue
                 length_match = re.fullmatch(r"طولها\s+لا\s+يقل\s+عن\s+(\d+)", rule)
                 if length_match:
                     password_widget.min_length = int(length_match.group(1))
@@ -423,6 +446,9 @@ def parse_android(source):
             while index < len(lines) and (not lines[index].strip() or lines[index][:1].isspace()):
                 action_line = lines[index].strip()
                 if not action_line:
+                    index += 1
+                    continue
+                if action_line.startswith("#"):
                     index += 1
                     continue
                 action_match = SET_TEXT_PATTERN.match(action_line)
