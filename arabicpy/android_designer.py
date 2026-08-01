@@ -12,12 +12,34 @@ from PySide6.QtWidgets import (
 from .android import AndroidEvent, AndroidProgram, AndroidWidget, parse_android
 
 
+COLOR_THEMES = {
+    "أزرق عصري": {
+        "screen": "#F4F7FB", "text": "#172033", "surface": "#FFFFFF",
+        "button": "#2563EB", "button_text": "#FFFFFF",
+    },
+    "داكن أنيق": {
+        "screen": "#111827", "text": "#F3F4F6", "surface": "#1F2937",
+        "button": "#8B5CF6", "button_text": "#FFFFFF",
+    },
+    "أخضر هادئ": {
+        "screen": "#F0FDF4", "text": "#14532D", "surface": "#FFFFFF",
+        "button": "#16A34A", "button_text": "#FFFFFF",
+    },
+    "غروب دافئ": {
+        "screen": "#FFF7ED", "text": "#7C2D12", "surface": "#FFFBEB",
+        "button": "#EA580C", "button_text": "#FFFFFF",
+    },
+}
+
+
 class DesignerItem(QFrame):
     selected = Signal(str)
+    activated = Signal(str)
 
     def __init__(self, widget_model, parent=None):
         super().__init__(parent)
         self.widget_model = widget_model
+        self.preview_mode = False
         self.setObjectName("designerItem")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -32,6 +54,10 @@ class DesignerItem(QFrame):
             control.setPlaceholderText(widget_model.text)
 
         self.control = control
+        if isinstance(control, QPushButton):
+            control.clicked.connect(
+                lambda _checked=False: self.activated.emit(self.widget_model.name)
+            )
         self.apply_colors()
         control.installEventFilter(self)
         layout.addWidget(control)
@@ -48,6 +74,8 @@ class DesignerItem(QFrame):
         )
 
     def eventFilter(self, watched, event):
+        if self.preview_mode:
+            return super().eventFilter(watched, event)
         if watched is self.control and event.type() in (
             QEvent.Type.MouseButtonPress,
             QEvent.Type.FocusIn,
@@ -64,6 +92,10 @@ class DesignerItem(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def set_preview_mode(self, enabled):
+        self.preview_mode = enabled
+        self.set_selected(False)
+
 
 class AndroidDesigner(QWidget):
     sourceChanged = Signal(str)
@@ -74,6 +106,7 @@ class AndroidDesigner(QWidget):
         self.selected_name = None
         self.loading = False
         self.item_widgets = {}
+        self.preview_mode = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -83,6 +116,7 @@ class AndroidDesigner(QWidget):
         root.setSpacing(1)
 
         palette = QFrame(objectName="designerPanel")
+        self.palette_panel = palette
         palette.setFixedWidth(150)
         palette_layout = QVBoxLayout(palette)
         palette_layout.addWidget(QLabel("العناصر", objectName="designerTitle"))
@@ -115,6 +149,7 @@ class AndroidDesigner(QWidget):
         root.addWidget(canvas_scroll, 1)
 
         properties = QFrame(objectName="designerPanel")
+        self.properties_panel = properties
         properties.setFixedWidth(210)
         properties_layout = QVBoxLayout(properties)
         properties_layout.addWidget(QLabel("الخصائص", objectName="designerTitle"))
@@ -125,6 +160,13 @@ class AndroidDesigner(QWidget):
         self.screen_color_button = QPushButton("لون خلفية الشاشة")
         self.screen_color_button.clicked.connect(self.choose_screen_color)
         properties_layout.addWidget(self.screen_color_button)
+        properties_layout.addWidget(QLabel("قوالب الألوان", objectName="designerTitle"))
+        for theme_name in COLOR_THEMES:
+            theme_button = QPushButton(theme_name, objectName="designerTool")
+            theme_button.clicked.connect(
+                lambda _checked=False, name=theme_name: self.apply_color_theme(name)
+            )
+            properties_layout.addWidget(theme_button)
         properties_layout.addWidget(QLabel("اسم العنصر"))
         self.name_edit = QLineEdit()
         properties_layout.addWidget(self.name_edit)
@@ -167,6 +209,32 @@ class AndroidDesigner(QWidget):
         self.refresh_canvas()
         self.loading = False
         return True
+
+    def start_preview(self):
+        """Run supported click events directly inside the phone canvas."""
+        self.preview_mode = True
+        self.selected_name = None
+        self.palette_panel.setEnabled(False)
+        self.properties_panel.setEnabled(False)
+        for item in self.item_widgets.values():
+            item.set_preview_mode(True)
+
+    def stop_preview(self):
+        self.preview_mode = False
+        self.palette_panel.setEnabled(True)
+        self.properties_panel.setEnabled(True)
+        self.refresh_canvas()
+
+    def run_preview_event(self, button_name):
+        if not self.preview_mode:
+            return
+        for event in self.program.events:
+            if event.button != button_name:
+                continue
+            for target, text in event.actions:
+                item = self.item_widgets.get(target)
+                if item is not None:
+                    item.control.setText(text)
 
     def add_widget(self, kind):
         prefixes = {"نص": "نص", "زر": "زر", "حقل": "حقل"}
@@ -211,6 +279,20 @@ class AndroidDesigner(QWidget):
             return
         self.program.background_color = color.name().upper()
         self.refresh_phone_color()
+        self.emit_source()
+
+    def apply_color_theme(self, theme_name):
+        """Apply a coordinated palette to the screen and every existing widget."""
+        theme = COLOR_THEMES[theme_name]
+        self.program.background_color = theme["screen"]
+        for widget in self.program.widgets:
+            if widget.kind == "زر":
+                widget.text_color = theme["button_text"]
+                widget.background_color = theme["button"]
+            else:
+                widget.text_color = theme["text"]
+                widget.background_color = theme["surface"]
+        self.refresh_canvas()
         self.emit_source()
 
     def apply_properties(self):
@@ -316,6 +398,7 @@ class AndroidDesigner(QWidget):
         for widget in self.program.widgets:
             item = DesignerItem(widget)
             item.selected.connect(self.select_widget)
+            item.activated.connect(self.run_preview_event)
             self.canvas_layout.addWidget(item)
             self.item_widgets[widget.name] = item
         if self.selected_name:

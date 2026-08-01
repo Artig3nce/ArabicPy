@@ -202,11 +202,28 @@ class ArabicPyIDE(QMainWindow):
         super().__init__()
         self.current_file = None
         self.syncing_code_views = False
+        self.output_was_visible_before_designer = True
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setWindowTitle("الباء")
         self.resize(1400, 900)
         self.setStyleSheet(self.stylesheet())
         self.setup_ui()
+
+    def show_fitted(self):
+        """Open at a useful normal size while staying inside the desktop."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.show()
+            return
+        available = screen.availableGeometry()
+        width = min(1400, max(700, available.width() - 64))
+        height = min(900, max(650, available.height() - 64))
+        self.resize(width, height)
+        self.move(
+            available.x() + (available.width() - width) // 2,
+            available.y() + (available.height() - height) // 2,
+        )
+        self.show()
 
     def toggle_maximized(self):
         if self.isMaximized():
@@ -339,7 +356,8 @@ class ArabicPyIDE(QMainWindow):
         command_layout.addStretch()
         self.designer_button = self.make_button("تصميم", self.toggle_android_designer)
         command_layout.addWidget(self.designer_button)
-        command_layout.addWidget(self.make_button("▶ تشغيل", self.run_code, "runButton"))
+        self.run_button = self.make_button("▶ تشغيل", self.run_code, "runButton")
+        command_layout.addWidget(self.run_button)
         layout.addWidget(command_bar)
 
         workspace = QHBoxLayout()
@@ -799,13 +817,22 @@ class ArabicPyIDE(QMainWindow):
                 "أصلح أخطاء ملف Android قبل فتح المصمم المرئي."
             )
             return
+        self.output_was_visible_before_designer = self.main_splitter.widget(1).isVisible()
+        self.main_splitter.widget(1).hide()
+        self.main_splitter.setSizes([1, 0])
         self.code_splitter.hide()
         self.android_designer.show()
         self.designer_button.setText("الكود")
 
     def hide_android_designer(self):
+        if self.android_designer.preview_mode:
+            self.android_designer.stop_preview()
+            self.run_button.setText("▶ تشغيل")
         self.android_designer.hide()
         self.code_splitter.show()
+        if self.output_was_visible_before_designer:
+            self.main_splitter.widget(1).show()
+            self.main_splitter.setSizes([650, 190])
         self.designer_button.setText("تصميم")
 
     def apply_designer_source(self, source):
@@ -996,6 +1023,15 @@ class ArabicPyIDE(QMainWindow):
             try:
                 generate_kivy(source)
                 self.editor.clear_error_line()
+                if self.android_designer.isVisible():
+                    if self.android_designer.preview_mode:
+                        self.android_designer.stop_preview()
+                        self.run_button.setText("▶ تشغيل")
+                    else:
+                        self.android_designer.load_source(source)
+                        self.android_designer.start_preview()
+                        self.run_button.setText("■ إيقاف المعاينة")
+                    return
                 self.output.setPlainText(
                     "تم التحقق من التطبيق بنجاح. استخدم قائمتي ملف وتشغيل للتصدير أو إنشاء APK."
                 )
@@ -1031,5 +1067,5 @@ class ArabicPyIDE(QMainWindow):
 if __name__ == "__main__":
     app = QApplication([])
     window = ArabicPyIDE()
-    window.show()
+    window.show_fitted()
     app.exec()

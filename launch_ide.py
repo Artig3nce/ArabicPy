@@ -8,7 +8,7 @@ from arabicpy.ide import ArabicPyIDE
 def main():
     app = QApplication([])
     window = ArabicPyIDE()
-    window.show()
+    window.show_fitted()
     return app.exec()
 
 
