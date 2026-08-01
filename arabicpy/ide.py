@@ -168,14 +168,22 @@ class TitleBar(QWidget):
         self.setObjectName("titleBar")
         self.setFixedHeight(35)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(10, 0, 0, 0)
+        layout.setSpacing(7)
 
-        brand = QLabel("◈  الباء")
+        logo = QLabel("ب")
+        logo.setObjectName("titleLogo")
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setFixedSize(22, 22)
+        brand = QLabel("الباء")
         brand.setObjectName("brand")
-        document = QLabel("  —  لغة البرمجة العربية")
+        separator = QLabel("|")
+        separator.setObjectName("titleSeparator")
+        document = QLabel("لغة البرمجة العربية")
         document.setObjectName("titleDocument")
+        layout.addWidget(logo)
         layout.addWidget(brand)
+        layout.addWidget(separator)
         layout.addWidget(document)
         layout.addStretch()
         for label, action, name in [("—", parent.showMinimized, "windowButton"), ("□", parent.toggle_maximized, "windowButton"), ("×", parent.close, "closeButton")]:
@@ -239,7 +247,9 @@ class ArabicPyIDE(QMainWindow):
         return """
         QMainWindow, QWidget { background: #1e1e1e; color: #cccccc; font-family: 'Tahoma'; font-size: 13px; }
         #titleBar { background: #181818; border-bottom: 1px solid #2b2b2b; }
+        #titleLogo { background: #16825d; color: white; border-radius: 5px; font-weight: 700; font-size: 14px; }
         #brand { color: #ffffff; font-weight: 600; font-size: 14px; }
+        #titleSeparator { color: #505050; padding: 0 2px; }
         #titleDocument { color: #969696; }
         #windowButton, #closeButton { border: none; border-radius: 0; background: transparent; color: #c8c8c8; font-size: 17px; }
         #windowButton:hover { background: #333333; } #closeButton:hover { background: #c42b1c; color: white; }
@@ -451,6 +461,7 @@ class ArabicPyIDE(QMainWindow):
         self.tab_widget.setTabsClosable(False)
         self.tab_widget.setMovable(True)
         self.tab_widget.currentChanged.connect(self.switch_tab)
+        self.tab_widget.tabBarDoubleClicked.connect(self.rename_tab)
         add_tab = self.make_button("+", self.new_file)
         add_tab.setFixedWidth(30)
         self.tab_widget.setCornerWidget(add_tab, Qt.TopLeftCorner)
@@ -526,6 +537,7 @@ class ArabicPyIDE(QMainWindow):
             lambda value: self.sync_scrollbars(self.python_preview, self.editor, value)
         )
         self.editor.file_path = None
+        self.editor.display_name = "غير محفوظ.apy"
         initial_index = self.tab_widget.addTab(self.editor, "غير محفوظ.apy")
         self.add_tab_close_button(initial_index, self.editor)
         QTimer.singleShot(0, self.align_code_pane_headers)
@@ -624,7 +636,10 @@ class ArabicPyIDE(QMainWindow):
     def update_tab_title(self, modified=False):
         index = self.tab_widget.indexOf(self.editor)
         if index >= 0:
-            name = os.path.basename(getattr(self.editor, "file_path", "") or "غير محفوظ.apy")
+            name = os.path.basename(
+                getattr(self.editor, "file_path", "")
+                or getattr(self.editor, "display_name", "غير محفوظ.apy")
+            )
             marker = "● " if modified else ""
             self.tab_widget.setTabText(index, marker + name)
         return
@@ -646,6 +661,7 @@ class ArabicPyIDE(QMainWindow):
     def add_editor_tab(self, content="", path=None):
         editor = CodeEditor()
         editor.file_path = path
+        editor.display_name = os.path.basename(path) if path else "غير محفوظ.apy"
         editor.highlighter = ArabicPyHighlighter(editor.document())
         editor.setPlainText(content)
         editor.document().setModified(False)
@@ -663,6 +679,45 @@ class ArabicPyIDE(QMainWindow):
         self.add_tab_close_button(index, editor)
         self.tab_widget.setCurrentWidget(editor)
         return editor
+
+    def rename_tab(self, index):
+        if index < 0:
+            return
+        editor = self.tab_widget.widget(index)
+        old_path = getattr(editor, "file_path", None)
+        current_name = os.path.basename(old_path or getattr(editor, "display_name", "غير محفوظ.apy"))
+        name, accepted = QInputDialog.getText(
+            self, "تغيير اسم الملف", "الاسم الجديد:", text=current_name
+        )
+        if not accepted:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if os.path.basename(name) != name or any(character in name for character in '<>:"/\\|?*'):
+            QMessageBox.warning(self, "اسم غير صالح", "اكتب اسم ملف فقط بدون مسار أو رموز غير مسموحة.")
+            return
+        if not os.path.splitext(name)[1]:
+            name += ".apy"
+        if old_path:
+            new_path = os.path.join(os.path.dirname(old_path), name)
+            if os.path.normcase(new_path) != os.path.normcase(old_path):
+                if os.path.exists(new_path):
+                    QMessageBox.warning(self, "الاسم مستخدم", "يوجد ملف بهذا الاسم بالفعل.")
+                    return
+                try:
+                    os.rename(old_path, new_path)
+                except OSError as error:
+                    QMessageBox.critical(self, "تعذر تغيير الاسم", str(error))
+                    return
+                editor.file_path = new_path
+                self.current_file = new_path
+                settings = QSettings("AlBaa", "AlBaaIDE")
+                paths = settings.value("project_files", [], type=list)
+                settings.setValue("project_files", [path for path in paths if os.path.abspath(str(path)) != os.path.abspath(old_path)])
+                self.remember_project_file(new_path)
+        editor.display_name = name
+        self.tab_widget.setTabText(index, ("● " if editor.document().isModified() else "") + name)
 
     def add_tab_close_button(self, index, editor):
         close_button = QPushButton("×")
@@ -1738,7 +1793,8 @@ class ArabicPyIDE(QMainWindow):
     def save_file(self):
         editor = self.editor
         if not getattr(editor, "file_path", None):
-            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", "", "ملفات الباء (*.apy)")
+            suggested_name = getattr(editor, "display_name", "غير محفوظ.apy")
+            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", suggested_name, "ملفات الباء (*.apy)")
             if not path:
                 return
             editor.file_path = path
