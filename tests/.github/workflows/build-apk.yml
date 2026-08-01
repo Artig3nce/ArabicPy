@@ -1,0 +1,33 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Buildozer requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses-dev libncursesw5-dev cmake libffi-dev libssl-dev automake autopoint gettext
+          python -m pip install --upgrade pip virtualenv
+          python -m pip install buildozer setuptools cython==0.29.34
+
+      - name: Build APK
+        run: buildozer android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: albaa-android-apk
+          path: bin/*.apk
+          if-no-files-found: error

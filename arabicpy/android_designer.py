@@ -80,7 +80,7 @@ class DesignerItem(QFrame):
             "#FFFFFF" if self.widget_model.kind == "زر" else "#202124"
         )
         background_color = self.widget_model.background_color or (
-            "#1976D2" if self.widget_model.kind == "زر" else "#FFFFFF"
+            "#0F172A" if self.widget_model.kind == "زر" else "#F8FAFC"
         )
         self.control.setStyleSheet(
             f"color: {text_color}; background-color: {background_color};"
@@ -115,7 +115,7 @@ class AndroidDesigner(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.program = AndroidProgram("تطبيقي العربي", [], [])
+        self.program = AndroidProgram("الباء", [], [], background_color="#FFFFFF")
         self.selected_name = None
         self.loading = False
         self.item_widgets = {}
@@ -464,6 +464,11 @@ class AndroidDesigner(QWidget):
             item.activated.connect(self.run_preview_event)
             self.canvas_layout.addWidget(item)
             self.item_widgets[widget.name] = item
+        for widget in self.program.widgets:
+            if widget.bind_to and widget.bind_to in self.item_widgets:
+                source_control = self.item_widgets[widget.bind_to].control
+                target_control = self.item_widgets[widget.name].control
+                source_control.textChanged.connect(target_control.setText)
         self.refresh_bottom_navigation()
         if self.selected_name:
             self.select_widget(self.selected_name)
@@ -591,11 +596,19 @@ class AndroidDesigner(QWidget):
                     lines.append("    تحتوي على رمز")
             else:
                 generated_names[widget.name] = widget.name
-                numbered_text = re.fullmatch(r"نص_(\d+)", widget.name)
-                if widget.kind == "نص" and numbered_text:
-                    lines.append(f"نص {numbered_text.group(1)} = {widget.text}")
+                if widget.kind == "نص" and widget.natural_syntax:
+                    if widget.bind_to:
+                        lines.append(f"اطبع {widget.bind_to}")
+                    else:
+                        lines.append(f'اطبع "{widget.text}"')
+                elif widget.kind == "حقل" and widget.natural_syntax:
+                    lines.append(f'{widget.name} = حقل "{widget.text}"')
                 else:
-                    lines.append(f'{widget.name} = {widget.kind}("{widget.text}")')
+                    numbered_text = re.fullmatch(r"نص_(\d+)", widget.name)
+                    if widget.kind == "نص" and numbered_text:
+                        lines.append(f"نص {numbered_text.group(1)} = {widget.text}")
+                    else:
+                        lines.append(f'{widget.name} = {widget.kind}("{widget.text}")')
             if widget.text_color and not (widget.kind == "زر" and linked_event):
                 text_colors = {
                     "#000000": "اسود", "#0F1419": "اسود", "#0F172A": "اسود",

@@ -47,6 +47,11 @@ def test_exports_main_and_buildozer_spec(tmp_path):
     spec = (tmp_path / "buildozer.spec").read_text(encoding="utf-8")
     assert "requirements = python3,kivy" in spec
     assert "title = تطبيق الاختبار" in spec
+    workflow = tmp_path / ".github" / "workflows" / "build-apk.yml"
+    assert workflow.exists()
+    workflow_text = workflow.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in workflow_text
+    assert "actions/upload-artifact@v4" in workflow_text
 
 
 def test_element_colors_are_generated_for_kivy():
@@ -335,3 +340,22 @@ def test_comments_are_ignored_inside_password_rules():
     program = parse_android(source)
 
     assert program.widgets[0].kind == "كلمة_مرور"
+
+
+def test_simple_display_and_field_syntax_generates_live_application_text():
+    source = '''اسم التطبيق هو الباء
+اطبع "ما هو اسمك"
+الاسم = حقل "اكتب اسمك"
+اطبع الاسم
+'''
+
+    program = parse_android(source)
+    python_code = generate_kivy(source)
+
+    assert program.widgets[0].text == "ما هو اسمك"
+    assert program.widgets[1].name == "الاسم"
+    assert program.widgets[1].natural_syntax
+    assert program.widgets[2].bind_to == "الاسم"
+    assert "hint_text='اكتب اسمك', text=''" in python_code
+    assert "self.الاسم.bind(text=lambda _field, value:" in python_code
+    assert "setattr(self.نص_مطبوع_2, 'text', value)" in python_code

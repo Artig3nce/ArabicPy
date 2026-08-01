@@ -2,10 +2,13 @@ import contextlib
 import base64
 import io
 import os
+import re
+import shutil
+from datetime import datetime
 
-from PySide6.QtCore import QProcess, QTimer, QRect, QSize, Qt
+from PySide6.QtCore import QProcess, QTimer, QRect, QSize, Qt, QUrl
 from PySide6.QtGui import (
-    QColor, QFont, QPainter, QTextBlockFormat, QTextCharFormat, QTextCursor,
+    QColor, QDesktopServices, QFont, QPainter, QTextBlockFormat, QTextCharFormat, QTextCursor,
     QTextFormat,
 )
 from PySide6.QtWidgets import (
@@ -336,7 +339,9 @@ class ArabicPyIDE(QMainWindow):
         ]))
         menu_layout.addWidget(self.make_menu_button("تشغيل", [
             ("تشغيل البرنامج", self.run_code), ("مسح المخرجات", self.clear_output),
-            ("إنشاء APK عبر WSL2", self.build_android_apk),
+            ("إعداد GitHub", self.setup_github),
+            ("رفع التطبيق إلى GitHub", self.upload_to_github),
+            ("إنشاء APK عبر GitHub", self.build_apk_with_github),
         ]))
         menu_layout.addWidget(self.make_menu_button("تعليمات", [
             ("حول الباء", self.show_about),
@@ -365,12 +370,25 @@ class ArabicPyIDE(QMainWindow):
         self.apk_progress.setTextVisible(False)
         self.apk_progress.hide()
         command_layout.addWidget(self.apk_progress)
-        self.apk_tools_button = self.make_button("↓ تثبيت أدوات APK", self.install_apk_tools)
-        self.apk_tools_button.setToolTip("تثبيت WSL2 وUbuntu وBuildozer ومتطلبات Android")
-        command_layout.addWidget(self.apk_tools_button)
-        self.apk_button = self.make_button("▣ إنشاء APK", self.build_android_apk)
-        self.apk_button.setToolTip("إنشاء ملف APK للتطبيق عبر WSL2 وBuildozer")
-        command_layout.addWidget(self.apk_button)
+        self.github_status_label = QLabel("")
+        self.github_status_label.setFixedWidth(170)
+        self.github_status_label.setAlignment(Qt.AlignCenter)
+        self.github_status_label.setStyleSheet(
+            "color: #D8DEE9; background: #2A2D2E; border-radius: 4px; padding: 3px 8px;"
+        )
+        self.github_status_label.hide()
+        command_layout.addWidget(self.github_status_label)
+        self.github_cancel_button = self.make_button("إلغاء", self.cancel_github_operation)
+        self.github_cancel_button.setFixedWidth(58)
+        self.github_cancel_button.hide()
+        command_layout.addWidget(self.github_cancel_button)
+        self.github_setup_button = self.make_button("إعداد GitHub", self.setup_github)
+        command_layout.addWidget(self.github_setup_button)
+        self.github_upload_button = self.make_button("↑ رفع إلى GitHub", self.upload_to_github)
+        command_layout.addWidget(self.github_upload_button)
+        self.github_apk_button = self.make_button("▣ إنشاء APK", self.build_apk_with_github)
+        self.github_apk_button.setToolTip("إنشاء APK سحابيًا عبر GitHub Actions")
+        command_layout.addWidget(self.github_apk_button)
         self.designer_button = self.make_button("تصميم", self.toggle_android_designer)
         command_layout.addWidget(self.designer_button)
         self.run_button = self.make_button("▶ تشغيل", self.run_code, "runButton")
@@ -559,6 +577,16 @@ class ArabicPyIDE(QMainWindow):
         self.android_build_process = None
         self.apk_install_process = None
         self.apk_install_stage = None
+        self.github_process = None
+        self.github_project_path = None
+        self.github_operation = None
+        self.github_repo_name = None
+        self.github_download_path = None
+        self.github_elapsed_seconds = 0
+        self.github_phase_label = ""
+        self.github_cancel_requested = False
+        self.github_elapsed_timer = QTimer(self)
+        self.github_elapsed_timer.timeout.connect(self.update_github_elapsed_time)
         self.updating_from_designer = False
         self.refresh_file_list()
 
@@ -808,11 +836,14 @@ class ArabicPyIDE(QMainWindow):
     def new_android_file(self):
         source = (
             'اسم التطبيق هو الباء\n\n'
-            'رسالة = نص("مرحباً من الباء")\n'
-            'الاسم = حقل("اكتب اسمك")\n'
-            'انشئ زر اضغط هنا\n\n'
-            'عند النقر على زر اضغط هنا\n'
-            '    اذهب الى صفحة الرئيسية\n'
+            'في شريط السفلي ضع:\n'
+            '    الرئيسية\n'
+            '    البحث\n'
+            '    التنبيهات\n'
+            '    الرسائل\n\n'
+            'اطبع "ما هو اسمك"\n\n'
+            'الاسم = حقل "اكتب اسمك"\n\n'
+            'اطبع الاسم\n'
         )
         editor = self.add_editor_tab(source)
         editor.document().setModified(True)
@@ -913,9 +944,396 @@ class ArabicPyIDE(QMainWindow):
         self.main_splitter.widget(1).show()
         self.output.setPlainText(
             f"تم تصدير مشروع Android إلى:\n{directory}\n\n"
-            "يمكنك الآن اختيار تشغيل > إنشاء APK عبر WSL2."
+            "يمكنك رفعه إلى GitHub أو إنشاء APK عبر GitHub Actions."
         )
         return True
+
+    def github_cli_path(self):
+        """Locate GitHub CLI, including a fresh Winget installation."""
+        found = shutil.which("gh")
+        if found:
+            return found
+        candidates = [
+            os.path.join(os.environ.get("ProgramFiles", ""), "GitHub CLI", "gh.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "GitHub CLI", "gh.exe"),
+        ]
+        return next((path for path in candidates if path and os.path.isfile(path)), None)
+
+    def github_is_authenticated(self):
+        gh_path = self.github_cli_path()
+        if not gh_path:
+            return False
+        check = QProcess(self)
+        check.setProgram(gh_path)
+        check.setArguments(["auth", "status"])
+        check.start()
+        return check.waitForStarted(2500) and check.waitForFinished(8000) and check.exitCode() == 0
+
+    def github_has_workflow_scope(self):
+        """Return whether the active token may create Actions workflows."""
+        gh_path = self.github_cli_path()
+        if not gh_path:
+            return False
+        check = QProcess(self)
+        check.setProgram(gh_path)
+        check.setArguments(["api", "-i", "user"])
+        check.start()
+        if not check.waitForStarted(2500) or not check.waitForFinished(8000):
+            return False
+        headers = bytes(check.readAllStandardOutput()).decode("utf-8", errors="replace").lower()
+        return any(
+            "workflow" in line for line in headers.splitlines()
+            if line.startswith("x-oauth-scopes:")
+        )
+
+    def set_github_busy(self, busy, label="عملية GitHub جارية"):
+        for button in (
+            self.github_setup_button, self.github_upload_button,
+            self.github_apk_button,
+        ):
+            button.setEnabled(not busy)
+        if busy:
+            self.github_cancel_requested = False
+            self.github_elapsed_seconds = 0
+            self.github_phase_label = label
+            self.update_github_elapsed_time()
+            self.github_status_label.show()
+            self.github_cancel_button.show()
+            self.github_elapsed_timer.start(1000)
+            self.apk_progress.setToolTip(label)
+            self.apk_progress.show()
+        else:
+            self.github_elapsed_timer.stop()
+            self.github_status_label.hide()
+            self.github_cancel_button.hide()
+            self.apk_progress.hide()
+
+    def update_github_elapsed_time(self):
+        minutes, seconds = divmod(self.github_elapsed_seconds, 60)
+        phases = {
+            "install": "تثبيت GitHub",
+            "login": "تسجيل الدخول",
+            "scope": "صلاحية Actions",
+            "upload": "رفع المشروع",
+            "build_upload": "رفع المشروع",
+            "build": "بناء APK",
+        }
+        phase = phases.get(self.github_operation, "GitHub")
+        self.github_status_label.setText(f"{phase}  •  {minutes:02d}:{seconds:02d}")
+        tooltip = self.github_phase_label
+        if self.github_operation == "build":
+            tooltip += " — يستغرق عادةً 10–30 دقيقة"
+        elif self.github_operation in ("login", "scope"):
+            tooltip += " — أدخل الرمز الظاهر في المتصفح"
+        self.github_status_label.setToolTip(tooltip)
+        self.github_elapsed_seconds += 1
+
+    def cancel_github_operation(self):
+        process = self.github_process
+        if process is None:
+            return
+        answer = QMessageBox.question(
+            self, "إلغاء العملية", "هل تريد إلغاء عملية GitHub الحالية؟",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.github_cancel_requested = True
+        self.output.appendPlainText("\nجارٍ إلغاء عملية GitHub...")
+        if self.github_operation == "build" and self.github_project_path:
+            gh_path = (self.github_cli_path() or "gh").replace("'", "''")
+            cancel_command = (
+                f"$gh='{gh_path}'; "
+                "$run=& $gh run list --workflow build-apk.yml --event workflow_dispatch "
+                "--limit 1 --json databaseId --jq '.[0].databaseId'; "
+                "if ($run) { & $gh run cancel $run }"
+            )
+            QProcess.startDetached(
+                "powershell.exe", ["-NoProfile", "-Command", cancel_command],
+                self.github_project_path,
+            )
+        process.terminate()
+        QTimer.singleShot(
+            3000,
+            lambda: process.kill()
+            if process.state() != QProcess.ProcessState.NotRunning else None,
+        )
+
+    def setup_github(self):
+        if self.github_process is not None:
+            QMessageBox.information(self, "GitHub", "توجد عملية GitHub جارية بالفعل.")
+            return
+        gh_path = self.github_cli_path()
+        self.main_splitter.widget(1).show()
+        if not gh_path:
+            self.output.setPlainText("جارٍ تثبيت GitHub CLI عبر Winget...\n")
+            process = QProcess(self)
+            self.github_process = process
+            self.github_operation = "install"
+            self.set_github_busy(True, "جارٍ تثبيت GitHub CLI")
+            process.setProgram("winget.exe")
+            process.setArguments([
+                "install", "--id", "GitHub.cli", "-e", "--source", "winget",
+                "--accept-package-agreements", "--accept-source-agreements",
+            ])
+            self.connect_github_process(process)
+            process.start()
+            return
+        if self.github_is_authenticated() and self.github_has_workflow_scope():
+            message = "GitHub جاهز ومسجّل الدخول. يمكنك رفع التطبيق أو إنشاء APK."
+            self.output.setPlainText(message)
+            QMessageBox.information(self, "GitHub جاهز", message)
+            return
+        if self.github_is_authenticated():
+            self.output.setPlainText(
+                "الحساب متصل، لكن صلاحية workflow مطلوبة لبناء APK.\n"
+                "أدخل الرمز الجديد في GitHub للموافقة على صلاحية Actions.\n\n"
+            )
+            process = QProcess(self)
+            self.github_process = process
+            self.github_operation = "scope"
+            self.set_github_busy(True, "إضافة صلاحية GitHub Actions")
+            QDesktopServices.openUrl(QUrl("https://github.com/login/device"))
+            process.setProgram(gh_path)
+            process.setArguments(["auth", "refresh", "-h", "github.com", "-s", "workflow"])
+            self.connect_github_process(process)
+            process.start()
+            return
+        self.output.setPlainText(
+            "سيعرض GitHub رمزًا ويفتح المتصفح لتسجيل الدخول بأمان.\n"
+            "أكمل تسجيل الدخول في المتصفح وانتظر رسالة النجاح.\n\n"
+        )
+        process = QProcess(self)
+        self.github_process = process
+        self.github_operation = "login"
+        self.set_github_busy(True, "في انتظار تسجيل الدخول إلى GitHub")
+        QDesktopServices.openUrl(QUrl("https://github.com/login/device"))
+        process.setProgram(gh_path)
+        process.setArguments(["auth", "login", "--web", "--git-protocol", "https"])
+        self.connect_github_process(process)
+        process.start()
+
+    def connect_github_process(self, process):
+        process.readyReadStandardOutput.connect(self.read_github_output)
+        process.readyReadStandardError.connect(self.read_github_output)
+        process.errorOccurred.connect(self.github_process_error)
+        process.finished.connect(self.github_process_finished)
+
+    def read_github_output(self):
+        process = self.github_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
+        if data:
+            self.output.appendPlainText(data.decode("utf-8", errors="replace").rstrip())
+
+    def github_process_error(self, _error):
+        if self.github_process is None:
+            return
+        self.output.appendPlainText("\nتعذر بدء أداة GitHub.")
+
+    def prepare_github_project(self):
+        source = self.editor.toPlainText()
+        if not is_android_source(source):
+            QMessageBox.warning(self, "ليس تطبيقًا", "افتح أو أنشئ تطبيقًا قبل الرفع إلى GitHub.")
+            return None
+        directory = self.github_project_path
+        if not directory:
+            directory = QFileDialog.getExistingDirectory(
+                self, "اختر مجلدًا محليًا لمشروع GitHub"
+            )
+            if not directory:
+                return None
+            self.github_project_path = directory
+        try:
+            export_android_project(source, directory)
+        except Exception as error:
+            self.output.setPlainText(format_error(error, source))
+            QMessageBox.critical(self, "تعذر تجهيز المشروع", str(error))
+            return None
+        return directory
+
+    def upload_to_github(self):
+        self.start_github_upload(build_after=False)
+
+    def build_apk_with_github(self):
+        self.start_github_upload(build_after=True)
+
+    def start_github_upload(self, build_after=False):
+        if self.github_process is not None:
+            QMessageBox.information(self, "GitHub", "انتظر حتى تنتهي عملية GitHub الحالية.")
+            return
+        if not self.github_is_authenticated():
+            QMessageBox.warning(
+                self, "GitHub غير جاهز",
+                "اضغط «إعداد GitHub» وثبّت الأداة وسجّل الدخول أولًا."
+            )
+            return
+        if not self.github_has_workflow_scope():
+            QMessageBox.warning(
+                self, "صلاحية GitHub Actions مطلوبة",
+                "اضغط «إعداد GitHub» ووافق على صلاحية workflow قبل الرفع."
+            )
+            return
+        directory = self.prepare_github_project()
+        if not directory:
+            return
+        has_remote = self.git_has_origin(directory)
+        repo_name = self.github_repo_name
+        if not has_remote and not repo_name:
+            default_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", os.path.basename(directory)).strip("-.") or "albaa-app"
+            repo_name, accepted = QInputDialog.getText(
+                self, "اسم مستودع GitHub", "اكتب اسم المستودع الخاص:", text=default_name
+            )
+            repo_name = repo_name.strip()
+            if not accepted:
+                return
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", repo_name):
+                QMessageBox.warning(self, "اسم غير صالح", "استخدم حروفًا إنجليزية وأرقامًا و . _ - فقط.")
+                return
+            self.github_repo_name = repo_name
+        gh_path = self.github_cli_path().replace("'", "''")
+        repo_arg = (repo_name or "albaa-app").replace("'", "''")
+        if has_remote:
+            remote_command = "git push -u origin HEAD; exit $LASTEXITCODE"
+        else:
+            remote_command = (
+                "git remote remove origin 2>$null; "
+                f"$fullRepo=$login + '/{repo_arg}'; "
+                "$existing=& $gh repo view $fullRepo --json name --jq .name 2>$null; "
+                "if ($LASTEXITCODE -eq 0) { "
+                "git remote add origin ('https://github.com/' + $fullRepo + '.git'); "
+                "git push -u origin HEAD "
+                f"}} else {{ & $gh repo create '{repo_arg}' --private --source=. --remote=origin --push }}; "
+                "exit $LASTEXITCODE"
+            )
+        command = (
+            f"$gh='{gh_path}'; "
+            "$login=& $gh api user --jq .login; if ($LASTEXITCODE -ne 0) { exit 1 }; "
+            "if (!(Test-Path '.git')) { git init -b main }; "
+            "git config user.name $login; git config user.email ($login + '@users.noreply.github.com'); "
+            "git config core.autocrlf true; "
+            "git add .; git diff --cached --quiet; "
+            "if ($LASTEXITCODE -ne 0) { git commit -m 'Update from AlBaa' }; "
+            + remote_command
+        )
+        self.start_github_command(
+            command, "build_upload" if build_after else "upload",
+            directory, "جارٍ رفع التطبيق إلى GitHub...",
+        )
+
+    def git_has_origin(self, directory):
+        check = QProcess(self)
+        check.setWorkingDirectory(directory)
+        check.setProgram("git.exe")
+        check.setArguments(["remote", "get-url", "origin"])
+        check.start()
+        if not check.waitForStarted(2500) or not check.waitForFinished(5000) or check.exitCode() != 0:
+            return False
+        origin = bytes(check.readAllStandardOutput()).decode("utf-8", errors="replace").strip().lower()
+        return (
+            origin.startswith("https://github.com/")
+            or origin.startswith("git@github.com:")
+            or origin.startswith("ssh://git@github.com/")
+        )
+
+    def start_github_command(self, command, operation, directory, message):
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText(message + "\n\n")
+        self.set_github_busy(True, message)
+        process = QProcess(self)
+        self.github_process = process
+        self.github_operation = operation
+        process.setWorkingDirectory(directory)
+        process.setProgram("powershell.exe")
+        process.setArguments(["-NoProfile", "-Command", command])
+        self.connect_github_process(process)
+        process.start()
+
+    def start_github_cloud_build(self):
+        directory = self.github_project_path
+        gh_path = self.github_cli_path().replace("'", "''")
+        download_path = os.path.join(
+            directory, "apk-output", datetime.now().strftime("%Y%m%d-%H%M%S")
+        )
+        self.github_download_path = download_path
+        escaped_download = download_path.replace("'", "''")
+        command = (
+            f"$gh='{gh_path}'; & $gh workflow run build-apk.yml; "
+            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+            "$run=''; for ($i=0; $i -lt 20 -and !$run; $i++) { "
+            "Start-Sleep -Seconds 3; "
+            "$run=& $gh run list --workflow build-apk.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
+            "if (!$run) { Write-Error 'لم يظهر تشغيل GitHub Actions'; exit 1 }; "
+            "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+            f"& $gh run download $run --name albaa-android-apk --dir '{escaped_download}'; exit $LASTEXITCODE"
+        )
+        self.start_github_command(
+            command, "build", directory,
+            "بدأ إنشاء APK على GitHub. قد يستغرق البناء الأول عدة دقائق...",
+        )
+
+    def github_process_finished(self, exit_code, _status):
+        operation = self.github_operation
+        was_cancelled = self.github_cancel_requested
+        process = self.github_process
+        if process is not None:
+            self.read_github_output()
+            process.deleteLater()
+        self.github_process = None
+        self.github_operation = None
+        self.set_github_busy(False)
+        if was_cancelled:
+            self.github_cancel_requested = False
+            self.output.appendPlainText("\nتم إلغاء عملية GitHub.")
+            QMessageBox.information(self, "تم الإلغاء", "تم إلغاء عملية GitHub.")
+            return
+        # Device-flow login can return a non-zero process code after the browser
+        # has already authorized and stored a valid credential. Trust the real
+        # authenticated state rather than that stale process result.
+        if operation == "login" and self.github_is_authenticated():
+            exit_code = 0
+        if operation == "scope" and self.github_has_workflow_scope():
+            exit_code = 0
+        if exit_code != 0:
+            self.main_splitter.widget(1).show()
+            self.main_splitter.setSizes([650, 190])
+            output_lines = [
+                line.strip() for line in self.output.toPlainText().splitlines()
+                if line.strip()
+            ]
+            details = "\n".join(output_lines[-4:])
+            message = f"فشلت عملية GitHub برمز {exit_code}."
+            if details:
+                message += f"\n\nآخر التفاصيل:\n{details}"
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.critical(self, "فشلت عملية GitHub", message)
+            return
+        if operation == "install":
+            self.output.appendPlainText("\nتم تثبيت GitHub CLI. أكمل تسجيل الدخول الآن.")
+            QTimer.singleShot(0, self.setup_github)
+        elif operation == "login":
+            QMessageBox.information(self, "تم تسجيل الدخول", "تم ربط «الباء» بحساب GitHub بنجاح.")
+        elif operation == "scope":
+            QMessageBox.information(
+                self, "اكتملت الصلاحيات",
+                "تمت إضافة صلاحية GitHub Actions. يمكنك الآن رفع التطبيق وإنشاء APK."
+            )
+        elif operation == "upload":
+            QMessageBox.information(self, "تم الرفع", "تم رفع التطبيق إلى مستودع GitHub خاص بنجاح.")
+        elif operation == "build_upload":
+            self.start_github_cloud_build()
+        elif operation == "build":
+            apk_files = []
+            if self.github_download_path and os.path.isdir(self.github_download_path):
+                for root, _dirs, files in os.walk(self.github_download_path):
+                    apk_files.extend(os.path.join(root, name) for name in files if name.endswith(".apk"))
+            if apk_files:
+                message = f"تم إنشاء وتنزيل APK بنجاح:\n{apk_files[0]}"
+                self.output.appendPlainText("\n" + message)
+                QMessageBox.information(self, "تم إنشاء APK", message)
+            else:
+                QMessageBox.warning(self, "لم يُعثر على APK", "نجح GitHub لكن ملف APK غير موجود في مجلد التنزيل.")
 
     def build_android_apk(self):
         if self.android_build_process is not None:

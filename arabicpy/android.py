@@ -11,6 +11,12 @@ WIDGET_PATTERN = re.compile(r'^(?P<name>[\w\u0600-\u06ff]+)\s*=\s*(?P<kind>نص|
 NUMBERED_TEXT_PATTERN = re.compile(
     r'^نص\s+(?P<number>\d+)\s*=\s*(?P<text>.+?)\s*$'
 )
+NATURAL_FIELD_PATTERN = re.compile(
+    r'^(?P<name>[\w\u0600-\u06ff]+)\s*=\s*حقل\s+"(?P<text>.*)"\s*$'
+)
+NATURAL_DISPLAY_PATTERN = re.compile(
+    r'^اطبع\s+(?:"(?P<text>.*)"|(?P<name>[\w\u0600-\u06ff]+))\s*$'
+)
 ARABIC_COLOR_NAMES = {
     "أسود": "#000000", "اسود": "#000000",
     "أبيض": "#FFFFFF", "ابيض": "#FFFFFF",
@@ -79,6 +85,8 @@ class AndroidWidget:
     min_length: int | None = None
     require_numbers: bool = False
     require_symbols: bool = False
+    bind_to: str | None = None
+    natural_syntax: bool = False
 
 
 @dataclass
@@ -256,6 +264,8 @@ def parse_android(source):
         natural_button_match = NATURAL_BUTTON_PATTERN.match(stripped)
         short_button_match = re.match(r'^انشئ\s+زر\s+(?!اسمه\s+)(?P<text>.+?)\s*:?\s*$', stripped)
         natural_button_match = button_function_match or natural_button_match or short_button_match
+        natural_field_match = NATURAL_FIELD_PATTERN.match(stripped)
+        natural_display_match = NATURAL_DISPLAY_PATTERN.match(stripped)
         numbered_text_match = NUMBERED_TEXT_PATTERN.match(stripped)
         widget_match = WIDGET_PATTERN.match(stripped)
         if natural_button_match:
@@ -280,6 +290,34 @@ def parse_android(source):
                         last_widget.text_color = previous_button.text_color
                 pending_functions[button_function_match.group("function").strip()] = name
             last_button = last_widget
+            widgets.append(last_widget)
+            index += 1
+            continue
+        if natural_field_match:
+            name = natural_field_match.group("name")
+            if name in widget_names:
+                raise ArabicPyError(f"العنصر معرّف مسبقاً: {name}", line_number, 1)
+            widget_names.add(name)
+            last_widget = AndroidWidget(
+                name, "حقل", natural_field_match.group("text"),
+                page=current_page, natural_syntax=True,
+            )
+            widgets.append(last_widget)
+            index += 1
+            continue
+        if natural_display_match:
+            source_name = natural_display_match.group("name")
+            if source_name and source_name not in widget_names:
+                raise ArabicPyError(f"عنصر غير معروف: {source_name}", line_number, 1)
+            number = 1
+            while f"نص_مطبوع_{number}" in widget_names:
+                number += 1
+            name = f"نص_مطبوع_{number}"
+            widget_names.add(name)
+            last_widget = AndroidWidget(
+                name, "نص", natural_display_match.group("text") or "",
+                page=current_page, bind_to=source_name, natural_syntax=True,
+            )
             widgets.append(last_widget)
             index += 1
             continue
@@ -548,7 +586,10 @@ def generate_kivy(source):
         widget_class = widget_classes[widget.kind]
         if widget.kind == "نص" and widget.background_color:
             widget_class = "ColoredLabel"
-        option_parts = [f"text={widget.text!r}"]
+        if widget.kind == "حقل" and widget.natural_syntax:
+            option_parts = [f"hint_text={widget.text!r}", "text=''" ]
+        else:
+            option_parts = [f"text={widget.text!r}"]
         if widget.text_color:
             color_property = "foreground_color" if widget.kind in ("حقل", "كلمة_مرور") else "color"
             option_parts.append(f"{color_property}={hex_to_rgba(widget.text_color)!r}")
@@ -584,6 +625,12 @@ def generate_kivy(source):
         lines.append(
             f"        self.{event.button}.bind(on_press=self._event_{event_index})"
         )
+    for widget in program.widgets:
+        if widget.bind_to:
+            lines.append(
+                f"        self.{widget.bind_to}.bind(text=lambda _field, value: "
+                f"setattr(self.{widget.name}, 'text', value))"
+            )
     if program.bottom_navigation:
         dark_screen = is_dark_hex(program.background_color or "#FAFAFA")
         navigation_background = [0.02, 0.02, 0.02, 1] if dark_screen else [1, 1, 1, 1]
@@ -663,13 +710,55 @@ warn_on_root = 1
 """
 
 
+def github_actions_workflow():
+    """GitHub Actions workflow for building and returning a debug APK."""
+    return '''name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Buildozer requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses-dev libncursesw5-dev cmake libffi-dev libssl-dev automake autopoint gettext
+          python -m pip install --upgrade pip virtualenv
+          python -m pip install buildozer setuptools cython==0.29.34
+
+      - name: Build APK
+        run: buildozer android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: albaa-android-apk
+          path: bin/*.apk
+          if-no-files-found: error
+'''
+
+
 def export_android_project(source, directory):
     program = parse_android(source)
     os.makedirs(directory, exist_ok=True)
     main_path = os.path.join(directory, "main.py")
     spec_path = os.path.join(directory, "buildozer.spec")
+    workflow_path = os.path.join(directory, ".github", "workflows", "build-apk.yml")
     with open(main_path, "w", encoding="utf-8", newline="\n") as file:
         file.write(generate_kivy(source))
     with open(spec_path, "w", encoding="utf-8", newline="\n") as file:
         file.write(buildozer_spec(program.title))
+    os.makedirs(os.path.dirname(workflow_path), exist_ok=True)
+    with open(workflow_path, "w", encoding="utf-8", newline="\n") as file:
+        file.write(github_actions_workflow())
     return main_path, spec_path
