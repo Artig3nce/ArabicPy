@@ -89,8 +89,8 @@ def test_bottom_navigation_is_parsed_and_generated():
 
     assert "from kivy.uix.button import Button" in python_code
     assert "bottom_navigation = BoxLayout" in python_code
-    assert "text='⌂ الرئيسية'" in python_code
-    assert "text='✉ الرسائل'" in python_code
+    assert "text='الرئيسية'" in python_code
+    assert "text='الرسائل'" in python_code
 
 
 @pytest.mark.parametrize(
@@ -159,3 +159,86 @@ def test_natural_arabic_click_event():
 
     assert program.events[0].button == "زر_الترحيب"
     assert program.events[0].actions == [("رسالة", "أهلاً")]
+
+
+def test_natural_button_text_and_page_navigation():
+    source = '''اسم التطبيق هو الباء
+زر_الترحيب = زر("اضغط هنا")
+
+عند النقر على زر اضغط هنا
+    اذهب الى صفحة الرئيسية
+'''
+
+    program = parse_android(source)
+    python_code = generate_kivy(source)
+
+    assert program.events[0].button == "زر_الترحيب"
+    assert program.events[0].actions == [("__page__", "الرئيسية")]
+    assert "self._go_to_page('الرئيسية')" in python_code
+    assert "navigation_button.bind(on_press=" not in python_code
+
+
+def test_natural_arabic_button_creation():
+    source = '''اسم التطبيق هو الباء
+انشئ زر اسمه اضغط هنا
+لون النص هو ابيض
+لون الخلفية هو #2563EB
+
+عند النقر على زر اضغط هنا
+    اذهب الى صفحة البحث
+'''
+
+    program = parse_android(source)
+
+    assert program.widgets[0].name == "زر_اضغط_هنا"
+    assert program.widgets[0].text == "اضغط هنا"
+    assert program.widgets[0].background_color == "#2563EB"
+    assert program.events[0].button == "زر_اضغط_هنا"
+
+
+def test_password_function_page_block_syntax():
+    source = '''اسم التطبيق هو الباء
+
+لون الشاشة اسود
+
+في شريط السفلي ضع
+    الرئيسية
+    قوة كلمة المرور
+    التنبيهات
+    الرسائل
+
+دالة كلمة المرور
+انشئ زر اضغط هنا
+عند النقر
+    اذهب الى صفحة قوة كلمة المرور
+اكبر او تساوي 8 خانات ويجب ان تحتوي على ارقام و رموز
+
+في صفحة "قوة كلمة المرور"
+    أنشئ حقلًا اسمه "كلمة المرور"
+
+شروط كلمة المرور
+    طولها لا يقل عن 8
+    تحتوي على رقم
+    تحتوي على رمز
+'''
+
+    program = parse_android(source)
+
+    password = program.widgets[-1]
+    assert password.kind == "كلمة_مرور"
+    assert password.page == "قوة كلمة المرور"
+    assert password.min_length == 8
+    assert password.require_numbers and password.require_symbols
+
+
+def test_short_text_color_and_unquoted_page():
+    source = '''اسم التطبيق هو الباء
+في صفحة قوة كلمة المرور
+رسالة = نص("آمن")
+لون النص اسود
+'''
+
+    program = parse_android(source)
+
+    assert program.widgets[0].page == "قوة كلمة المرور"
+    assert program.widgets[0].text_color == "#000000"

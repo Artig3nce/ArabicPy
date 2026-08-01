@@ -794,9 +794,9 @@ class ArabicPyIDE(QMainWindow):
             'اسم التطبيق هو الباء\n\n'
             'رسالة = نص("مرحباً من الباء")\n'
             'الاسم = حقل("اكتب اسمك")\n'
-            'زر_الترحيب = زر("اضغط هنا")\n\n'
-            'عند النقر على زر الترحيب\n'
-            '    غيّر_النص(رسالة، "أهلاً بك في تطبيقي")\n'
+            'انشئ زر اضغط هنا\n\n'
+            'عند النقر على زر اضغط هنا\n'
+            '    اذهب الى صفحة الرئيسية\n'
         )
         editor = self.add_editor_tab(source)
         editor.document().setModified(True)
@@ -816,10 +816,19 @@ class ArabicPyIDE(QMainWindow):
             self.new_android_file()
             return
         if not self.android_designer.load_source(source):
-            self.output.setPlainText(
-                "أصلح أخطاء ملف Android قبل فتح المصمم المرئي."
+            error = self.android_designer.last_error
+            message = format_error(error, source) if error else "تعذر قراءة كود التطبيق."
+            self.editor.show_error_line(getattr(error, "line", None))
+            self.main_splitter.widget(1).show()
+            self.main_splitter.setSizes([650, 190])
+            self.output.setPlainText(message)
+            QMessageBox.warning(
+                self,
+                "تعذر فتح التصميم",
+                f"أصلح الخطأ أولاً:\n\n{getattr(error, 'message', str(error))}",
             )
             return
+        self.editor.clear_error_line()
         self.output_was_visible_before_designer = self.main_splitter.widget(1).isVisible()
         self.main_splitter.widget(1).hide()
         self.main_splitter.setSizes([1, 0])

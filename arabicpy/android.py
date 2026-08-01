@@ -8,15 +8,20 @@ from .errors import ArabicPyError
 
 
 WIDGET_PATTERN = re.compile(r'^(?P<name>[\w\u0600-\u06ff]+)\s*=\s*(?P<kind>نص|زر|حقل)\("(?P<text>.*)"\)\s*$')
+NATURAL_BUTTON_PATTERN = re.compile(r'^انشئ\s+زر\s+اسمه\s+(?P<text>.+?)\s*$')
 EVENT_PATTERN = re.compile(r'^عند_النقر\((?P<name>[\w\u0600-\u06ff]+)\):\s*$')
 NATURAL_EVENT_PATTERN = re.compile(r'^عند\s+النقر\s+على\s+(?P<name>[\w\u0600-\u06ff ]+?)\s*:?\s*$')
 SET_TEXT_PATTERN = re.compile(r'^غيّر_النص\((?P<name>[\w\u0600-\u06ff]+)\s*[،,]\s*"(?P<text>.*)"\)\s*$')
+GO_PAGE_PATTERN = re.compile(r'^اذهب\s+(?:الى|إلى)\s+(?:ال)?صفحة\s+(?P<page>.+?)\s*$')
 COLOR_PATTERN = re.compile(
     r'^(?P<property>لون_النص|لون_الخلفية)\('
     r'(?P<name>[\w\u0600-\u06ff]+)\s*[،,]\s*"(?P<color>#[0-9a-fA-F]{6})"\)\s*$'
 )
 NATURAL_TEXT_COLOR_PATTERN = re.compile(
-    r'^لون\s+النص\s+هو\s+(?P<color>أسود|اسود|أبيض|ابيض|#[0-9a-fA-F]{6})\s*$'
+    r'^لون\s+النص\s+(?:هو\s+)?(?P<color>أسود|اسود|أبيض|ابيض|#[0-9a-fA-F]{6})\s*$'
+)
+NATURAL_BACKGROUND_COLOR_PATTERN = re.compile(
+    r'^لون\s+الخلفية\s+هو\s+(?P<color>أسود|اسود|أبيض|ابيض|#[0-9a-fA-F]{6})\s*$'
 )
 APP_PATTERN = re.compile(r'^تطبيق\s+"(?P<title>.*)"\s*$')
 NATURAL_APP_PATTERN = re.compile(r'^اسم\s+التطبيق\s+هو\s+(?P<title>.+?)\s*$')
@@ -26,6 +31,22 @@ SCREEN_COLOR_PATTERN = re.compile(
 LEGACY_SCREEN_COLOR_PATTERN = re.compile(r'^لون_الشاشة\("(?P<color>#[0-9a-fA-F]{6})"\)\s*$')
 BOTTOM_NAV_PATTERN = re.compile(r'^شريط_سفلي\("(?P<items>.*)"\)\s*$')
 NATURAL_BOTTOM_NAV_PATTERN = re.compile(r'^ضع\s+في\s+شريط\s+السفلي\s+(?P<items>.+)\s*$')
+BOTTOM_NAV_BLOCK_PATTERN = re.compile(r'^في\s+شريط\s+السفلي\s+ضع\s*:?\s*$')
+PAGE_BLOCK_PATTERN = re.compile(
+    r'^في\s+صفحة\s+(?:"(?P<quoted_page>[^"]+)"|(?P<page>.+?)(?:\s+ضع)?)\s*:?\s*$'
+)
+PASSWORD_FUNCTION_PATTERN = re.compile(r'^دالة\s+كلمة\s+المرور\s*$')
+NATURAL_PASSWORD_FIELD_PATTERN = re.compile(
+    r'^(?:انشئ|أنشئ)\s+حقل(?:ا|ًا|اً)?\s+اسمه\s+"(?P<name>[^"]+)"\s*$'
+)
+PASSWORD_RULES_HEADER_PATTERN = re.compile(r'^شروط\s+كلمة\s+المرور\s*$')
+PASSWORD_SUMMARY_PATTERN = re.compile(
+    r'^اكبر\s+او\s+تساوي\s+(?P<length>\d+)\s+خانات\s+ويجب\s+ان\s+تحتوي\s+على\s+ارقام\s+و\s+رموز\s*$'
+)
+PASSWORD_FIELD_PATTERN = re.compile(
+    r'^حقل\s+كلمة\s+المرور\s+يجب\s+ان\s+تكون\s+اكبر\s+او\s+تساوي\s+'
+    r'(?P<length>\d+)\s+خانات\s+ويجب\s+ان\s+تحتوي\s+على\s+ارقام\s+و\s+رموز\s*$'
+)
 
 
 @dataclass
@@ -35,6 +56,10 @@ class AndroidWidget:
     text: str
     text_color: str | None = None
     background_color: str | None = None
+    page: str = "الرئيسية"
+    min_length: int | None = None
+    require_numbers: bool = False
+    require_symbols: bool = False
 
 
 @dataclass
@@ -67,6 +92,8 @@ def parse_android(source):
     bottom_navigation = []
     widget_names = set()
     last_widget = None
+    last_button = None
+    current_page = "الرئيسية"
     lines = source.splitlines()
     index = 0
 
@@ -78,8 +105,35 @@ def parse_android(source):
             index += 1
             continue
 
-        if raw_line[:1].isspace():
-            raise ArabicPyError("تعليمة مزاحة خارج حدث", line_number, 1)
+        bottom_nav_block_match = BOTTOM_NAV_BLOCK_PATTERN.match(stripped)
+        if bottom_nav_block_match:
+            index += 1
+            bottom_navigation = []
+            while index < len(lines):
+                candidate = lines[index]
+                if not candidate.strip():
+                    index += 1
+                    continue
+                if not candidate[:1].isspace():
+                    break
+                bottom_navigation.append(candidate.strip())
+                index += 1
+            if not bottom_navigation:
+                raise ArabicPyError("أضف صفحات تحت: في شريط السفلي ضع:", line_number, 1)
+            continue
+
+        page_block_match = PAGE_BLOCK_PATTERN.match(stripped)
+        if page_block_match:
+            current_page = (
+                page_block_match.group("quoted_page")
+                or page_block_match.group("page")
+            ).strip()
+            index += 1
+            continue
+
+        if PASSWORD_FUNCTION_PATTERN.match(stripped):
+            index += 1
+            continue
 
         app_match = NATURAL_APP_PATTERN.match(stripped) or APP_PATTERN.match(stripped)
         if app_match:
@@ -110,19 +164,121 @@ def parse_android(source):
             bottom_navigation = [item.strip() for item in re.split(
                 separator, bottom_nav_match.group("items")
             ) if item.strip()]
+            bottom_navigation = [
+                re.sub(r"^[⌂⌕♢✉]\s*", "", item)
+                for item in bottom_navigation
+            ]
             if not bottom_navigation:
                 raise ArabicPyError("أضف زرًا واحدًا على الأقل إلى الشريط السفلي", line_number, 1)
             index += 1
             continue
 
+        natural_button_match = NATURAL_BUTTON_PATTERN.match(stripped)
+        short_button_match = re.match(r'^انشئ\s+زر\s+(?!اسمه\s+)(?P<text>.+?)\s*:?\s*$', stripped)
+        natural_button_match = natural_button_match or short_button_match
         widget_match = WIDGET_PATTERN.match(stripped)
+        if natural_button_match:
+            text = natural_button_match.group("text").rstrip(":").strip()
+            name = "زر_" + re.sub(r"[^\w\u0600-\u06ff]+", "_", text).strip("_")
+            if name in widget_names:
+                raise ArabicPyError(f"العنصر معرّف مسبقاً: {name}", line_number, 1)
+            widget_names.add(name)
+            last_widget = AndroidWidget(name, "زر", text, page=current_page)
+            last_button = last_widget
+            widgets.append(last_widget)
+            index += 1
+            continue
         if widget_match:
             name = widget_match.group("name")
             if name in widget_names:
                 raise ArabicPyError(f"العنصر معرّف مسبقاً: {name}", line_number, 1)
             widget_names.add(name)
-            last_widget = AndroidWidget(name, widget_match.group("kind"), widget_match.group("text"))
+            last_widget = AndroidWidget(
+                name, widget_match.group("kind"), widget_match.group("text"),
+                page=current_page,
+            )
             widgets.append(last_widget)
+            if last_widget.kind == "زر":
+                last_button = last_widget
+            index += 1
+            continue
+
+        password_match = PASSWORD_FIELD_PATTERN.match(stripped)
+        if password_match:
+            name = "حقل_كلمة_المرور"
+            if name in widget_names:
+                raise ArabicPyError(f"العنصر معرّف مسبقاً: {name}", line_number, 1)
+            widget_names.add(name)
+            last_widget = AndroidWidget(
+                name, "كلمة_مرور", "كلمة المرور", page=current_page,
+                min_length=int(password_match.group("length")),
+                require_numbers=True, require_symbols=True,
+            )
+            widgets.append(last_widget)
+            index += 1
+            continue
+
+        natural_password_field = NATURAL_PASSWORD_FIELD_PATTERN.match(stripped)
+        if natural_password_field:
+            field_label = natural_password_field.group("name")
+            name = "حقل_" + re.sub(r"[^\w\u0600-\u06ff]+", "_", field_label).strip("_")
+            if name in widget_names:
+                raise ArabicPyError(f"العنصر معرّف مسبقاً: {name}", line_number, 1)
+            widget_names.add(name)
+            last_widget = AndroidWidget(
+                name, "كلمة_مرور", field_label, page=current_page,
+                min_length=8, require_numbers=True, require_symbols=True,
+            )
+            widgets.append(last_widget)
+            index += 1
+            continue
+
+        rules_header = PASSWORD_RULES_HEADER_PATTERN.match(stripped)
+        if rules_header:
+            password_widget = next(
+                (widget for widget in reversed(widgets) if widget.kind == "كلمة_مرور"),
+                None,
+            )
+            if password_widget is None:
+                raise ArabicPyError("أنشئ حقل كلمة المرور قبل كتابة شروطها", line_number, 1)
+            index += 1
+            while index < len(lines):
+                candidate = lines[index]
+                if not candidate.strip():
+                    index += 1
+                    continue
+                if not candidate[:1].isspace():
+                    break
+                rule = candidate.strip()
+                length_match = re.fullmatch(r"طولها\s+لا\s+يقل\s+عن\s+(\d+)", rule)
+                if length_match:
+                    password_widget.min_length = int(length_match.group(1))
+                elif rule == "تحتوي على رقم":
+                    password_widget.require_numbers = True
+                elif rule == "تحتوي على رمز":
+                    password_widget.require_symbols = True
+                else:
+                    raise ArabicPyError(f"شرط كلمة مرور غير معروف: {rule}", index + 1, 1)
+                index += 1
+            continue
+
+        summary_match = PASSWORD_SUMMARY_PATTERN.match(stripped)
+        if summary_match:
+            # A readable summary is allowed after the click action; the detailed
+            # rules below the password field remain the source of truth.
+            index += 1
+            continue
+
+        natural_background_match = NATURAL_BACKGROUND_COLOR_PATTERN.match(stripped)
+        if natural_background_match:
+            if last_widget is None:
+                raise ArabicPyError("اكتب لون الخلفية بعد العنصر الذي تريد تلوينه", line_number, 1)
+            color_value = natural_background_match.group("color")
+            named_colors = {
+                "أسود": "#000000", "اسود": "#000000",
+                "أبيض": "#FFFFFF", "ابيض": "#FFFFFF",
+            }
+            last_widget.background_color = named_colors.get(color_value, color_value.upper())
             index += 1
             continue
 
@@ -152,12 +308,27 @@ def parse_android(source):
             index += 1
             continue
 
+        implicit_event = re.fullmatch(r"عند\s+النقر\s*:?", stripped)
         natural_event_match = NATURAL_EVENT_PATTERN.match(stripped)
         event_match = natural_event_match or EVENT_PATTERN.match(stripped)
-        if event_match:
-            button = event_match.group("name")
+        if event_match or implicit_event:
+            if implicit_event:
+                if last_button is None:
+                    raise ArabicPyError("اكتب عند النقر بعد الزر المطلوب", line_number, 1)
+                button = last_button.name
+            else:
+                button = event_match.group("name")
             if natural_event_match:
                 button = re.sub(r"\s+", "_", button.strip())
+                if button not in widget_names and button.startswith("زر_"):
+                    visible_text = button.removeprefix("زر_").replace("_", " ")
+                    visible_button = next(
+                        (widget for widget in widgets
+                         if widget.kind == "زر" and widget.text == visible_text),
+                        None,
+                    )
+                    if visible_button is not None:
+                        button = visible_button.name
             if button not in widget_names:
                 raise ArabicPyError(f"زر غير معروف: {button}", line_number, 1)
             event = AndroidEvent(button)
@@ -168,6 +339,11 @@ def parse_android(source):
                     index += 1
                     continue
                 action_match = SET_TEXT_PATTERN.match(action_line)
+                page_match = GO_PAGE_PATTERN.match(action_line)
+                if page_match:
+                    event.actions.append(("__page__", page_match.group("page")))
+                    index += 1
+                    continue
                 if not action_match:
                     raise ArabicPyError("تعليمة حدث غير مدعومة", index + 1, 1)
                 target = action_match.group("name")
@@ -191,10 +367,18 @@ def parse_android(source):
 
 def generate_kivy(source):
     program = parse_android(source)
-    widget_classes = {"نص": "Label", "زر": "Button", "حقل": "TextInput"}
+    has_page_navigation = any(
+        target == "__page__"
+        for event in program.events
+        for target, _value in event.actions
+    )
+    has_pages = has_page_navigation or bool(program.bottom_navigation)
+    widget_classes = {"نص": "Label", "زر": "Button", "حقل": "TextInput", "كلمة_مرور": "TextInput"}
     imports = sorted({widget_classes[widget.kind] for widget in program.widgets})
     if program.bottom_navigation and "Button" not in imports:
         imports.append("Button")
+    if has_pages and "Label" not in imports:
+        imports.append("Label")
     lines = [
         "from kivy.app import App",
         "from kivy.uix.boxlayout import BoxLayout",
@@ -238,6 +422,14 @@ def generate_kivy(source):
     if program.background_color:
         lines.append(f"        Window.clearcolor = {hex_to_rgba(program.background_color)!r}")
     lines.append("        root = BoxLayout(orientation='vertical', padding=24, spacing=12)")
+    if has_pages:
+        lines.append(
+            f"        self._page_title = Label(text={program.title!r}, size_hint_y=None, height=48)"
+        )
+        lines.append("        root.add_widget(self._page_title)")
+        lines.append("        self._content = BoxLayout(orientation='vertical', spacing=12)")
+        lines.append("        self._page_widgets = {}")
+        lines.append("        root.add_widget(self._content)")
 
     for widget in program.widgets:
         widget_class = widget_classes[widget.kind]
@@ -245,17 +437,35 @@ def generate_kivy(source):
             widget_class = "ColoredLabel"
         option_parts = [f"text={widget.text!r}"]
         if widget.text_color:
-            color_property = "foreground_color" if widget.kind == "حقل" else "color"
+            color_property = "foreground_color" if widget.kind in ("حقل", "كلمة_مرور") else "color"
             option_parts.append(f"{color_property}={hex_to_rgba(widget.text_color)!r}")
         if widget.background_color:
             option_parts.append(
                 f"background_color={hex_to_rgba(widget.background_color)!r}"
             )
-        if widget.kind == "حقل":
+        if widget.kind in ("حقل", "كلمة_مرور"):
             option_parts.append("multiline=False")
+        if widget.kind == "كلمة_مرور":
+            option_parts.append("password=True")
         options = ", ".join(option_parts)
         lines.append(f"        self.{widget.name} = {widget_class}({options})")
-        lines.append(f"        root.add_widget(self.{widget.name})")
+        if has_pages:
+            lines.append(f"        self._page_widgets.setdefault({widget.page!r}, []).append(self.{widget.name})")
+            if widget.page == "الرئيسية":
+                lines.append(f"        self._content.add_widget(self.{widget.name})")
+        else:
+            lines.append(f"        root.add_widget(self.{widget.name})")
+        if widget.kind == "كلمة_مرور":
+            lines.append(f"        self.{widget.name}_status = Label(text='أدخل كلمة المرور', size_hint_y=None, height=36)")
+            if has_pages:
+                lines.append(f"        self._page_widgets.setdefault({widget.page!r}, []).append(self.{widget.name}_status)")
+                if widget.page == "الرئيسية":
+                    lines.append(f"        self._content.add_widget(self.{widget.name}_status)")
+            else:
+                lines.append(f"        root.add_widget(self.{widget.name}_status)")
+            lines.append(
+                f"        self.{widget.name}.bind(text=lambda _field, value: self._validate_password(value, self.{widget.name}_status, {widget.min_length or 8}))"
+            )
 
     for event_index, event in enumerate(program.events, 1):
         lines.append(
@@ -267,17 +477,42 @@ def generate_kivy(source):
         navigation_text = [1, 1, 1, 1] if dark_screen else [0.06, 0.09, 0.16, 1]
         lines.append("        bottom_navigation = BoxLayout(size_hint_y=None, height=56, spacing=4)")
         for item in program.bottom_navigation:
-            lines.append(
-                f"        bottom_navigation.add_widget(Button(text={item!r}, background_normal='', background_color={navigation_background!r}, color={navigation_text!r}))"
-            )
+            lines.append(f"        navigation_button = Button(text={item!r}, background_normal='', background_color={navigation_background!r}, color={navigation_text!r})")
+            lines.append(f"        navigation_button.bind(on_press=lambda _button, page={item!r}: self._go_to_page(page))")
+            lines.append("        bottom_navigation.add_widget(navigation_button)")
         lines.append("        root.add_widget(bottom_navigation)")
     lines.extend(["        return root", ""])
 
     for event_index, event in enumerate(program.events, 1):
         lines.append(f"    def _event_{event_index}(self, _button):")
         for target, text in event.actions:
-            lines.append(f"        self.{target}.text = {text!r}")
+            if target == "__page__":
+                lines.append(f"        self._go_to_page({text!r})")
+            else:
+                lines.append(f"        self.{target}.text = {text!r}")
         lines.append("")
+
+    if has_pages:
+        lines.extend([
+            "    def _go_to_page(self, page_name):",
+            "        self._page_title.text = page_name",
+            "        self._content.clear_widgets()",
+            "        widgets = self._page_widgets.get(page_name, [])",
+            "        if widgets:",
+            "            for widget in widgets:",
+            "                self._content.add_widget(widget)",
+            "        else:",
+            "            self._content.add_widget(Label(text=f'صفحة {page_name}'))",
+            "",
+        ])
+    if any(widget.kind == "كلمة_مرور" for widget in program.widgets):
+        lines.extend([
+            "    def _validate_password(self, value, status, minimum):",
+            "        valid = len(value) >= minimum and any(char.isdigit() for char in value) and any(not char.isalnum() for char in value)",
+            "        status.text = 'كلمة المرور قوية' if valid else f'استخدم {minimum} خانات مع أرقام ورموز'",
+            "        status.color = [0.1, 0.8, 0.35, 1] if valid else [0.95, 0.25, 0.25, 1]",
+            "",
+        ])
 
     lines.extend(["", "if __name__ == '__main__':", "    AlBaaAndroidApp().run()", ""])
     return "\n".join(lines)

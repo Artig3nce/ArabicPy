@@ -44,6 +44,8 @@ class DesignerItem(QFrame):
         else:
             control = QLineEdit()
             control.setPlaceholderText(widget_model.text)
+            if widget_model.kind == "كلمة_مرور":
+                control.setEchoMode(QLineEdit.EchoMode.Password)
 
         self.control = control
         if isinstance(control, QPushButton):
@@ -53,6 +55,25 @@ class DesignerItem(QFrame):
         self.apply_colors()
         control.installEventFilter(self)
         layout.addWidget(control)
+        if widget_model.kind == "كلمة_مرور":
+            self.password_status = QLabel("أدخل كلمة المرور")
+            self.password_status.setAlignment(Qt.AlignCenter)
+            layout.addWidget(self.password_status)
+            control.textChanged.connect(self.validate_password)
+
+    def validate_password(self, value):
+        minimum = self.widget_model.min_length or 8
+        valid = (
+            len(value) >= minimum
+            and any(char.isdigit() for char in value)
+            and any(not char.isalnum() for char in value)
+        )
+        if valid:
+            self.password_status.setText("كلمة المرور قوية")
+            self.password_status.setStyleSheet("color: #22C55E;")
+        else:
+            self.password_status.setText(f"استخدم {minimum} خانات مع أرقام ورموز")
+            self.password_status.setStyleSheet("color: #EF4444;")
 
     def apply_colors(self):
         text_color = self.widget_model.text_color or (
@@ -99,6 +120,7 @@ class AndroidDesigner(QWidget):
         self.loading = False
         self.item_widgets = {}
         self.preview_mode = False
+        self.last_error = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -141,6 +163,11 @@ class AndroidDesigner(QWidget):
         self.bottom_navigation_layout.setContentsMargins(4, 4, 4, 4)
         self.bottom_navigation_layout.setSpacing(2)
         phone_layout.addWidget(self.bottom_navigation)
+        self.page_placeholder = QLabel()
+        self.page_placeholder.setAlignment(Qt.AlignCenter)
+        self.page_placeholder.setStyleSheet("font-size: 18px; font-weight: 600;")
+        self.page_placeholder.hide()
+        phone_layout.insertWidget(2, self.page_placeholder)
         canvas_host_layout.addWidget(self.phone)
         canvas_scroll.setWidget(canvas_host)
         root.addWidget(canvas_scroll, 1)
@@ -198,8 +225,10 @@ class AndroidDesigner(QWidget):
     def load_source(self, source):
         try:
             program = parse_android(source)
-        except Exception:
+        except Exception as error:
+            self.last_error = error
             return False
+        self.last_error = None
         self.loading = True
         self.program = program
         self.selected_name = None
@@ -229,9 +258,25 @@ class AndroidDesigner(QWidget):
             if event.button != button_name:
                 continue
             for target, text in event.actions:
+                if target == "__page__":
+                    self.show_preview_page(text)
+                    continue
                 item = self.item_widgets.get(target)
                 if item is not None:
                     item.control.setText(text)
+
+    def show_preview_page(self, page_name):
+        if not self.preview_mode:
+            return
+        self.phone_title.setText(page_name)
+        page_items = [
+            item for item in self.item_widgets.values()
+            if item.widget_model.page == page_name
+        ]
+        for item in self.item_widgets.values():
+            item.setVisible(item in page_items)
+        self.page_placeholder.setText(f"صفحة {page_name}")
+        self.page_placeholder.setVisible(not page_items)
 
     def add_widget(self, kind):
         prefixes = {"نص": "نص", "زر": "زر", "حقل": "حقل"}
@@ -401,6 +446,7 @@ class AndroidDesigner(QWidget):
         self.emit_source()
 
     def refresh_canvas(self):
+        self.page_placeholder.hide()
         while self.canvas_layout.count():
             item = self.canvas_layout.takeAt(0)
             if item.widget():
@@ -456,6 +502,9 @@ class AndroidDesigner(QWidget):
             button.setStyleSheet(
                 f"background: transparent; color: {navigation_text}; border: none;"
             )
+            button.clicked.connect(
+                lambda _checked=False, page=label: self.show_preview_page(page)
+            )
             self.bottom_navigation_layout.addWidget(button)
 
     def emit_source(self):
@@ -471,24 +520,67 @@ class AndroidDesigner(QWidget):
             )
             lines.extend([f"لون الشاشة {color_value}", ""])
         if self.program.bottom_navigation:
-            labels = " و ".join(
-                re.sub(r"^[⌂⌕♢✉]\s*", "", label)
-                for label in self.program.bottom_navigation
-            )
-            lines.extend([f"ضع في شريط السفلي {labels}", ""])
+            lines.append("في شريط السفلي ضع")
+            lines.extend(f"    {label}" for label in self.program.bottom_navigation)
+            lines.append("")
+        generated_names = {}
+        if any(widget.kind == "كلمة_مرور" for widget in self.program.widgets):
+            lines.extend(["دالة كلمة المرور", ""])
+        current_page = "الرئيسية"
         for widget in self.program.widgets:
-            lines.append(f'{widget.name} = {widget.kind}("{widget.text}")')
+            if widget.page != current_page:
+                current_page = widget.page
+                lines.extend([f"في صفحة {current_page}", ""])
+            if widget.kind == "زر":
+                generated_name = "زر_" + re.sub(
+                    r"[^\w\u0600-\u06ff]+", "_", widget.text
+                ).strip("_")
+                generated_names[widget.name] = generated_name
+                lines.append(f"انشئ زر {widget.text}")
+            elif widget.kind == "كلمة_مرور":
+                generated_names[widget.name] = widget.name
+                minimum = widget.min_length or 8
+                lines.append(f'أنشئ حقلًا اسمه "{widget.text}"')
+                lines.append("")
+                lines.append("شروط كلمة المرور")
+                lines.append(f"    طولها لا يقل عن {minimum}")
+                if widget.require_numbers:
+                    lines.append("    تحتوي على رقم")
+                if widget.require_symbols:
+                    lines.append("    تحتوي على رمز")
+            else:
+                generated_names[widget.name] = widget.name
+                lines.append(f'{widget.name} = {widget.kind}("{widget.text}")')
             if widget.text_color:
-                text_colors = {"#000000": "اسود", "#FFFFFF": "ابيض"}
+                text_colors = {
+                    "#000000": "اسود", "#0F1419": "اسود", "#0F172A": "اسود",
+                    "#FFFFFF": "ابيض", "#F2F2F2": "ابيض", "#E7E9EA": "ابيض",
+                }
                 color_value = text_colors.get(
                     widget.text_color.upper(), widget.text_color.upper()
                 )
-                lines.append(f"لون النص هو {color_value}")
+                lines.append(f"لون النص {color_value}")
             if widget.background_color:
-                lines.append(f'لون_الخلفية({widget.name}، "{widget.background_color}")')
+                background_colors = {"#000000": "اسود", "#FFFFFF": "ابيض"}
+                color_value = background_colors.get(
+                    widget.background_color.upper(), widget.background_color.upper()
+                )
+                lines.append(f"لون الخلفية هو {color_value}")
         for event in self.program.events:
-            button_name = event.button.replace("_", " ")
-            lines.extend(["", f"عند النقر على {button_name}"])
+            button_widget = next(
+                (widget for widget in self.program.widgets if widget.name == event.button),
+                None,
+            )
+            button_name = button_widget.text if button_widget else event.button.replace("_", " ")
+            last_button = next(
+                (widget for widget in reversed(self.program.widgets) if widget.kind == "زر"),
+                None,
+            )
+            event_line = "عند النقر" if last_button and last_button.name == event.button else f"عند النقر على زر {button_name}"
+            lines.extend(["", event_line])
             for target, text in event.actions:
-                lines.append(f'    غيّر_النص({target}، "{text}")')
+                if target == "__page__":
+                    lines.append(f"    اذهب الى صفحة {text}")
+                else:
+                    lines.append(f'    غيّر_النص({generated_names.get(target, target)}، "{text}")')
         return "\n".join(lines).rstrip() + "\n"
