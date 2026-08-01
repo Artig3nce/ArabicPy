@@ -6,7 +6,7 @@ $watchedPaths = @(
     (Join-Path $projectRoot "arabicpy")
     (Join-Path $projectRoot "launch_ide.py")
     (Join-Path $projectRoot "main.py")
-    (Join-Path $projectRoot "ArabicPyIDE.spec")
+    (Join-Path $projectRoot "AlBaaIDE.spec")
 )
 
 function Get-SourceState {
@@ -24,8 +24,8 @@ function Get-SourceState {
         ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)|$($_.Length)" }) -join "`n"
 }
 
-Write-Host "Watching ArabicPy source files. Press Ctrl+C to stop." -ForegroundColor Cyan
-Write-Host "Close ArabicPyIDE.exe before saving so Windows can replace it." -ForegroundColor Yellow
+Write-Host "Watching AlBaa source files. Press Ctrl+C to stop." -ForegroundColor Cyan
+Write-Host "Close AlBaa.exe before saving so Windows can replace it." -ForegroundColor Yellow
 
 $previousState = Get-SourceState
 

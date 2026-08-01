@@ -1,4 +1,4 @@
-"""Windows executable entry point for ArabicPy IDE."""
+"""Windows executable entry point for الباء."""
 
 from PySide6.QtWidgets import QApplication
 

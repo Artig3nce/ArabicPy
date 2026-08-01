@@ -4,16 +4,16 @@ build-backend = "setuptools.build_meta"
 
 
 [project]
-name = "arabicpy"
+name = "albaa"
 version = "0.1.0"
-description = "Arabic programming language"
+description = "Al-Baa Arabic programming language"
 authors = [
     {name = "Saud"}
 ]
 
 
 [project.scripts]
-arabicpy = "arabicpy.__main__:run"
+albaa = "arabicpy.__main__:run"
 
 
 [tool.setuptools]

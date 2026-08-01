@@ -2,14 +2,14 @@ import contextlib
 import io
 import os
 
-from PySide6.QtCore import QTimer, QRect, QSize, Qt
+from PySide6.QtCore import QProcess, QTimer, QRect, QSize, Qt
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QTextBlockFormat, QTextCharFormat, QTextCursor,
     QTextFormat,
 )
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
-    QLabel, QListWidget, QListWidgetItem, QMainWindow, QPlainTextEdit,
+    QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QMenu, QSplitter, QTabBar, QTabWidget, QTextEdit, QVBoxLayout,
     QWidget,
 )
@@ -18,7 +18,9 @@ from .generator import Generator
 from .highlighter import ArabicPyHighlighter
 from .lexer import Lexer
 from .parser import Parser
-from .ai import reply as arabicpy_ai_reply
+from .android import export_android_project, generate_kivy, is_android_source
+from .android_designer import AndroidDesigner
+from .ai import reply as albaa_ai_reply
 from .errors import format_error
 
 
@@ -165,9 +167,9 @@ class TitleBar(QWidget):
         layout.setContentsMargins(12, 0, 0, 0)
         layout.setSpacing(0)
 
-        brand = QLabel("◈  ArabicPy")
+        brand = QLabel("◈  الباء")
         brand.setObjectName("brand")
-        document = QLabel("  —  محرر برمجة عربي")
+        document = QLabel("  —  لغة البرمجة العربية")
         document.setObjectName("titleDocument")
         layout.addWidget(brand)
         layout.addWidget(document)
@@ -201,7 +203,7 @@ class ArabicPyIDE(QMainWindow):
         self.current_file = None
         self.syncing_code_views = False
         self.setWindowFlags(Qt.FramelessWindowHint)
-        self.setWindowTitle("ArabicPy IDE")
+        self.setWindowTitle("الباء")
         self.resize(1400, 900)
         self.setStyleSheet(self.stylesheet())
         self.setup_ui()
@@ -240,6 +242,19 @@ class ArabicPyIDE(QMainWindow):
         #outputHeader { background: #252526; border-top: 1px solid #333333; } #outputTitle { color: #cccccc; font-weight: 600; padding: 7px 12px; }
         #output { background: #1e1e1e; color: #e0e0e0; border: none; font-family: 'Tahoma'; font-size: 14px; padding: 9px; }
         #statusBar { background: #007acc; color: white; } #statusLabel { background: transparent; color: white; padding: 3px 10px; font-size: 12px; }
+        #androidDesigner { background: #181818; }
+        #designerPanel { background: #252526; border: none; }
+        #designerTitle { color: #ffffff; font-weight: 600; padding: 8px; }
+        #designerTool { background: #333333; color: #eeeeee; border: 1px solid #444444; border-radius: 4px; padding: 8px; text-align: right; }
+        #designerTool:hover { background: #3f3f46; border-color: #007acc; }
+        #designerCanvas { background: #151515; border: none; }
+        #phoneFrame { background: #fafafa; border: 8px solid #333333; border-radius: 24px; }
+        #phoneTitle { background: #202124; color: white; padding: 10px; font-weight: 600; }
+        #designerItem { background: transparent; border: 2px solid transparent; border-radius: 5px; }
+        #designerItem[selected="true"] { border-color: #007acc; background: #e8f2fb; }
+        #designerItem QLabel, #designerItem QLineEdit, #designerItem QPushButton { color: #202124; background: #ffffff; border: 1px solid #bdbdbd; border-radius: 4px; padding: 8px; }
+        #designerItem QPushButton { background: #1976d2; color: white; }
+        #designerDelete { background: #a1260d; color: white; border: none; border-radius: 4px; padding: 7px; }
         QSplitter::handle { background: #333333; } QSplitter::handle:hover { background: #007acc; }
         QTabWidget QTabBar { background: #252526; }
         QTabWidget QTabBar::tab { background: #2d2d2d; color: #c8c8c8; border: none; border-top: 2px solid transparent; padding: 9px 18px; }
@@ -281,6 +296,8 @@ class ArabicPyIDE(QMainWindow):
         menu_layout.addWidget(self.make_menu_button("ملف", [
             ("ملف جديد", self.new_file), ("فتح ملف...", self.open_file),
             ("حفظ", self.save_file), ("تحديث المستكشف", self.refresh_file_list),
+            ("مشروع تطبيق جديد", self.new_android_file),
+            ("تصدير مشروع التطبيق...", self.export_android),
         ]))
         menu_layout.addWidget(self.make_menu_button("تحرير", [
             ("تراجع", lambda: self.editor.undo()), ("إعادة", lambda: self.editor.redo()),
@@ -298,9 +315,10 @@ class ArabicPyIDE(QMainWindow):
         ]))
         menu_layout.addWidget(self.make_menu_button("تشغيل", [
             ("تشغيل البرنامج", self.run_code), ("مسح المخرجات", self.clear_output),
+            ("إنشاء APK عبر WSL2", self.build_android_apk),
         ]))
         menu_layout.addWidget(self.make_menu_button("تعليمات", [
-            ("حول ArabicPy", self.show_about),
+            ("حول الباء", self.show_about),
         ]))
         menu_layout.addStretch()
         layout.addWidget(menu_bar)
@@ -319,6 +337,8 @@ class ArabicPyIDE(QMainWindow):
         self.python_toggle_button.setToolTip("إظهار كود Python")
         command_layout.addWidget(self.python_toggle_button)
         command_layout.addStretch()
+        self.designer_button = self.make_button("تصميم", self.toggle_android_designer)
+        command_layout.addWidget(self.designer_button)
         command_layout.addWidget(self.make_button("▶ تشغيل", self.run_code, "runButton"))
         layout.addWidget(command_bar)
 
@@ -352,7 +372,7 @@ class ArabicPyIDE(QMainWindow):
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
         sidebar_layout.addWidget(QLabel("المستكشف", objectName="panelTitle"))
-        project = QLabel("⌄  ARABICPY", objectName="panelTitle")
+        project = QLabel("⌄  الباء", objectName="panelTitle")
         sidebar_layout.addWidget(project)
         self.file_list = QListWidget(objectName="fileList")
         self.file_list.setLayoutDirection(Qt.RightToLeft)
@@ -388,7 +408,7 @@ class ArabicPyIDE(QMainWindow):
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.setSpacing(0)
-        source_title = QLabel("ArabicPy — الكود العربي", objectName="codePaneTitle")
+        source_title = QLabel("الباء — الكود العربي", objectName="codePaneTitle")
         source_title.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         source_layout.addWidget(source_title)
         source_layout.addWidget(self.tab_widget)
@@ -419,6 +439,10 @@ class ArabicPyIDE(QMainWindow):
         code_splitter.setSizes([650, 650])
         python_panel.hide()
         editor_layout.addWidget(code_splitter)
+        self.android_designer = AndroidDesigner()
+        self.android_designer.sourceChanged.connect(self.apply_designer_source)
+        self.android_designer.hide()
+        editor_layout.addWidget(self.android_designer)
         self.editor = CodeEditor()
         self.highlighter = ArabicPyHighlighter(self.editor.document())
         self.editor.setPlainText(
@@ -488,7 +512,7 @@ class ArabicPyIDE(QMainWindow):
         status_layout = QHBoxLayout(status)
         status_layout.setDirection(QBoxLayout.RightToLeft)
         status_layout.setContentsMargins(4, 0, 4, 0)
-        status_layout.addWidget(QLabel("◉  ArabicPy", objectName="statusLabel"))
+        status_layout.addWidget(QLabel("◉  الباء", objectName="statusLabel"))
         status_layout.addStretch()
         self.position_label = QLabel("السطر 1، العمود 1", objectName="statusLabel")
         status_layout.addWidget(self.position_label)
@@ -496,6 +520,9 @@ class ArabicPyIDE(QMainWindow):
         self.editor.cursorPositionChanged.connect(self.update_position)
         layout.addWidget(status)
         self.setCentralWidget(root)
+        self.android_project_path = None
+        self.android_build_process = None
+        self.updating_from_designer = False
         self.refresh_file_list()
 
     def refresh_file_list(self):
@@ -527,6 +554,11 @@ class ArabicPyIDE(QMainWindow):
             self.current_file = getattr(self.editor, "file_path", None)
             self.update_position()
             self.update_python_preview()
+            if self.android_designer.isVisible():
+                if is_android_source(self.editor.toPlainText()):
+                    self.android_designer.load_source(self.editor.toPlainText())
+                else:
+                    self.hide_android_designer()
 
     def add_editor_tab(self, content="", path=None):
         editor = CodeEditor()
@@ -576,16 +608,21 @@ class ArabicPyIDE(QMainWindow):
         source = self.editor.toPlainText()
         if not source.strip():
             self.set_python_preview_text(
-                "# اكتب كود ArabicPy في الجهة اليمنى\n"
+                "# اكتب كود الباء في الجهة اليمنى\n"
                 "# The generated Python code will appear here."
             )
             return
 
         try:
-            tokens = Lexer(source).tokenize()
-            ast = Parser(tokens).parse()
-            python_code = Generator().generate(ast)
-            python_code = self.match_source_spacing(source, python_code)
+            if is_android_source(source):
+                if self.android_designer.isVisible() and not self.updating_from_designer:
+                    self.android_designer.load_source(source)
+                python_code = generate_kivy(source)
+            else:
+                tokens = Lexer(source).tokenize()
+                ast = Parser(tokens).parse()
+                python_code = Generator().generate(ast)
+                python_code = self.match_source_spacing(source, python_code)
             self.set_python_preview_text(
                 python_code or "# No Python code has been generated yet."
             )
@@ -596,7 +633,7 @@ class ArabicPyIDE(QMainWindow):
             if line is not None:
                 location = f"\n# Error at line {line}, column {column or 1}."
             self.set_python_preview_text(
-                "# Fix or complete the ArabicPy code to generate Python."
+                "# Fix or complete the Al-Baa code to generate Python."
                 f"{location}"
             )
 
@@ -686,6 +723,8 @@ class ArabicPyIDE(QMainWindow):
             self.syncing_code_views = False
 
     def update_position(self):
+        if not hasattr(self, "position_label"):
+            return
         cursor = self.editor.textCursor()
         self.position_label.setText(f"السطر {cursor.blockNumber() + 1}، العمود {cursor.columnNumber() + 1}")
 
@@ -727,7 +766,153 @@ class ArabicPyIDE(QMainWindow):
 
     def show_about(self):
         self.main_splitter.widget(1).show()
-        self.output.setPlainText("ArabicPy IDE\n\nمحرر بسيط لكتابة وتشغيل برامج ArabicPy.\nاستخدم ملف > فتح أو زر فتح لبدء العمل.")
+        self.output.setPlainText("الباء\n\nلغة برمجة عربية مع محرر لكتابة البرامج وتشغيلها.\nاستخدم ملف > فتح أو زر فتح لبدء العمل.")
+
+    def new_android_file(self):
+        source = (
+            'تطبيق "تطبيقي العربي"\n\n'
+            'رسالة = نص("مرحباً من الباء")\n'
+            'الاسم = حقل("اكتب اسمك")\n'
+            'زر_الترحيب = زر("اضغط هنا")\n\n'
+            'عند_النقر(زر_الترحيب):\n'
+            '    غيّر_النص(رسالة، "أهلاً بك في تطبيقي")\n'
+        )
+        editor = self.add_editor_tab(source)
+        editor.document().setModified(True)
+        self.update_tab_title(True)
+        editor.setFocus()
+        QTimer.singleShot(0, self.show_android_designer)
+
+    def toggle_android_designer(self):
+        if self.android_designer.isVisible():
+            self.hide_android_designer()
+        else:
+            self.show_android_designer()
+
+    def show_android_designer(self):
+        source = self.editor.toPlainText()
+        if not is_android_source(source):
+            self.new_android_file()
+            return
+        if not self.android_designer.load_source(source):
+            self.output.setPlainText(
+                "أصلح أخطاء ملف Android قبل فتح المصمم المرئي."
+            )
+            return
+        self.code_splitter.hide()
+        self.android_designer.show()
+        self.designer_button.setText("الكود")
+
+    def hide_android_designer(self):
+        self.android_designer.hide()
+        self.code_splitter.show()
+        self.designer_button.setText("تصميم")
+
+    def apply_designer_source(self, source):
+        if not is_android_source(self.editor.toPlainText()):
+            return
+        self.updating_from_designer = True
+        try:
+            self.editor.setPlainText(source)
+            self.editor.document().setModified(True)
+            self.update_tab_title(True)
+        finally:
+            self.updating_from_designer = False
+
+    def export_android(self):
+        source = self.editor.toPlainText()
+        if not is_android_source(source):
+            self.output.setPlainText(
+                'هذا الملف ليس تطبيق Android. ابدأ بـ: تطبيق "اسم التطبيق"'
+            )
+            return False
+
+        directory = QFileDialog.getExistingDirectory(
+            self, "اختر مجلد مشروع Android"
+        )
+        if not directory:
+            return False
+
+        existing = [
+            name for name in ("main.py", "buildozer.spec")
+            if os.path.exists(os.path.join(directory, name))
+        ]
+        if existing:
+            answer = QMessageBox.question(
+                self,
+                "استبدال ملفات المشروع",
+                "سيتم استبدال main.py و buildozer.spec في المجلد المحدد. هل تريد المتابعة؟",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return False
+
+        try:
+            export_android_project(source, directory)
+        except Exception as error:
+            self.output.setPlainText(format_error(error, source))
+            return False
+
+        self.android_project_path = directory
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText(
+            f"تم تصدير مشروع Android إلى:\n{directory}\n\n"
+            "يمكنك الآن اختيار تشغيل > إنشاء APK عبر WSL2."
+        )
+        return True
+
+    def build_android_apk(self):
+        if self.android_build_process is not None:
+            self.output.setPlainText("يجري الآن إنشاء APK. انتظر حتى تنتهي العملية.")
+            return
+        if not self.android_project_path and not self.export_android():
+            return
+
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText(
+            "بدء Buildozer داخل WSL2...\n"
+            "يجب تثبيت WSL2 و Buildozer ومتطلبات Android مسبقاً.\n\n"
+        )
+        process = QProcess(self)
+        self.android_build_process = process
+        process.setProgram("wsl.exe")
+        process.setArguments([
+            "--cd", self.android_project_path,
+            "buildozer", "android", "debug",
+        ])
+        process.readyReadStandardOutput.connect(self.read_android_build_output)
+        process.readyReadStandardError.connect(self.read_android_build_output)
+        process.errorOccurred.connect(self.android_build_error)
+        process.finished.connect(self.android_build_finished)
+        process.start()
+
+    def read_android_build_output(self):
+        process = self.android_build_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
+        if data:
+            self.output.appendPlainText(data.decode("utf-8", errors="replace").rstrip())
+
+    def android_build_error(self, _error):
+        if self.android_build_process is not None:
+            self.output.appendPlainText(
+                "\nتعذر بدء WSL2/Buildozer. تأكد من تثبيتهما وإضافتهما إلى PATH داخل WSL."
+            )
+
+    def android_build_finished(self, exit_code, _status):
+        if exit_code == 0:
+            self.output.appendPlainText(
+                "\nتم إنشاء APK بنجاح. ستجده داخل مجلد bin في المشروع."
+            )
+        else:
+            self.output.appendPlainText(
+                f"\nفشل إنشاء APK برمز خروج {exit_code}. راجع سجل Buildozer أعلاه."
+            )
+        if self.android_build_process is not None:
+            self.android_build_process.deleteLater()
+            self.android_build_process = None
 
     def new_file(self):
         self.add_editor_tab().setFocus()
@@ -742,7 +927,7 @@ class ArabicPyIDE(QMainWindow):
         self.load_file(item.data(Qt.UserRole))
 
     def open_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "فتح ملف", "", "ArabicPy (*.apy);;Python (*.py);;All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "فتح ملف", "", "ملفات الباء (*.apy);;Python (*.py);;All Files (*)")
         if path:
             self.load_file(path)
 
@@ -767,7 +952,7 @@ class ArabicPyIDE(QMainWindow):
     def save_file(self):
         editor = self.editor
         if not getattr(editor, "file_path", None):
-            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", "", "ArabicPy (*.apy)")
+            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", "", "ملفات الباء (*.apy)")
             if not path:
                 return
             editor.file_path = path
@@ -783,7 +968,7 @@ class ArabicPyIDE(QMainWindow):
             self.output.setPlainText(f"تعذر حفظ الملف:\n{error}")
             return
         if not self.current_file:
-            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", "", "ArabicPy (*.apy)")
+            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", "", "ملفات الباء (*.apy)")
             if not path:
                 return
             self.current_file = path
@@ -807,6 +992,17 @@ class ArabicPyIDE(QMainWindow):
 
     def run_code(self):
         source = self.editor.toPlainText()
+        if is_android_source(source):
+            try:
+                generate_kivy(source)
+                self.editor.clear_error_line()
+                self.output.setPlainText(
+                    "تم التحقق من التطبيق بنجاح. استخدم قائمتي ملف وتشغيل للتصدير أو إنشاء APK."
+                )
+            except Exception as error:
+                self.editor.show_error_line(getattr(error, "line", None))
+                self.output.setPlainText(format_error(error, source))
+            return
         try:
             tokens = Lexer(source).tokenize()
             ast = Parser(tokens).parse()
@@ -815,7 +1011,7 @@ class ArabicPyIDE(QMainWindow):
             with contextlib.redirect_stdout(output):
                 exec(python_code, {
                     "__name__": "__main__",
-                    "arabicpy_ai_reply": arabicpy_ai_reply,
+                    "albaa_ai_reply": albaa_ai_reply,
                 })
             result = output.getvalue()
             self.editor.clear_error_line()

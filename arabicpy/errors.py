@@ -27,7 +27,7 @@ def format_error(error, source):
             return f"خطأ أثناء التشغيل:\nاستخدام غير صحيح للقيمة أو العملية: {error}"
         return f"خطأ أثناء التشغيل:\nحدث خطأ غير متوقع: {error}"
 
-    header = "خطأ في ArabicPy"
+    header = "خطأ في الباء"
     if error.line is None:
         return f"{header}: {error.message}"
 

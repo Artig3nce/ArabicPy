@@ -3,7 +3,7 @@ import sys
 from .lexer import Lexer
 from .parser import Parser
 from .generator import Generator
-from .ai import reply as arabicpy_ai_reply
+from .ai import reply as albaa_ai_reply
 from .errors import format_error
 
 
@@ -12,17 +12,17 @@ VERSION = "0.1.0"
 
 def show_help():
     print("""
-ArabicPy - Arabic Programming Language
+الباء - لغة البرمجة العربية
 
 Usage:
-    arabicpy <file.apy>
-    arabicpy run <file.apy>
+    albaa <file.apy>
+    albaa run <file.apy>
 
 Commands:
-    run           Run ArabicPy program
-    check         Check syntax only
-    --version     Show version
-    --help        Show help
+    run           تشغيل برنامج الباء
+    check         فحص الصياغة فقط
+    --version     عرض الإصدار
+    --help        عرض المساعدة
 """)
 
 
@@ -36,7 +36,7 @@ def run():
 
 
     if command == "--version":
-        print(f"ArabicPy {VERSION}")
+        print(f"الباء {VERSION}")
         return
 
 
@@ -45,17 +45,17 @@ def run():
         return
 
 
-    # arabicpy run hello.apy
+    # albaa run hello.apy
     if command == "run":
 
         if len(sys.argv) < 3:
-            print("Usage: arabicpy run <file.apy>")
+            print("الاستخدام: albaa run <file.apy>")
             return
 
         filename = sys.argv[2]
 
 
-    # arabicpy hello.apy
+    # albaa hello.apy
     else:
         filename = command
 
@@ -75,12 +75,12 @@ def run():
 
         exec(python_code, {
             "__name__": "__main__",
-            "arabicpy_ai_reply": arabicpy_ai_reply,
+            "albaa_ai_reply": albaa_ai_reply,
         })
 
 
     except FileNotFoundError:
-        print(f"ArabicPy Error: File not found '{filename}'")
+        print(f"خطأ في الباء: الملف غير موجود '{filename}'")
 
 
     except Exception as e:

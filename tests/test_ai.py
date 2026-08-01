@@ -8,7 +8,7 @@ def test_ask_builtin_generates_runtime_helper():
     source = '\u0627\u0637\u0628\u0639(\u0627\u0633\u0623\u0644("\u0645\u0631\u062d\u0628\u0627"))'
     code = Generator().generate(Parser(Lexer(source).tokenize()).parse())
 
-    assert code.startswith("print(arabicpy_ai_reply(")
+    assert code.startswith("print(albaa_ai_reply(")
 
 
 def test_offline_ai_reply_is_available():

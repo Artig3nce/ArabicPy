@@ -16,6 +16,7 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
             "اذا", "والا", "وإلا", "لكل", "في", "بينما", "كرر", "مرات",
             "دالة", "ارجع", "صح", "خطأ", "و", "او", "أو", "ليس",
             "توقف", "استمر", "تجاوز", "صنف", "استورد", "من", "حاول", "إلا", "نهاية",
+            "تطبيق", "عند_النقر", "غيّر_النص", "لون_النص", "لون_الخلفية", "لون_الشاشة",
             "if", "else", "for", "in", "while", "def", "class", "import", "from",
             "return", "and", "or", "not", "break", "continue", "pass",
             "try", "except", "True", "False",
@@ -32,7 +33,10 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
 
         builtin_format = QTextCharFormat()
         builtin_format.setForeground(QColor("#dcdcaa"))
-        self._add_words(["اطبع", "طباعة", "ادخل", "اسأل", "print", "input", "len", "range"], builtin_format)
+        self._add_words([
+            "اطبع", "طباعة", "ادخل", "اسأل", "نص", "زر", "حقل",
+            "print", "input", "len", "range",
+        ], builtin_format)
 
         comment_format = QTextCharFormat()
         comment_format.setForeground(QColor("#6a9955"))

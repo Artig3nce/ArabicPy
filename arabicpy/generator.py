@@ -261,7 +261,7 @@ class Generator:
 
             # اطبع(اسأل("مرحبا")): a dependency-free, built-in AI helper.
             if node.name == "\u0627\u0633\u0623\u0644":
-                return f"arabicpy_ai_reply({args})"
+                return f"albaa_ai_reply({args})"
 
 
             return (

@@ -1,4 +1,4 @@
-"""Small, offline AI-style helper available to every ArabicPy program."""
+"""Small offline helper available to programs written in الباء."""
 
 
 def reply(question):
@@ -9,11 +9,11 @@ def reply(question):
     if not text:
         return "اكتب سؤالاً بعد اسأل، وسأحاول مساعدتك."
     if any(word in normalized for word in ("مرحبا", "اهلا", "السلام")):
-        return "مرحباً! أنا مساعد ArabicPy البسيط. كيف يمكنني مساعدتك؟"
-    if "arabicpy" in normalized or "عربي باي" in normalized:
-        return "ArabicPy لغة برمجة عربية تُحوّل برنامجك إلى Python ثم تشغّله."
+        return "مرحباً! أنا مساعد الباء البسيط. كيف يمكنني مساعدتك؟"
+    if "الباء" in normalized:
+        return "الباء لغة برمجة عربية تُحوّل برنامجك إلى Python ثم تشغّله."
     if any(word in normalized for word in ("اسمك", "من انت")):
-        return "أنا مساعد صغير مدمج في ArabicPy، وأعمل محلياً دون اتصال بالإنترنت."
+        return "أنا مساعد صغير مدمج في الباء، وأعمل محلياً دون اتصال بالإنترنت."
     if "كيف" in normalized:
         return "ابدأ بخطوات صغيرة، واكتب برنامجك ثم اضغط تشغيل."
     return f"فهمت سؤالك: {text}\nهذه النسخة التجريبية تعمل محلياً، وسنضيف لها نموذج ذكاء أكبر لاحقاً."
