@@ -13,21 +13,13 @@ from .android import AndroidEvent, AndroidProgram, AndroidWidget, parse_android
 
 
 COLOR_THEMES = {
-    "أزرق عصري": {
-        "screen": "#F4F7FB", "text": "#172033", "surface": "#FFFFFF",
-        "button": "#2563EB", "button_text": "#FFFFFF",
+    "اجتماعي داكن": {
+        "screen": "#000000", "text": "#F2F2F2", "surface": "#0A0A0A",
+        "button": "#F2F2F2", "button_text": "#0F1419", "navigation": True,
     },
-    "داكن أنيق": {
-        "screen": "#111827", "text": "#F3F4F6", "surface": "#1F2937",
-        "button": "#8B5CF6", "button_text": "#FFFFFF",
-    },
-    "أخضر هادئ": {
-        "screen": "#F0FDF4", "text": "#14532D", "surface": "#FFFFFF",
-        "button": "#16A34A", "button_text": "#FFFFFF",
-    },
-    "غروب دافئ": {
-        "screen": "#FFF7ED", "text": "#7C2D12", "surface": "#FFFBEB",
-        "button": "#EA580C", "button_text": "#FFFFFF",
+    "نظيف ومضيء": {
+        "screen": "#FFFFFF", "text": "#0F172A", "surface": "#F8FAFC",
+        "button": "#0F172A", "button_text": "#FFFFFF", "navigation": True,
     },
 }
 
@@ -144,6 +136,11 @@ class AndroidDesigner(QWidget):
         self.canvas_layout.setAlignment(Qt.AlignTop)
         phone_layout.addLayout(self.canvas_layout)
         phone_layout.addStretch()
+        self.bottom_navigation = QFrame(objectName="phoneNavigation")
+        self.bottom_navigation_layout = QHBoxLayout(self.bottom_navigation)
+        self.bottom_navigation_layout.setContentsMargins(4, 4, 4, 4)
+        self.bottom_navigation_layout.setSpacing(2)
+        phone_layout.addWidget(self.bottom_navigation)
         canvas_host_layout.addWidget(self.phone)
         canvas_scroll.setWidget(canvas_host)
         root.addWidget(canvas_scroll, 1)
@@ -160,7 +157,7 @@ class AndroidDesigner(QWidget):
         self.screen_color_button = QPushButton("لون خلفية الشاشة")
         self.screen_color_button.clicked.connect(self.choose_screen_color)
         properties_layout.addWidget(self.screen_color_button)
-        properties_layout.addWidget(QLabel("قوالب الألوان", objectName="designerTitle"))
+        properties_layout.addWidget(QLabel("قوالب التطبيق", objectName="designerTitle"))
         for theme_name in COLOR_THEMES:
             theme_button = QPushButton(theme_name, objectName="designerTool")
             theme_button.clicked.connect(
@@ -244,6 +241,21 @@ class AndroidDesigner(QWidget):
         while f"{prefixes[kind]}_{number}" in used:
             number += 1
         widget = AndroidWidget(f"{prefixes[kind]}_{number}", kind, defaults[kind])
+        matching_widget = next(
+            (item for item in reversed(self.program.widgets) if item.kind == kind),
+            None,
+        )
+        if matching_widget is not None:
+            widget.text_color = matching_widget.text_color
+            widget.background_color = matching_widget.background_color
+        else:
+            dark_screen = QColor(self.program.background_color or "#FAFAFA").lightness() < 128
+            if kind == "زر":
+                widget.text_color = "#0F1419" if dark_screen else "#FFFFFF"
+                widget.background_color = "#F2F2F2" if dark_screen else "#0F172A"
+            else:
+                widget.text_color = "#F2F2F2" if dark_screen else "#0F172A"
+                widget.background_color = "#0A0A0A" if dark_screen else "#F8FAFC"
         self.program.widgets.append(widget)
         self.selected_name = widget.name
         self.refresh_canvas()
@@ -292,6 +304,8 @@ class AndroidDesigner(QWidget):
             else:
                 widget.text_color = theme["text"]
                 widget.background_color = theme["surface"]
+        if theme.get("navigation") and not self.program.bottom_navigation:
+            self.program.bottom_navigation = ["الرئيسية", "البحث", "التنبيهات", "الرسائل"]
         self.refresh_canvas()
         self.emit_source()
 
@@ -401,6 +415,7 @@ class AndroidDesigner(QWidget):
             item.activated.connect(self.run_preview_event)
             self.canvas_layout.addWidget(item)
             self.item_widgets[widget.name] = item
+        self.refresh_bottom_navigation()
         if self.selected_name:
             self.select_widget(self.selected_name)
         else:
@@ -411,25 +426,69 @@ class AndroidDesigner(QWidget):
 
     def refresh_phone_color(self):
         color = self.program.background_color or "#FAFAFA"
-        self.phone.setStyleSheet(f"background-color: {color};")
+        is_dark = QColor(color).lightness() < 128
+        foreground = "#F2F2F2" if is_dark else "#0F172A"
+        surface = "#050505" if is_dark else "#FFFFFF"
+        border = "#2F3336" if is_dark else "#CBD5E1"
+        self.phone.setStyleSheet(
+            f"QFrame#phoneFrame {{ background-color: {color}; }}"
+        )
+        self.phone_title.setStyleSheet(
+            f"background-color: {surface}; color: {foreground}; "
+            f"border-bottom: 1px solid {border}; padding: 10px; font-weight: 600;"
+        )
+        self.bottom_navigation.setStyleSheet(
+            f"background-color: {surface}; border-top: 1px solid {border};"
+        )
         self.screen_color_button.setText(f"لون خلفية الشاشة: {color}")
+
+    def refresh_bottom_navigation(self):
+        while self.bottom_navigation_layout.count():
+            item = self.bottom_navigation_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.bottom_navigation.setVisible(bool(self.program.bottom_navigation))
+        screen_color = QColor(self.program.background_color or "#FAFAFA")
+        navigation_text = "#F2F2F2" if screen_color.lightness() < 128 else "#0F172A"
+        for label in self.program.bottom_navigation:
+            button = QPushButton(label)
+            button.setObjectName("phoneNavigationButton")
+            button.setStyleSheet(
+                f"background: transparent; color: {navigation_text}; border: none;"
+            )
+            self.bottom_navigation_layout.addWidget(button)
 
     def emit_source(self):
         if not self.loading:
             self.sourceChanged.emit(self.to_source())
 
     def to_source(self):
-        lines = [f'تطبيق "{self.program.title}"', ""]
+        lines = [f"اسم التطبيق هو {self.program.title}", ""]
         if self.program.background_color:
-            lines.extend([f'لون_الشاشة("{self.program.background_color}")', ""])
+            screen_colors = {"#000000": "اسود", "#FFFFFF": "ابيض"}
+            color_value = screen_colors.get(
+                self.program.background_color.upper(), self.program.background_color.upper()
+            )
+            lines.extend([f"لون الشاشة {color_value}", ""])
+        if self.program.bottom_navigation:
+            labels = " و ".join(
+                re.sub(r"^[⌂⌕♢✉]\s*", "", label)
+                for label in self.program.bottom_navigation
+            )
+            lines.extend([f"ضع في شريط السفلي {labels}", ""])
         for widget in self.program.widgets:
             lines.append(f'{widget.name} = {widget.kind}("{widget.text}")')
             if widget.text_color:
-                lines.append(f'لون_النص({widget.name}، "{widget.text_color}")')
+                text_colors = {"#000000": "اسود", "#FFFFFF": "ابيض"}
+                color_value = text_colors.get(
+                    widget.text_color.upper(), widget.text_color.upper()
+                )
+                lines.append(f"لون النص هو {color_value}")
             if widget.background_color:
                 lines.append(f'لون_الخلفية({widget.name}، "{widget.background_color}")')
         for event in self.program.events:
-            lines.extend(["", f"عند_النقر({event.button}):"])
+            button_name = event.button.replace("_", " ")
+            lines.extend(["", f"عند النقر على {button_name}"])
             for target, text in event.actions:
                 lines.append(f'    غيّر_النص({target}، "{text}")')
         return "\n".join(lines).rstrip() + "\n"

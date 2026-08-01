@@ -1,6 +1,6 @@
 import pytest
 
-from arabicpy.android import export_android_project, generate_kivy, is_android_source
+from arabicpy.android import export_android_project, generate_kivy, is_android_source, parse_android
 from arabicpy.errors import ArabicPyError
 
 
@@ -76,3 +76,86 @@ def test_screen_background_color_is_generated_for_kivy():
 
     assert "from kivy.core.window import Window" in python_code
     assert "Window.clearcolor = [0.0706, 0.2039, 0.3373, 1]" in python_code
+
+
+def test_bottom_navigation_is_parsed_and_generated():
+    source = '''تطبيق "اجتماعي"
+لون_الشاشة("#000000")
+شريط_سفلي("⌂ الرئيسية | ⌕ البحث | ♢ التنبيهات | ✉ الرسائل")
+عنوان = نص("آخر المنشورات")
+'''
+
+    python_code = generate_kivy(source)
+
+    assert "from kivy.uix.button import Button" in python_code
+    assert "bottom_navigation = BoxLayout" in python_code
+    assert "text='⌂ الرئيسية'" in python_code
+    assert "text='✉ الرسائل'" in python_code
+
+
+@pytest.mark.parametrize(
+    ("statement", "rgba"),
+    [
+        ("لون الشاشة اسود", "[0.0, 0.0, 0.0, 1]"),
+        ("لون الشاشة ابيض", "[1.0, 1.0, 1.0, 1]"),
+    ],
+)
+def test_natural_arabic_screen_colors(statement, rgba):
+    source = f'''تطبيق "ألوان عربية"
+{statement}
+رسالة = نص("مرحباً")
+'''
+
+    assert f"Window.clearcolor = {rgba}" in generate_kivy(source)
+
+
+def test_natural_arabic_bottom_navigation():
+    source = '''تطبيق "اجتماعي"
+ضع في شريط السفلي الرئيسية و البحث و التنبيهات و الرسائل
+عنوان = نص("المنشورات")
+'''
+
+    python_code = generate_kivy(source)
+
+    assert "text='الرئيسية'" in python_code
+    assert "text='البحث'" in python_code
+    assert "text='التنبيهات'" in python_code
+    assert "text='الرسائل'" in python_code
+
+
+def test_natural_arabic_widget_text_color():
+    source = '''تطبيق "ألوان النص"
+الاسم = حقل("اكتب اسمك")
+لون النص هو #F2F2F2
+زر_الحفظ = زر("حفظ")
+لون النص هو اسود
+'''
+
+    program = parse_android(source)
+
+    assert program.widgets[0].text_color == "#F2F2F2"
+    assert program.widgets[1].text_color == "#000000"
+
+
+def test_natural_arabic_application_name():
+    source = '''اسم التطبيق هو الباء
+رسالة = نص("مرحباً")
+'''
+
+    assert is_android_source(source)
+    assert parse_android(source).title == "الباء"
+
+
+def test_natural_arabic_click_event():
+    source = '''اسم التطبيق هو الباء
+رسالة = نص("مرحباً")
+زر_الترحيب = زر("اضغط")
+
+عند النقر على زر الترحيب
+    غيّر_النص(رسالة، "أهلاً")
+'''
+
+    program = parse_android(source)
+
+    assert program.events[0].button == "زر_الترحيب"
+    assert program.events[0].actions == [("رسالة", "أهلاً")]

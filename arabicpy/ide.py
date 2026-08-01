@@ -267,6 +267,9 @@ class ArabicPyIDE(QMainWindow):
         #designerCanvas { background: #151515; border: none; }
         #phoneFrame { background: #fafafa; border: 8px solid #333333; border-radius: 24px; }
         #phoneTitle { background: #202124; color: white; padding: 10px; font-weight: 600; }
+        #phoneNavigation { background: #050505; border-top: 1px solid #2f3336; min-height: 48px; max-height: 48px; }
+        #phoneNavigationButton { background: transparent; color: #f2f2f2; border: none; padding: 6px 2px; font-size: 10px; }
+        #phoneNavigationButton:hover { background: #16181c; border-radius: 12px; }
         #designerItem { background: transparent; border: 2px solid transparent; border-radius: 5px; }
         #designerItem[selected="true"] { border-color: #007acc; background: #e8f2fb; }
         #designerItem QLabel, #designerItem QLineEdit, #designerItem QPushButton { color: #202124; background: #ffffff; border: 1px solid #bdbdbd; border-radius: 4px; padding: 8px; }
@@ -788,11 +791,11 @@ class ArabicPyIDE(QMainWindow):
 
     def new_android_file(self):
         source = (
-            'تطبيق "تطبيقي العربي"\n\n'
+            'اسم التطبيق هو الباء\n\n'
             'رسالة = نص("مرحباً من الباء")\n'
             'الاسم = حقل("اكتب اسمك")\n'
             'زر_الترحيب = زر("اضغط هنا")\n\n'
-            'عند_النقر(زر_الترحيب):\n'
+            'عند النقر على زر الترحيب\n'
             '    غيّر_النص(رسالة، "أهلاً بك في تطبيقي")\n'
         )
         editor = self.add_editor_tab(source)

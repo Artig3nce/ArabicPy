@@ -9,13 +9,23 @@ from .errors import ArabicPyError
 
 WIDGET_PATTERN = re.compile(r'^(?P<name>[\w\u0600-\u06ff]+)\s*=\s*(?P<kind>نص|زر|حقل)\("(?P<text>.*)"\)\s*$')
 EVENT_PATTERN = re.compile(r'^عند_النقر\((?P<name>[\w\u0600-\u06ff]+)\):\s*$')
+NATURAL_EVENT_PATTERN = re.compile(r'^عند\s+النقر\s+على\s+(?P<name>[\w\u0600-\u06ff ]+?)\s*:?\s*$')
 SET_TEXT_PATTERN = re.compile(r'^غيّر_النص\((?P<name>[\w\u0600-\u06ff]+)\s*[،,]\s*"(?P<text>.*)"\)\s*$')
 COLOR_PATTERN = re.compile(
     r'^(?P<property>لون_النص|لون_الخلفية)\('
     r'(?P<name>[\w\u0600-\u06ff]+)\s*[،,]\s*"(?P<color>#[0-9a-fA-F]{6})"\)\s*$'
 )
+NATURAL_TEXT_COLOR_PATTERN = re.compile(
+    r'^لون\s+النص\s+هو\s+(?P<color>أسود|اسود|أبيض|ابيض|#[0-9a-fA-F]{6})\s*$'
+)
 APP_PATTERN = re.compile(r'^تطبيق\s+"(?P<title>.*)"\s*$')
-SCREEN_COLOR_PATTERN = re.compile(r'^لون_الشاشة\("(?P<color>#[0-9a-fA-F]{6})"\)\s*$')
+NATURAL_APP_PATTERN = re.compile(r'^اسم\s+التطبيق\s+هو\s+(?P<title>.+?)\s*$')
+SCREEN_COLOR_PATTERN = re.compile(
+    r'^لون\s+الشاشة\s+(?P<color>أسود|اسود|أبيض|ابيض|#[0-9a-fA-F]{6})\s*$'
+)
+LEGACY_SCREEN_COLOR_PATTERN = re.compile(r'^لون_الشاشة\("(?P<color>#[0-9a-fA-F]{6})"\)\s*$')
+BOTTOM_NAV_PATTERN = re.compile(r'^شريط_سفلي\("(?P<items>.*)"\)\s*$')
+NATURAL_BOTTOM_NAV_PATTERN = re.compile(r'^ضع\s+في\s+شريط\s+السفلي\s+(?P<items>.+)\s*$')
 
 
 @dataclass
@@ -39,10 +49,14 @@ class AndroidProgram:
     widgets: list[AndroidWidget]
     events: list[AndroidEvent]
     background_color: str | None = None
+    bottom_navigation: list[str] = field(default_factory=list)
 
 
 def is_android_source(source):
-    return any(line.strip().startswith("تطبيق ") for line in source.splitlines())
+    return any(
+        APP_PATTERN.match(line.strip()) or NATURAL_APP_PATTERN.match(line.strip())
+        for line in source.splitlines()
+    )
 
 
 def parse_android(source):
@@ -50,7 +64,9 @@ def parse_android(source):
     widgets = []
     events = []
     background_color = None
+    bottom_navigation = []
     widget_names = set()
+    last_widget = None
     lines = source.splitlines()
     index = 0
 
@@ -65,7 +81,7 @@ def parse_android(source):
         if raw_line[:1].isspace():
             raise ArabicPyError("تعليمة مزاحة خارج حدث", line_number, 1)
 
-        app_match = APP_PATTERN.match(stripped)
+        app_match = NATURAL_APP_PATTERN.match(stripped) or APP_PATTERN.match(stripped)
         if app_match:
             if title is not None:
                 raise ArabicPyError("يمكن تعريف تطبيق واحد فقط", line_number, 1)
@@ -73,9 +89,29 @@ def parse_android(source):
             index += 1
             continue
 
-        screen_color_match = SCREEN_COLOR_PATTERN.match(stripped)
+        screen_color_match = (
+            SCREEN_COLOR_PATTERN.match(stripped)
+            or LEGACY_SCREEN_COLOR_PATTERN.match(stripped)
+        )
         if screen_color_match:
-            background_color = screen_color_match.group("color").upper()
+            color_value = screen_color_match.group("color")
+            named_colors = {
+                "أسود": "#000000", "اسود": "#000000",
+                "أبيض": "#FFFFFF", "ابيض": "#FFFFFF",
+            }
+            background_color = named_colors.get(color_value, color_value.upper())
+            index += 1
+            continue
+
+        natural_bottom_nav_match = NATURAL_BOTTOM_NAV_PATTERN.match(stripped)
+        bottom_nav_match = natural_bottom_nav_match or BOTTOM_NAV_PATTERN.match(stripped)
+        if bottom_nav_match:
+            separator = r"\s+و\s+" if natural_bottom_nav_match else r"\s*\|\s*"
+            bottom_navigation = [item.strip() for item in re.split(
+                separator, bottom_nav_match.group("items")
+            ) if item.strip()]
+            if not bottom_navigation:
+                raise ArabicPyError("أضف زرًا واحدًا على الأقل إلى الشريط السفلي", line_number, 1)
             index += 1
             continue
 
@@ -85,7 +121,21 @@ def parse_android(source):
             if name in widget_names:
                 raise ArabicPyError(f"العنصر معرّف مسبقاً: {name}", line_number, 1)
             widget_names.add(name)
-            widgets.append(AndroidWidget(name, widget_match.group("kind"), widget_match.group("text")))
+            last_widget = AndroidWidget(name, widget_match.group("kind"), widget_match.group("text"))
+            widgets.append(last_widget)
+            index += 1
+            continue
+
+        natural_text_color_match = NATURAL_TEXT_COLOR_PATTERN.match(stripped)
+        if natural_text_color_match:
+            if last_widget is None:
+                raise ArabicPyError("اكتب لون النص بعد العنصر الذي تريد تلوينه", line_number, 1)
+            color_value = natural_text_color_match.group("color")
+            named_colors = {
+                "أسود": "#000000", "اسود": "#000000",
+                "أبيض": "#FFFFFF", "ابيض": "#FFFFFF",
+            }
+            last_widget.text_color = named_colors.get(color_value, color_value.upper())
             index += 1
             continue
 
@@ -102,9 +152,12 @@ def parse_android(source):
             index += 1
             continue
 
-        event_match = EVENT_PATTERN.match(stripped)
+        natural_event_match = NATURAL_EVENT_PATTERN.match(stripped)
+        event_match = natural_event_match or EVENT_PATTERN.match(stripped)
         if event_match:
             button = event_match.group("name")
+            if natural_event_match:
+                button = re.sub(r"\s+", "_", button.strip())
             if button not in widget_names:
                 raise ArabicPyError(f"زر غير معروف: {button}", line_number, 1)
             event = AndroidEvent(button)
@@ -130,16 +183,18 @@ def parse_android(source):
         raise ArabicPyError(f"تعليمة Android غير معروفة: {stripped}", line_number, 1)
 
     if title is None:
-        raise ArabicPyError('ابدأ البرنامج بـ: تطبيق "اسم التطبيق"', 1, 1)
+        raise ArabicPyError("ابدأ البرنامج بـ: اسم التطبيق هو الباء", 1, 1)
     if not widgets:
         raise ArabicPyError("أضف عنصراً واحداً على الأقل إلى التطبيق", 1, 1)
-    return AndroidProgram(title, widgets, events, background_color)
+    return AndroidProgram(title, widgets, events, background_color, bottom_navigation)
 
 
 def generate_kivy(source):
     program = parse_android(source)
     widget_classes = {"نص": "Label", "زر": "Button", "حقل": "TextInput"}
     imports = sorted({widget_classes[widget.kind] for widget in program.widgets})
+    if program.bottom_navigation and "Button" not in imports:
+        imports.append("Button")
     lines = [
         "from kivy.app import App",
         "from kivy.uix.boxlayout import BoxLayout",
@@ -206,6 +261,16 @@ def generate_kivy(source):
         lines.append(
             f"        self.{event.button}.bind(on_press=self._event_{event_index})"
         )
+    if program.bottom_navigation:
+        dark_screen = is_dark_hex(program.background_color or "#FAFAFA")
+        navigation_background = [0.02, 0.02, 0.02, 1] if dark_screen else [1, 1, 1, 1]
+        navigation_text = [1, 1, 1, 1] if dark_screen else [0.06, 0.09, 0.16, 1]
+        lines.append("        bottom_navigation = BoxLayout(size_hint_y=None, height=56, spacing=4)")
+        for item in program.bottom_navigation:
+            lines.append(
+                f"        bottom_navigation.add_widget(Button(text={item!r}, background_normal='', background_color={navigation_background!r}, color={navigation_text!r}))"
+            )
+        lines.append("        root.add_widget(bottom_navigation)")
     lines.extend(["        return root", ""])
 
     for event_index, event in enumerate(program.events, 1):
@@ -221,6 +286,12 @@ def generate_kivy(source):
 def hex_to_rgba(color):
     color = color.lstrip("#")
     return [round(int(color[index:index + 2], 16) / 255, 4) for index in (0, 2, 4)] + [1]
+
+
+def is_dark_hex(color):
+    color = color.lstrip("#")
+    red, green, blue = (int(color[index:index + 2], 16) for index in (0, 2, 4))
+    return (red * 299 + green * 587 + blue * 114) / 1000 < 128
 
 
 def buildozer_spec(title):
