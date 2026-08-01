@@ -6,7 +6,7 @@ import re
 import shutil
 from datetime import datetime
 
-from PySide6.QtCore import QProcess, QTimer, QRect, QSize, Qt, QUrl
+from PySide6.QtCore import QProcess, QSettings, QTimer, QRect, QSize, Qt, QUrl
 from PySide6.QtGui import (
     QColor, QDesktopServices, QFont, QPainter, QTextBlockFormat, QTextCharFormat, QTextCursor,
     QTextFormat,
@@ -367,11 +367,12 @@ class ArabicPyIDE(QMainWindow):
         self.apk_progress.setRange(0, 0)
         self.apk_progress.setFixedWidth(150)
         self.apk_progress.setFixedHeight(18)
+        self.apk_progress.setFormat("%p%")
         self.apk_progress.setTextVisible(False)
         self.apk_progress.hide()
         command_layout.addWidget(self.apk_progress)
         self.github_status_label = QLabel("")
-        self.github_status_label.setFixedWidth(170)
+        self.github_status_label.setFixedWidth(260)
         self.github_status_label.setAlignment(Qt.AlignCenter)
         self.github_status_label.setStyleSheet(
             "color: #D8DEE9; background: #2A2D2E; border-radius: 4px; padding: 3px 8px;"
@@ -425,7 +426,7 @@ class ArabicPyIDE(QMainWindow):
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
         sidebar_layout.addWidget(QLabel("المستكشف", objectName="panelTitle"))
-        project = QLabel("⌄  الباء", objectName="panelTitle")
+        project = QLabel("⌄  مشاريعي", objectName="panelTitle")
         sidebar_layout.addWidget(project)
         self.file_list = QListWidget(objectName="fileList")
         self.file_list.setLayoutDirection(Qt.RightToLeft)
@@ -592,12 +593,29 @@ class ArabicPyIDE(QMainWindow):
 
     def refresh_file_list(self):
         self.file_list.clear()
-        root = os.getcwd()
-        for filename in sorted(os.listdir(root)):
-            if filename.endswith((".apy", ".py")):
-                item = QListWidgetItem(f"  ◇  {filename}")
-                item.setData(Qt.UserRole, os.path.join(root, filename))
+        settings = QSettings("AlBaa", "AlBaaIDE")
+        paths = settings.value("project_files", [], type=list)
+        existing_paths = []
+        for path in paths:
+            path = os.path.abspath(str(path))
+            if os.path.isfile(path) and path.endswith((".apy", ".py")):
+                existing_paths.append(path)
+                item = QListWidgetItem(f"  ◇  {os.path.basename(path)}")
+                item.setToolTip(path)
+                item.setData(Qt.UserRole, path)
                 self.file_list.addItem(item)
+        if existing_paths != list(paths):
+            settings.setValue("project_files", existing_paths)
+
+    def remember_project_file(self, path):
+        """Keep only files the user explicitly opened or saved in My Projects."""
+        path = os.path.abspath(path)
+        settings = QSettings("AlBaa", "AlBaaIDE")
+        paths = [os.path.abspath(str(item)) for item in settings.value("project_files", [], type=list)]
+        paths = [item for item in paths if item != path]
+        paths.insert(0, path)
+        settings.setValue("project_files", paths)
+        self.refresh_file_list()
 
     def align_code_pane_headers(self):
         """Match Python's header height to ArabicPy's document-tab row."""
@@ -1000,6 +1018,15 @@ class ArabicPyIDE(QMainWindow):
             self.github_status_label.show()
             self.github_cancel_button.show()
             self.github_elapsed_timer.start(1000)
+            if self.github_operation in ("upload", "build_upload", "build"):
+                self.apk_progress.setRange(0, 100)
+                self.apk_progress.setValue(
+                    10 if self.github_operation in ("upload", "build_upload") else 20
+                )
+                self.apk_progress.setTextVisible(True)
+            else:
+                self.apk_progress.setRange(0, 0)
+                self.apk_progress.setTextVisible(False)
             self.apk_progress.setToolTip(label)
             self.apk_progress.show()
         else:
@@ -1019,7 +1046,15 @@ class ArabicPyIDE(QMainWindow):
             "build": "بناء APK",
         }
         phase = phases.get(self.github_operation, "GitHub")
-        self.github_status_label.setText(f"{phase}  •  {minutes:02d}:{seconds:02d}")
+        remaining = ""
+        if self.github_operation == "build":
+            elapsed_minutes = self.github_elapsed_seconds // 60
+            minimum_left = max(1, 10 - elapsed_minutes)
+            maximum_left = max(minimum_left, 30 - elapsed_minutes)
+            remaining = f"  •  متبقي تقريبًا {minimum_left}–{maximum_left} د"
+        self.github_status_label.setText(
+            f"{phase}  •  {minutes:02d}:{seconds:02d}{remaining}"
+        )
         tooltip = self.github_phase_label
         if self.github_operation == "build":
             tooltip += " — يستغرق عادةً 10–30 دقيقة"
@@ -1125,7 +1160,22 @@ class ArabicPyIDE(QMainWindow):
             return
         data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
         if data:
-            self.output.appendPlainText(data.decode("utf-8", errors="replace").rstrip())
+            decoded = data.decode("utf-8", errors="replace").rstrip()
+            self.output.appendPlainText(decoded)
+            if self.github_operation == "build":
+                lowered = decoded.lower()
+                stages = (
+                    (("queued", "waiting"), 25),
+                    (("checkout project", "checkout"), 30),
+                    (("set up python", "setup python"), 38),
+                    (("install buildozer", "install buildozer requirements"), 48),
+                    (("build apk", "buildozer android"), 62),
+                    (("upload apk", "upload artifact"), 90),
+                    (("completed", "success"), 98),
+                )
+                for markers, value in stages:
+                    if any(marker in lowered for marker in markers):
+                        self.apk_progress.setValue(max(self.apk_progress.value(), value))
 
     def github_process_error(self, _error):
         if self.github_process is None:
@@ -1240,10 +1290,10 @@ class ArabicPyIDE(QMainWindow):
     def start_github_command(self, command, operation, directory, message):
         self.main_splitter.widget(1).show()
         self.output.setPlainText(message + "\n\n")
+        self.github_operation = operation
         self.set_github_busy(True, message)
         process = QProcess(self)
         self.github_process = process
-        self.github_operation = operation
         process.setWorkingDirectory(directory)
         process.setProgram("powershell.exe")
         process.setArguments(["-NoProfile", "-Command", command])
@@ -1675,6 +1725,7 @@ class ArabicPyIDE(QMainWindow):
         try:
             with open(path, "r", encoding="utf-8") as file:
                 self.add_editor_tab(file.read(), path)
+            self.remember_project_file(path)
             return
             with open(path, "r", encoding="utf-8") as file:
                 self.editor.setPlainText(file.read())
@@ -1697,7 +1748,7 @@ class ArabicPyIDE(QMainWindow):
             editor.document().setModified(False)
             self.current_file = editor.file_path
             self.update_tab_title(False)
-            self.refresh_file_list()
+            self.remember_project_file(editor.file_path)
             return
         except OSError as error:
             self.output.setPlainText(f"تعذر حفظ الملف:\n{error}")

@@ -700,9 +700,12 @@ package.domain = org.albaa
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 version = 0.1
-requirements = python3,kivy
+requirements = python3==3.12.9,hostpython3==3.12.9,kivy
 orientation = portrait
 fullscreen = 0
+android.api = 35
+android.ndk = 28c
+android.accept_sdk_license = True
 
 [buildozer]
 log_level = 2
@@ -732,9 +735,19 @@ jobs:
       - name: Install Buildozer requirements
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses-dev libncursesw5-dev cmake libffi-dev libssl-dev automake autopoint gettext
+          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool libltdl-dev pkg-config zlib1g-dev libncurses-dev libncursesw5-dev cmake libffi-dev libssl-dev automake autopoint gettext
           python -m pip install --upgrade pip virtualenv
-          python -m pip install buildozer setuptools cython==0.29.34
+          # PyPI Buildozer 1.5 downloads obsolete Android command-line tools
+          # which can finish without installing aidl on current runners.
+          python -m pip install git+https://github.com/kivy/buildozer setuptools cython==0.29.34
+
+      - name: Cache Android build files
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: albaa-android-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
       - name: Build APK
         run: buildozer android debug

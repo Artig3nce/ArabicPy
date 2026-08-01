@@ -45,13 +45,19 @@ def test_exports_main_and_buildozer_spec(tmp_path):
     assert spec_path == str(tmp_path / "buildozer.spec")
     assert "AlBaaAndroidApp().run()" in (tmp_path / "main.py").read_text(encoding="utf-8")
     spec = (tmp_path / "buildozer.spec").read_text(encoding="utf-8")
-    assert "requirements = python3,kivy" in spec
+    assert "requirements = python3==3.12.9,hostpython3==3.12.9,kivy" in spec
     assert "title = تطبيق الاختبار" in spec
     workflow = tmp_path / ".github" / "workflows" / "build-apk.yml"
     assert workflow.exists()
     workflow_text = workflow.read_text(encoding="utf-8")
     assert "workflow_dispatch:" in workflow_text
     assert "actions/upload-artifact@v4" in workflow_text
+    assert "git+https://github.com/kivy/buildozer" in workflow_text
+    assert "libltdl-dev" in workflow_text
+    assert "actions/cache@v4" in workflow_text
+    assert "android.api = 35" in spec
+    assert "android.ndk = 28c" in spec
+    assert "android.accept_sdk_license = True" in spec
 
 
 def test_element_colors_are_generated_for_kivy():
