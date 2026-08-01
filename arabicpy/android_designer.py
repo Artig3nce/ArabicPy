@@ -261,6 +261,9 @@ class AndroidDesigner(QWidget):
                 if target == "__page__":
                     self.show_preview_page(text)
                     continue
+                if target == "__print__":
+                    print(text)
+                    continue
                 item = self.item_widgets.get(target)
                 if item is not None:
                     item.control.setText(text)
@@ -528,6 +531,7 @@ class AndroidDesigner(QWidget):
             lines.extend(["دالة كلمة المرور", ""])
         current_page = "الرئيسية"
         for widget in self.program.widgets:
+            linked_event = None
             if widget.page != current_page:
                 current_page = widget.page
                 lines.extend([f"في صفحة {current_page}", ""])
@@ -536,7 +540,44 @@ class AndroidDesigner(QWidget):
                     r"[^\w\u0600-\u06ff]+", "_", widget.text
                 ).strip("_")
                 generated_names[widget.name] = generated_name
-                lines.append(f"انشئ زر {widget.text}")
+                linked_event = next(
+                    (event for event in self.program.events if event.button == widget.name),
+                    None,
+                )
+                if linked_event:
+                    function_name = linked_event.function_name
+                    if not function_name:
+                        page_action = next(
+                            (value for target, value in linked_event.actions if target == "__page__"),
+                            widget.text,
+                        )
+                        function_name = page_action.removeprefix("قوة ")
+                    linked_event.function_name = function_name
+                    previous_button = next(
+                        (item for item in reversed(self.program.widgets[:self.program.widgets.index(widget)])
+                         if item.kind == "زر"),
+                        None,
+                    )
+                    if previous_button and (
+                        widget.background_color == previous_button.background_color
+                        and widget.text_color == previous_button.text_color
+                    ):
+                        lines.append(f"انشئ زر {widget.text}، دالة {function_name}")
+                    else:
+                        button_colors = {
+                            "#000000": "اسود", "#FFFFFF": "ابيض",
+                            "#1976D2": "ازرق", "#16A34A": "اخضر",
+                            "#DC2626": "احمر", "#6B7280": "رمادي",
+                        }
+                        button_color = button_colors.get(
+                            (widget.background_color or "#1976D2").upper(),
+                            (widget.background_color or "#1976D2").upper(),
+                        )
+                        lines.append(
+                            f"انشئ زر {widget.text}، {button_color}، دالة {function_name}"
+                        )
+                else:
+                    lines.append(f"انشئ زر {widget.text}")
             elif widget.kind == "كلمة_مرور":
                 generated_names[widget.name] = widget.name
                 minimum = widget.min_length or 8
@@ -550,8 +591,12 @@ class AndroidDesigner(QWidget):
                     lines.append("    تحتوي على رمز")
             else:
                 generated_names[widget.name] = widget.name
-                lines.append(f'{widget.name} = {widget.kind}("{widget.text}")')
-            if widget.text_color:
+                numbered_text = re.fullmatch(r"نص_(\d+)", widget.name)
+                if widget.kind == "نص" and numbered_text:
+                    lines.append(f"نص {numbered_text.group(1)} = {widget.text}")
+                else:
+                    lines.append(f'{widget.name} = {widget.kind}("{widget.text}")')
+            if widget.text_color and not (widget.kind == "زر" and linked_event):
                 text_colors = {
                     "#000000": "اسود", "#0F1419": "اسود", "#0F172A": "اسود",
                     "#FFFFFF": "ابيض", "#F2F2F2": "ابيض", "#E7E9EA": "ابيض",
@@ -560,27 +605,32 @@ class AndroidDesigner(QWidget):
                     widget.text_color.upper(), widget.text_color.upper()
                 )
                 lines.append(f"لون النص {color_value}")
-            if widget.background_color:
+            if widget.background_color and not (widget.kind == "زر" and linked_event):
                 background_colors = {"#000000": "اسود", "#FFFFFF": "ابيض"}
                 color_value = background_colors.get(
                     widget.background_color.upper(), widget.background_color.upper()
                 )
-                lines.append(f"لون الخلفية هو {color_value}")
+                lines.append(f"لون الخلفية {color_value}")
         for event in self.program.events:
             button_widget = next(
                 (widget for widget in self.program.widgets if widget.name == event.button),
                 None,
             )
             button_name = button_widget.text if button_widget else event.button.replace("_", " ")
-            last_button = next(
-                (widget for widget in reversed(self.program.widgets) if widget.kind == "زر"),
-                None,
-            )
-            event_line = "عند النقر" if last_button and last_button.name == event.button else f"عند النقر على زر {button_name}"
+            if event.function_name:
+                event_line = f"دالة {event.function_name}:"
+            else:
+                last_button = next(
+                    (widget for widget in reversed(self.program.widgets) if widget.kind == "زر"),
+                    None,
+                )
+                event_line = "عند النقر" if last_button and last_button.name == event.button else f"عند النقر على زر {button_name}"
             lines.extend(["", event_line])
             for target, text in event.actions:
                 if target == "__page__":
                     lines.append(f"    اذهب الى صفحة {text}")
+                elif target == "__print__":
+                    lines.append(f'    اطبع("{text}")')
                 else:
                     lines.append(f'    غيّر_النص({generated_names.get(target, target)}، "{text}")')
         return "\n".join(lines).rstrip() + "\n"

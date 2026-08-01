@@ -8,10 +8,29 @@ from .errors import ArabicPyError
 
 
 WIDGET_PATTERN = re.compile(r'^(?P<name>[\w\u0600-\u06ff]+)\s*=\s*(?P<kind>نص|زر|حقل)\("(?P<text>.*)"\)\s*$')
+NUMBERED_TEXT_PATTERN = re.compile(
+    r'^نص\s+(?P<number>\d+)\s*=\s*(?P<text>.+?)\s*$'
+)
+ARABIC_COLOR_NAMES = {
+    "أسود": "#000000", "اسود": "#000000",
+    "أبيض": "#FFFFFF", "ابيض": "#FFFFFF",
+    "أزرق": "#1976D2", "ازرق": "#1976D2",
+    "أخضر": "#16A34A", "اخضر": "#16A34A",
+    "أحمر": "#DC2626", "احمر": "#DC2626",
+    "رمادي": "#6B7280",
+}
+COLOR_VALUE_PATTERN = r"أسود|اسود|أبيض|ابيض|أزرق|ازرق|أخضر|اخضر|أحمر|احمر|رمادي|#[0-9a-fA-F]{6}"
 NATURAL_BUTTON_PATTERN = re.compile(r'^انشئ\s+زر\s+اسمه\s+(?P<text>.+?)\s*$')
+BUTTON_FUNCTION_PATTERN = re.compile(
+    r'^انشئ\s+زر\s+(?P<text>[^،,]+?)\s*[،,]\s*'
+    rf'(?:(?P<color>{COLOR_VALUE_PATTERN})\s*[،,]\s*)?'
+    r'دالة\s+(?P<function>.+?)\s*$'
+)
+FUNCTION_DEFINITION_PATTERN = re.compile(r'^دالة\s+(?P<function>.+?)\s*:\s*$')
 EVENT_PATTERN = re.compile(r'^عند_النقر\((?P<name>[\w\u0600-\u06ff]+)\):\s*$')
 NATURAL_EVENT_PATTERN = re.compile(r'^عند\s+النقر\s+على\s+(?P<name>[\w\u0600-\u06ff ]+?)\s*:?\s*$')
 SET_TEXT_PATTERN = re.compile(r'^غيّر_النص\((?P<name>[\w\u0600-\u06ff]+)\s*[،,]\s*"(?P<text>.*)"\)\s*$')
+PRINT_PATTERN = re.compile(r'^اطبع\(\s*"(?P<text>.*)"\s*\)\s*$')
 GO_PAGE_PATTERN = re.compile(r'^اذهب\s+(?:الى|إلى)\s+(?:ال)?صفحة\s+(?P<page>.+?)\s*$')
 COLOR_PATTERN = re.compile(
     r'^(?P<property>لون_النص|لون_الخلفية)\('
@@ -21,7 +40,7 @@ NATURAL_TEXT_COLOR_PATTERN = re.compile(
     r'^لون\s+النص\s+(?:هو\s+)?(?P<color>أسود|اسود|أبيض|ابيض|#[0-9a-fA-F]{6})\s*$'
 )
 NATURAL_BACKGROUND_COLOR_PATTERN = re.compile(
-    r'^لون\s+الخلفية\s+هو\s+(?P<color>أسود|اسود|أبيض|ابيض|#[0-9a-fA-F]{6})\s*$'
+    r'^لون\s+الخلفية\s+(?:هو\s+)?(?P<color>أسود|اسود|أبيض|ابيض|#[0-9a-fA-F]{6})\s*$'
 )
 APP_PATTERN = re.compile(r'^تطبيق\s+"(?P<title>.*)"\s*$')
 NATURAL_APP_PATTERN = re.compile(r'^اسم\s+التطبيق\s+هو\s+(?P<title>.+?)\s*$')
@@ -66,6 +85,7 @@ class AndroidWidget:
 class AndroidEvent:
     button: str
     actions: list[tuple[str, str]] = field(default_factory=list)
+    function_name: str | None = None
 
 
 @dataclass
@@ -94,6 +114,7 @@ def parse_android(source):
     last_widget = None
     last_button = None
     current_page = "الرئيسية"
+    pending_functions = {}
     lines = source.splitlines()
     index = 0
 
@@ -129,6 +150,44 @@ def parse_android(source):
                 or page_block_match.group("page")
             ).strip()
             index += 1
+            continue
+
+        function_definition = FUNCTION_DEFINITION_PATTERN.match(stripped)
+        if function_definition:
+            function_name = function_definition.group("function").strip()
+            button = pending_functions.get(function_name)
+            if button is None:
+                raise ArabicPyError(f"لا يوجد زر مرتبط بالدالة: {function_name}", line_number, 1)
+            event = AndroidEvent(button, function_name=function_name)
+            index += 1
+            while index < len(lines):
+                action_line = lines[index].strip()
+                if not action_line:
+                    index += 1
+                    continue
+                action_match = SET_TEXT_PATTERN.match(action_line)
+                page_match = GO_PAGE_PATTERN.match(action_line)
+                print_match = PRINT_PATTERN.match(action_line)
+                if page_match:
+                    event.actions.append(("__page__", page_match.group("page")))
+                elif print_match:
+                    event.actions.append(("__print__", print_match.group("text")))
+                elif action_match:
+                    target = action_match.group("name")
+                    if target not in widget_names:
+                        raise ArabicPyError(f"عنصر غير معروف: {target}", index + 1, 1)
+                    event.actions.append((target, action_match.group("text")))
+                else:
+                    # Arabic RTL editing can make indentation difficult to see or
+                    # enter, so a supported command directly after the function
+                    # header is accepted even without leading spaces.
+                    if lines[index][:1].isspace():
+                        raise ArabicPyError("تعليمة دالة غير مدعومة", index + 1, 1)
+                    break
+                index += 1
+            if not event.actions:
+                raise ArabicPyError("الدالة تحتاج إلى تعليمة واحدة على الأقل", line_number, 1)
+            events.append(event)
             continue
 
         if PASSWORD_FUNCTION_PATTERN.match(stripped):
@@ -173,9 +232,11 @@ def parse_android(source):
             index += 1
             continue
 
+        button_function_match = BUTTON_FUNCTION_PATTERN.match(stripped)
         natural_button_match = NATURAL_BUTTON_PATTERN.match(stripped)
         short_button_match = re.match(r'^انشئ\s+زر\s+(?!اسمه\s+)(?P<text>.+?)\s*:?\s*$', stripped)
-        natural_button_match = natural_button_match or short_button_match
+        natural_button_match = button_function_match or natural_button_match or short_button_match
+        numbered_text_match = NUMBERED_TEXT_PATTERN.match(stripped)
         widget_match = WIDGET_PATTERN.match(stripped)
         if natural_button_match:
             text = natural_button_match.group("text").rstrip(":").strip()
@@ -184,7 +245,33 @@ def parse_android(source):
                 raise ArabicPyError(f"العنصر معرّف مسبقاً: {name}", line_number, 1)
             widget_names.add(name)
             last_widget = AndroidWidget(name, "زر", text, page=current_page)
+            if button_function_match:
+                color_value = button_function_match.group("color")
+                if color_value:
+                    last_widget.background_color = ARABIC_COLOR_NAMES.get(color_value, color_value.upper())
+                    last_widget.text_color = "#FFFFFF" if last_widget.background_color == "#000000" else "#000000"
+                else:
+                    previous_button = next(
+                        (item for item in reversed(widgets) if item.kind == "زر"),
+                        None,
+                    )
+                    if previous_button is not None:
+                        last_widget.background_color = previous_button.background_color
+                        last_widget.text_color = previous_button.text_color
+                pending_functions[button_function_match.group("function").strip()] = name
             last_button = last_widget
+            widgets.append(last_widget)
+            index += 1
+            continue
+        if numbered_text_match:
+            number = numbered_text_match.group("number")
+            name = f"نص_{number}"
+            if name in widget_names:
+                raise ArabicPyError(f"العنصر معرّف مسبقاً: نص {number}", line_number, 1)
+            widget_names.add(name)
+            last_widget = AndroidWidget(
+                name, "نص", numbered_text_match.group("text"), page=current_page,
+            )
             widgets.append(last_widget)
             index += 1
             continue
@@ -488,6 +575,8 @@ def generate_kivy(source):
         for target, text in event.actions:
             if target == "__page__":
                 lines.append(f"        self._go_to_page({text!r})")
+            elif target == "__print__":
+                lines.append(f"        print({text!r})")
             else:
                 lines.append(f"        self.{target}.text = {text!r}")
         lines.append("")

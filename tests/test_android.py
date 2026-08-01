@@ -242,3 +242,60 @@ def test_short_text_color_and_unquoted_page():
 
     assert program.widgets[0].page == "قوة كلمة المرور"
     assert program.widgets[0].text_color == "#000000"
+
+
+def test_background_color_without_connector_word():
+    source = '''اسم التطبيق هو الباء
+انشئ زر اضغط هنا
+لون الخلفية #0A0A0A
+'''
+
+    assert parse_android(source).widgets[0].background_color == "#0A0A0A"
+
+
+def test_function_accepts_unindented_print_command():
+    source = '''اسم التطبيق هو الباء
+رسالة = نص("مرحبا من الباء")
+انشئ زر اضغط، ازرق، دالة الطباعة
+
+دالة الطباعة:
+اطبع("مرحبا")
+'''
+
+    program = parse_android(source)
+
+    assert program.events[0].function_name == "الطباعة"
+    assert program.events[0].actions == [("__print__", "مرحبا")]
+    assert "print('مرحبا')" in generate_kivy(source)
+
+
+def test_function_button_without_color_inherits_previous_button_design():
+    source = '''اسم التطبيق هو الباء
+انشئ زر اضغط هنا
+لون النص ابيض
+لون الخلفية اسود
+انشئ زر اطبع، دالة الطباعة
+
+دالة الطباعة:
+اطبع("مرحبا")
+'''
+
+    program = parse_android(source)
+
+    first_button, function_button = program.widgets
+    assert function_button.background_color == first_button.background_color == "#000000"
+    assert function_button.text_color == first_button.text_color == "#FFFFFF"
+
+
+def test_numbered_natural_text_elements():
+    source = '''اسم التطبيق هو الباء
+نص 1 = مرحباً بك
+نص 2 = كيف حالك؟
+'''
+
+    program = parse_android(source)
+
+    assert [(widget.name, widget.kind, widget.text) for widget in program.widgets] == [
+        ("نص_1", "نص", "مرحباً بك"),
+        ("نص_2", "نص", "كيف حالك؟"),
+    ]

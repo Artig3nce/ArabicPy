@@ -1,4 +1,5 @@
 import contextlib
+import base64
 import io
 import os
 
@@ -10,7 +11,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QMenu, QSplitter, QTabBar, QTabWidget, QTextEdit, QVBoxLayout,
+    QPushButton, QMenu, QProgressBar, QSplitter, QTabBar, QTabWidget, QTextEdit, QVBoxLayout,
     QWidget,
 )
 
@@ -357,6 +358,19 @@ class ArabicPyIDE(QMainWindow):
         self.python_toggle_button.setToolTip("إظهار كود Python")
         command_layout.addWidget(self.python_toggle_button)
         command_layout.addStretch()
+        self.apk_progress = QProgressBar()
+        self.apk_progress.setRange(0, 0)
+        self.apk_progress.setFixedWidth(150)
+        self.apk_progress.setFixedHeight(18)
+        self.apk_progress.setTextVisible(False)
+        self.apk_progress.hide()
+        command_layout.addWidget(self.apk_progress)
+        self.apk_tools_button = self.make_button("↓ تثبيت أدوات APK", self.install_apk_tools)
+        self.apk_tools_button.setToolTip("تثبيت WSL2 وUbuntu وBuildozer ومتطلبات Android")
+        command_layout.addWidget(self.apk_tools_button)
+        self.apk_button = self.make_button("▣ إنشاء APK", self.build_android_apk)
+        self.apk_button.setToolTip("إنشاء ملف APK للتطبيق عبر WSL2 وBuildozer")
+        command_layout.addWidget(self.apk_button)
         self.designer_button = self.make_button("تصميم", self.toggle_android_designer)
         command_layout.addWidget(self.designer_button)
         self.run_button = self.make_button("▶ تشغيل", self.run_code, "runButton")
@@ -543,6 +557,8 @@ class ArabicPyIDE(QMainWindow):
         self.setCentralWidget(root)
         self.android_project_path = None
         self.android_build_process = None
+        self.apk_install_process = None
+        self.apk_install_stage = None
         self.updating_from_designer = False
         self.refresh_file_list()
 
@@ -905,6 +921,19 @@ class ArabicPyIDE(QMainWindow):
         if self.android_build_process is not None:
             self.output.setPlainText("يجري الآن إنشاء APK. انتظر حتى تنتهي العملية.")
             return
+        if not self.apk_tools_are_ready():
+            self.main_splitter.widget(1).show()
+            self.output.setPlainText(
+                "أدوات APK غير مكتملة. اضغط أولًا على: تثبيت أدوات APK.\n"
+                "إذا ثبّت Windows نظام WSL للتو، أعد تشغيل الجهاز ثم اضغط زر التثبيت مرة أخرى."
+            )
+            QMessageBox.warning(
+                self, "أدوات APK غير جاهزة",
+                "لا يمكن إنشاء APK الآن.\n\n"
+                "اضغط «تثبيت أدوات APK» وأكمل جميع المراحل أولًا. "
+                "قد تحتاج إلى إعادة تشغيل Windows."
+            )
+            return
         if not self.android_project_path and not self.export_android():
             return
 
@@ -915,16 +944,251 @@ class ArabicPyIDE(QMainWindow):
         )
         process = QProcess(self)
         self.android_build_process = process
+        self.apk_button.setEnabled(False)
+        self.apk_tools_button.setEnabled(False)
+        self.apk_button.setText("… جارٍ إنشاء APK")
+        self.apk_progress.setToolTip("جارٍ إنشاء APK")
+        self.apk_progress.show()
         process.setProgram("wsl.exe")
         process.setArguments([
             "--cd", self.android_project_path,
-            "buildozer", "android", "debug",
+            "bash", "-lc",
+            "BUILDOZER=/opt/albaa-buildozer/bin/buildozer; "
+            "if [ ! -x \"$BUILDOZER\" ]; then BUILDOZER=$(command -v buildozer); fi; "
+            "if [ -z \"$BUILDOZER\" ]; then echo 'BUILD_TOOLS_MISSING'; exit 127; fi; "
+            "\"$BUILDOZER\" android debug",
         ])
         process.readyReadStandardOutput.connect(self.read_android_build_output)
         process.readyReadStandardError.connect(self.read_android_build_output)
         process.errorOccurred.connect(self.android_build_error)
         process.finished.connect(self.android_build_finished)
         process.start()
+
+    def apk_tools_are_ready(self):
+        """Return True only when the dedicated Buildozer environment exists."""
+        check = QProcess(self)
+        check.setProgram("wsl.exe")
+        check.setArguments([
+            "-u", "root", "--", "test", "-x",
+            "/opt/albaa-buildozer/bin/buildozer",
+        ])
+        check.start()
+        if not check.waitForStarted(2500):
+            return False
+        if not check.waitForFinished(8000):
+            check.kill()
+            return False
+        return check.exitCode() == 0
+
+    def install_apk_tools(self):
+        """Install WSL first, then the official Ubuntu Buildozer dependencies."""
+        if self.apk_install_process is not None:
+            self.output.setPlainText("يجري الآن تثبيت أدوات APK. انتظر حتى تنتهي العملية.")
+            return
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText("فحص WSL2 وUbuntu...\n")
+        self.apk_tools_button.setEnabled(False)
+        self.apk_button.setEnabled(False)
+        self.apk_tools_button.setText("… جارٍ الفحص")
+        self.apk_progress.setToolTip("جارٍ فحص وتثبيت أدوات APK")
+        self.apk_progress.show()
+        self.apk_install_stage = "check"
+        process = QProcess(self)
+        self.apk_install_process = process
+        process.setProgram("wsl.exe")
+        # `wsl --status` may exit successfully even when no distribution is
+        # installed or WSL2 cannot start. Test the actual Ubuntu environment.
+        process.setArguments(["-d", "Ubuntu", "-u", "root", "--", "true"])
+        process.readyReadStandardOutput.connect(self.read_apk_install_output)
+        process.readyReadStandardError.connect(self.read_apk_install_output)
+        process.finished.connect(self.apk_install_finished)
+        process.start()
+
+    def read_apk_install_output(self):
+        process = self.apk_install_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
+        if data:
+            # Windows' WSL messages can be UTF-16, while Linux output is UTF-8.
+            encoding = "utf-16" if b"\x00" in data[:20] else "utf-8"
+            self.output.appendPlainText(data.decode(encoding, errors="replace").rstrip())
+
+    def apk_install_finished(self, exit_code, _status):
+        process = self.apk_install_process
+        if process is not None:
+            self.read_apk_install_output()
+            process.deleteLater()
+        self.apk_install_process = None
+
+        if self.apk_install_stage == "check":
+            if exit_code != 0:
+                self.start_wsl_install()
+                return
+            self.start_buildozer_install()
+            return
+
+        if self.apk_install_stage == "wsl":
+            if exit_code == 0:
+                message = (
+                    "انتهت مرحلة تثبيت WSL2 وUbuntu.\n\n"
+                    "أعد تشغيل Windows الآن، ثم افتح «الباء» واضغط "
+                    "«تثبيت أدوات APK» مرة أخرى لإكمال Buildozer."
+                )
+                self.output.appendPlainText("\n" + message)
+                QMessageBox.information(self, "انتهت المرحلة الأولى", message)
+            else:
+                message = (
+                    f"فشل تثبيت WSL2 برمز {exit_code}.\n\n"
+                    "إذا ظهر الخطأ 14098 (مخزن المكونات تالف)، يستطيع «الباء» "
+                    "تشغيل أدوات إصلاح Windows الرسمية الآن. هل تريد بدء الإصلاح؟"
+                )
+                self.output.appendPlainText("\n" + message)
+                answer = QMessageBox.question(
+                    self, "فشل تثبيت WSL2", message,
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+                )
+                if answer == QMessageBox.Yes:
+                    self.start_windows_component_repair()
+                    return
+            self.reset_apk_install_button()
+            return
+
+        if self.apk_install_stage == "repair":
+            if exit_code == 0:
+                message = (
+                    "انتهى إصلاح مكوّنات Windows. أعد تشغيل الجهاز، ثم اضغط "
+                    "«تثبيت أدوات APK» مرة أخرى."
+                )
+                QMessageBox.information(self, "اكتمل إصلاح Windows", message)
+            else:
+                message = (
+                    f"لم يكتمل إصلاح Windows (الرمز {exit_code}). راجع النتيجة في نافذة PowerShell. "
+                    "قد تحتاج إلى Windows Update أو مصدر إصلاح Windows مطابق لإصدار جهازك."
+                )
+                QMessageBox.critical(self, "تعذر إصلاح Windows", message)
+            self.output.appendPlainText("\n" + message)
+            self.reset_apk_install_button()
+            return
+
+        if exit_code == 0:
+            message = "اكتمل تثبيت أدوات APK بنجاح. يمكنك الآن الضغط على إنشاء APK."
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.information(self, "اكتمل التثبيت", message)
+        else:
+            message = (
+                f"فشل تثبيت أدوات APK برمز {exit_code}. راجع سجل المخرجات.\n\n"
+                "إذا كانت Ubuntu جديدة، افتحها مرة واحدة وأكمل إعدادها ثم حاول مجددًا."
+            )
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.critical(self, "فشل تثبيت أدوات APK", message)
+        self.reset_apk_install_button()
+
+    def start_wsl_install(self):
+        """Run the elevated Windows installer while keeping its lifecycle visible."""
+        self.apk_install_stage = "wsl"
+        self.apk_tools_button.setText("… جارٍ تثبيت WSL2")
+        self.output.setPlainText(
+            "سيطلب Windows صلاحية المسؤول لتثبيت WSL2 وUbuntu.\n"
+            "وافق على النافذة وانتظر حتى تنتهي. لا تغلق «الباء».\n\n"
+        )
+        elevated_script = (
+            "wsl.exe --install --web-download -d Ubuntu; "
+            "$result = $LASTEXITCODE; "
+            "Write-Host ''; "
+            "if ($result -eq 0) { Write-Host 'WSL installation finished.' -ForegroundColor Green } "
+            "else { Write-Host ('WSL installation failed. Exit code: ' + $result) -ForegroundColor Red }; "
+            "Read-Host 'Press Enter to return to AlBaa'; exit $result"
+        )
+        encoded_script = base64.b64encode(
+            elevated_script.encode("utf-16-le")
+        ).decode("ascii")
+        command = (
+            "$p = Start-Process -FilePath powershell.exe -WindowStyle Normal "
+            f"-ArgumentList '-NoProfile','-EncodedCommand','{encoded_script}' "
+            "-Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+        )
+        process = QProcess(self)
+        self.apk_install_process = process
+        process.setProgram("powershell.exe")
+        process.setArguments(["-NoProfile", "-Command", command])
+        process.readyReadStandardOutput.connect(self.read_apk_install_output)
+        process.readyReadStandardError.connect(self.read_apk_install_output)
+        process.finished.connect(self.apk_install_finished)
+        process.start()
+
+    def start_buildozer_install(self):
+        self.apk_install_stage = "tools"
+        self.output.setPlainText(
+            "بدء تثبيت Java وBuildozer ومتطلبات Android داخل WSL2...\n"
+            "قد يستغرق ذلك عدة دقائق حسب سرعة الإنترنت.\n\n"
+        )
+        self.apk_tools_button.setText("… جارٍ التثبيت")
+        packages = (
+            "git zip unzip openjdk-17-jdk python3-pip python3-venv "
+            "autoconf libtool pkg-config zlib1g-dev libncurses-dev "
+            "libncursesw5-dev cmake libffi-dev libssl-dev automake "
+            "autopoint gettext rustc cargo"
+        )
+        command = (
+            "export DEBIAN_FRONTEND=noninteractive; "
+            "apt-get update && apt-get install -y " + packages + " && "
+            "python3 -m venv /opt/albaa-buildozer && "
+            "/opt/albaa-buildozer/bin/pip install --upgrade pip && "
+            "/opt/albaa-buildozer/bin/pip install buildozer legacy-cgi setuptools 'cython==0.29.34'"
+        )
+        process = QProcess(self)
+        self.apk_install_process = process
+        process.setProgram("wsl.exe")
+        process.setArguments(["-u", "root", "--", "bash", "-lc", command])
+        process.readyReadStandardOutput.connect(self.read_apk_install_output)
+        process.readyReadStandardError.connect(self.read_apk_install_output)
+        process.finished.connect(self.apk_install_finished)
+        process.start()
+
+    def start_windows_component_repair(self):
+        """Run Microsoft DISM then SFC after explicit user confirmation."""
+        self.apk_install_stage = "repair"
+        self.apk_tools_button.setText("… جارٍ إصلاح Windows")
+        self.apk_progress.setToolTip("جارٍ إصلاح مكوّنات Windows")
+        self.apk_progress.show()
+        self.output.setPlainText(
+            "بدء إصلاح مخزن مكوّنات Windows عبر DISM ثم SFC...\n"
+            "قد تستغرق العملية وقتًا طويلًا. لا تغلق نافذة PowerShell.\n\n"
+        )
+        repair_script = (
+            "DISM.exe /Online /Cleanup-Image /RestoreHealth; "
+            "$dism = $LASTEXITCODE; "
+            "if ($dism -eq 0) { sfc.exe /scannow; $result = $LASTEXITCODE } "
+            "else { $result = $dism }; "
+            "Write-Host ''; "
+            "if ($result -eq 0) { Write-Host 'Windows repair finished.' -ForegroundColor Green } "
+            "else { Write-Host ('Windows repair failed. Exit code: ' + $result) -ForegroundColor Red }; "
+            "Read-Host 'Press Enter to return to AlBaa'; exit $result"
+        )
+        encoded_script = base64.b64encode(
+            repair_script.encode("utf-16-le")
+        ).decode("ascii")
+        command = (
+            "$p = Start-Process -FilePath powershell.exe -WindowStyle Normal "
+            f"-ArgumentList '-NoProfile','-EncodedCommand','{encoded_script}' "
+            "-Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+        )
+        process = QProcess(self)
+        self.apk_install_process = process
+        process.setProgram("powershell.exe")
+        process.setArguments(["-NoProfile", "-Command", command])
+        process.readyReadStandardOutput.connect(self.read_apk_install_output)
+        process.readyReadStandardError.connect(self.read_apk_install_output)
+        process.finished.connect(self.apk_install_finished)
+        process.start()
+
+    def reset_apk_install_button(self):
+        self.apk_install_stage = None
+        self.apk_tools_button.setEnabled(True)
+        self.apk_button.setEnabled(True)
+        self.apk_tools_button.setText("↓ تثبيت أدوات APK")
+        self.apk_progress.hide()
 
     def read_android_build_output(self):
         process = self.android_build_process
@@ -939,19 +1203,33 @@ class ArabicPyIDE(QMainWindow):
             self.output.appendPlainText(
                 "\nتعذر بدء WSL2/Buildozer. تأكد من تثبيتهما وإضافتهما إلى PATH داخل WSL."
             )
+            self.android_build_process.deleteLater()
+            self.android_build_process = None
+        self.apk_button.setEnabled(True)
+        self.apk_tools_button.setEnabled(True)
+        self.apk_button.setText("▣ إنشاء APK")
+        self.apk_progress.hide()
+        QMessageBox.critical(
+            self, "تعذر إنشاء APK",
+            "تعذر تشغيل WSL2 أو Buildozer. اضغط «تثبيت أدوات APK» ثم حاول مجددًا."
+        )
 
     def android_build_finished(self, exit_code, _status):
         if exit_code == 0:
-            self.output.appendPlainText(
-                "\nتم إنشاء APK بنجاح. ستجده داخل مجلد bin في المشروع."
-            )
+            message = "تم إنشاء APK بنجاح. ستجده داخل مجلد bin في المشروع."
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.information(self, "تم إنشاء APK", message)
         else:
-            self.output.appendPlainText(
-                f"\nفشل إنشاء APK برمز خروج {exit_code}. راجع سجل Buildozer أعلاه."
-            )
+            message = f"فشل إنشاء APK برمز خروج {exit_code}. راجع سجل Buildozer في المخرجات."
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.critical(self, "فشل إنشاء APK", message)
         if self.android_build_process is not None:
             self.android_build_process.deleteLater()
             self.android_build_process = None
+        self.apk_button.setEnabled(True)
+        self.apk_tools_button.setEnabled(True)
+        self.apk_button.setText("▣ إنشاء APK")
+        self.apk_progress.hide()
 
     def new_file(self):
         self.add_editor_tab().setFocus()
