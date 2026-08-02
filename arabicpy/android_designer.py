@@ -641,9 +641,12 @@ class AndroidDesigner(QWidget):
             border_style = "1px solid #007ACC" if selected else "none"
             selected_background = "rgba(0,122,204,45)" if selected else "transparent"
             button.setStyleSheet(
+                "QPushButton#phoneNavigationButton {"
                 f"background: {selected_background}; color: {navigation_text}; "
                 f"border: {border_style}; border-radius: 5px; "
-                "QPushButton:pressed { background-color: rgba(0,0,0,70); }"
+                "font-size: 11px; font-weight: 600; padding: 6px 2px; }"
+                "QPushButton#phoneNavigationButton:pressed { "
+                "background-color: rgba(0,0,0,70); }"
             )
             button.clicked.connect(
                 lambda _checked=False, page=label, item_index=index: (

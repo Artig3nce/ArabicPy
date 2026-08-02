@@ -53,6 +53,13 @@ class AlBaaAIServer:
                     self.send_json(404, {"error": "not_found"})
 
             def do_POST(self):
+                if self.path == "/shutdown":
+                    if self.headers.get("Authorization") != f"Bearer {owner.token}":
+                        self.send_json(401, {"error": "unauthorized"})
+                        return
+                    self.send_json(200, {"status": "stopping"})
+                    threading.Thread(target=owner.stop, daemon=True).start()
+                    return
                 if self.path != "/generate":
                     self.send_json(404, {"error": "not_found"})
                     return

@@ -5,7 +5,7 @@ a = Analysis(
     ['launch_ide.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets/albaa.ico', 'assets'), ('dist/AlBaaAIHost.exe', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -32,6 +32,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/albaa.ico',
 )
 coll = COLLECT(
     exe,

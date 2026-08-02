@@ -37,10 +37,16 @@ def _react_source(program):
     navigation = "".join(f"<button>{{{json.dumps(item, ensure_ascii=False)}}}</button>" for item in program.bottom_navigation)
     title = json.dumps(program.title, ensure_ascii=False)
     background = json.dumps(program.background_color or "#ffffff")
+    try:
+        rgb = (program.background_color or "#ffffff").lstrip("#")
+        brightness = sum(int(rgb[index:index + 2], 16) * weight for index, weight in ((0, 299), (2, 587), (4, 114))) / 1000
+    except (TypeError, ValueError):
+        brightness = 255
+    foreground = json.dumps("#f2f2f2" if brightness < 128 else "#0f172a")
     return f'''import "./app.css";
 
 export default function App() {{
-  return <main className="app" dir="rtl" style={{{{backgroundColor: {background}}}}}>
+  return <main className="app" dir="rtl" style={{{{backgroundColor: {background}, color: {foreground}}}}}>
     <header>{title}</header>
     <section className="content">{"".join(widgets)}</section>
     <nav>{navigation}</nav>
@@ -82,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version: 22 }
       - run: npm install
       - run: npm run build
       - uses: actions/upload-artifact@v4
@@ -98,7 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
       - name: Linux dependencies
         if: runner.os == 'Linux'
@@ -114,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
@@ -130,7 +136,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
       - run: npm install
       - run: npm run tauri ios init
@@ -139,6 +145,24 @@ jobs:
         with:
           name: albaa-ios-project
           path: src-tauri/gen/apple/**
+''')
+    _write(os.path.join(directory, ".github", "workflows", "build-windows.yml"), '''name: Build Windows application
+on: { workflow_dispatch: {} }
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - run: npm run tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: albaa-windows-app
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
 ''')
     _write(os.path.join(directory, "README.md"), "# تطبيق الباء\n\nمشروع Tauri 2 قابل للبناء على Windows وLinux وmacOS، والتهيئة لـ Android وiOS عبر أوامر Tauri mobile. يتطلب بناء iOS جهاز macOS وXcode.\n")
     return directory

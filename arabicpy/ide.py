@@ -1,5 +1,6 @@
 import contextlib
 import base64
+import ctypes
 import html
 import io
 import os
@@ -7,16 +8,21 @@ import re
 import secrets
 import shutil
 import json
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 
-from PySide6.QtCore import QProcess, QSettings, QTimer, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QProcess, QSettings, QTimer, QRect, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import (
-    QColor, QDesktopServices, QFont, QPainter, QPen, QTextBlockFormat, QTextCharFormat, QTextCursor,
+    QColor, QDesktopServices, QFont, QIcon, QPainter, QPen, QTextBlockFormat, QTextCharFormat, QTextCursor,
     QTextFormat,
 )
 from PySide6.QtWidgets import (
-    QApplication, QBoxLayout, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
-    QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
+    QApplication, QBoxLayout, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QMenu, QProgressBar, QScrollArea, QSizePolicy, QSplitter, QTabBar, QTabWidget,
     QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -29,8 +35,79 @@ from .android import export_android_project, generate_kivy, is_android_source
 from .android_designer import AndroidDesigner
 from .tauri_export import export_tauri_project
 from .ai import DEFAULT_MODEL, SYSTEM_PROMPT, reply as albaa_ai_reply
-from .ai_server import AlBaaAIServer
+from .ai_server import AlBaaAIServer, local_ipv4
 from .errors import format_error
+
+
+def apply_native_dark_title_bar(widget, dark):
+    """Ask Windows DWM to match a native dialog title bar to the IDE theme."""
+    if os.name != "nt":
+        return
+    try:
+        handle = int(widget.winId())
+        enabled = ctypes.c_int(1 if dark else 0)
+        # Attribute 20 is supported by current Windows 10/11; 19 is its older name.
+        for attribute in (20, 19):
+            result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                handle, attribute, ctypes.byref(enabled), ctypes.sizeof(enabled)
+            )
+            if result == 0:
+                break
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+
+
+class NativeDialogThemeFilter(QObject):
+    """Keep every native dialog title bar synchronized with the IDE theme."""
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    def eventFilter(self, watched, event):
+        if isinstance(watched, QDialog) and event.type() == QEvent.Type.Show:
+            self.style_dialog(watched)
+            QTimer.singleShot(
+                0,
+                lambda dialog=watched: self.style_dialog(dialog),
+            )
+        return super().eventFilter(watched, event)
+
+    def style_dialog(self, dialog):
+        apply_native_dark_title_bar(dialog, self.window.ide_dark)
+        if self.window.ide_dark:
+            normal, hover, pressed, text = "#007ACC", "#1594E8", "#005A9E", "#FFFFFF"
+        else:
+            normal, hover, pressed, text = "#007ACC", "#1594E8", "#005A9E", "#FFFFFF"
+        if not dialog.property("albaaDialogStyled"):
+            dialog.setStyleSheet(
+                dialog.styleSheet()
+                + f"""
+            QPushButton {{
+                background-color: {normal}; color: {text}; border: none;
+                border-radius: 5px; padding: 7px 18px; min-width: 72px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ background-color: {hover}; }}
+            QPushButton:pressed {{ background-color: {pressed}; }}
+            QPushButton:disabled {{ background-color: #4B5563; color: #CBD5E1; }}
+            """
+            )
+            dialog.setProperty("albaaDialogStyled", True)
+        translations = {
+            "ok": "حسنًا", "&ok": "حسنًا",
+            "cancel": "إلغاء", "&cancel": "إلغاء",
+            "yes": "نعم", "&yes": "نعم",
+            "no": "لا", "&no": "لا",
+            "close": "إغلاق", "&close": "إغلاق",
+            "open": "فتح", "&open": "فتح",
+            "save": "حفظ", "&save": "حفظ",
+            "retry": "إعادة المحاولة", "&retry": "إعادة المحاولة",
+        }
+        for button in dialog.findChildren(QPushButton):
+            translated = translations.get(button.text().strip().lower())
+            if translated:
+                button.setText(translated)
 
 
 class LineNumberArea(QWidget):
@@ -274,6 +351,8 @@ class ArabicPyIDE(QMainWindow):
         settings = QSettings("AlBaa", "AlBaaIDE")
         self.ai_server_token = settings.value("ai_server_token", "") or secrets.token_urlsafe(24)
         settings.setValue("ai_server_token", self.ai_server_token)
+        self.remote_ai_url = str(settings.value("remote_ai_url", "") or "").rstrip("/")
+        self.remote_ai_token = str(settings.value("remote_ai_token", "") or "")
         self.ide_dark = settings.value("ide_dark", settings.value("ai_chat_dark", True, type=bool), type=bool)
         self.ai_chat_dark = self.ide_dark
         self.ai_messages = []
@@ -283,9 +362,15 @@ class ArabicPyIDE(QMainWindow):
         self.output_was_visible_before_designer = True
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setWindowTitle("الباء")
+        bundle_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__)))
+        self.setWindowIcon(QIcon(os.path.join(bundle_root, "assets", "albaa.ico")))
         self.resize(1400, 900)
+        self.native_dialog_theme_filter = NativeDialogThemeFilter(self)
+        QApplication.instance().installEventFilter(self.native_dialog_theme_filter)
         self.setStyleSheet(self.stylesheet(self.ide_dark))
         self.setup_ui()
+        if os.name == "nt" and self.background_ai_is_running():
+            self.ai_server_button.setText("إيقاف شبكة AI")
         for editor in self.findChildren(CodeEditor):
             editor.set_theme(self.ide_dark)
         for highlighter in self.findChildren(ArabicPyHighlighter):
@@ -494,6 +579,11 @@ class ArabicPyIDE(QMainWindow):
         command_layout.addWidget(self.ai_button)
         self.ai_server_button = self.make_button("شبكة AI", self.toggle_ai_server)
         command_layout.addWidget(self.ai_server_button)
+        self.remote_ai_button = self.make_button("AI بعيد", self.configure_remote_ai)
+        self.remote_ai_button.setToolTip("استخدام نموذج الباء الموجود على كمبيوتر آخر")
+        if self.remote_ai_url:
+            self.remote_ai_button.setText("AI بعيد ✓")
+        command_layout.addWidget(self.remote_ai_button)
         self.python_toggle_button = self.make_button("◀", self.toggle_python_preview)
         self.python_toggle_button.setFixedWidth(34)
         self.python_toggle_button.setToolTip("إظهار كود Python")
@@ -1254,8 +1344,9 @@ class ArabicPyIDE(QMainWindow):
             return
         self.ai_chat_input.clear()
         self.append_ai_message("user", question)
+        use_remote = bool(self.remote_ai_url and self.remote_ai_token)
         ollama = shutil.which("ollama")
-        if not ollama:
+        if not use_remote and not ollama:
             self.append_ai_message("assistant", "Ollama غير مثبت أو غير موجود في PATH.")
             return
         prompt = (
@@ -1263,12 +1354,17 @@ class ArabicPyIDE(QMainWindow):
             f"كود الباء الحالي:\n{self.editor.toPlainText()}\n\n"
             f"سؤال المستخدم:\n{question}"
         )
-        payload = json.dumps({
-            "model": DEFAULT_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "think": False,
-        }, ensure_ascii=False)
+        if use_remote:
+            payload = json.dumps({"question": prompt}, ensure_ascii=False)
+            endpoint = self.remote_ai_url + "/generate"
+        else:
+            payload = json.dumps({
+                "model": DEFAULT_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "think": False,
+            }, ensure_ascii=False)
+            endpoint = "http://127.0.0.1:11434/api/generate"
         self.ai_thinking_label.show()
         self.ai_button.setEnabled(False)
         self.ai_send_button.setEnabled(False)
@@ -1281,10 +1377,14 @@ class ArabicPyIDE(QMainWindow):
         process.finished.connect(self.local_ai_finished)
         process.errorOccurred.connect(self.local_ai_error)
         process.setProgram("curl.exe")
-        process.setArguments([
-            "-sS", "-X", "POST", "http://127.0.0.1:11434/api/generate",
-            "-H", "Content-Type: application/json", "-d", payload,
-        ])
+        arguments = [
+            "-sS", "-X", "POST", endpoint,
+            "-H", "Content-Type: application/json",
+        ]
+        if use_remote:
+            arguments.extend(["-H", f"Authorization: Bearer {self.remote_ai_token}"])
+        arguments.extend(["-d", payload])
+        process.setArguments(arguments)
         process.start()
 
     def read_local_ai_output(self):
@@ -1306,13 +1406,15 @@ class ArabicPyIDE(QMainWindow):
         self.ai_thinking_label.hide()
         raw = bytes(self.ai_response_buffer).decode("utf-8", errors="replace")
         try:
-            answer = json.loads(raw).get("response", "").strip()
+            response_data = json.loads(raw)
+            answer = (response_data.get("answer") or response_data.get("response") or "").strip()
         except json.JSONDecodeError:
             answer = ""
         if exit_code == 0 and answer:
             self.append_ai_message("assistant", answer)
         else:
-            self.append_ai_message("assistant", f"تعذر تشغيل {DEFAULT_MODEL}. تأكد أن Ollama يعمل.")
+            target = "كمبيوتر AI البعيد" if self.remote_ai_url else "Ollama"
+            self.append_ai_message("assistant", f"تعذر الاتصال بـ {target}. تأكد أنه يعمل وأن العنوان صحيح.")
 
     def local_ai_error(self, _error):
         self.ai_thinking_label.hide()
@@ -1320,6 +1422,8 @@ class ArabicPyIDE(QMainWindow):
             self.append_ai_message("assistant", "تعذر بدء الاتصال بـ Ollama.")
 
     def ensure_ai_server(self):
+        if os.name == "nt":
+            return self.ensure_background_ai_server()
         if self.ai_server is not None:
             return True
         server = AlBaaAIServer(self.ai_server_token)
@@ -1335,15 +1439,149 @@ class ArabicPyIDE(QMainWindow):
         self.ai_server_button.setText("إيقاف شبكة AI")
         self.main_splitter.widget(1).show()
         self.output.setPlainText(
-            "خادم الذكاء يعمل على شبكة Wi-Fi المحلية.\n\n"
+            "خادم الذكاء يعمل على هذا الكمبيوتر.\n\n"
             f"العنوان: {server.address}\n"
             f"رمز الوصول: {self.ai_server_token}\n\n"
-            "يجب أن يكون الهاتف والكمبيوتر على نفس Wi-Fi. "
+            "للاستخدام من العمل: ثبّت Tailscale على الجهازين، وسجّل الدخول بالحساب نفسه، "
+            "ثم استخدم اسم هذا الكمبيوتر أو عنوان Tailscale مع المنفذ 8765.\n"
+            "مثال: http://اسم-الكمبيوتر:8765\n\n"
             "إذا ظهرت نافذة جدار حماية Windows فاسمح بالوصول للشبكات الخاصة فقط."
         )
         return True
 
+    def background_ai_is_running(self):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=0.6) as response:
+                return response.status == 200
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return False
+
+    def ensure_background_ai_server(self):
+        if self.background_ai_is_running():
+            self.ai_server_button.setText("إيقاف شبكة AI")
+            return True
+        app_data = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()), "AlBaa")
+        roaming_data = os.path.join(os.environ.get("APPDATA", app_data), "AlBaa")
+        os.makedirs(app_data, exist_ok=True)
+        os.makedirs(roaming_data, exist_ok=True)
+        token_file = os.path.join(roaming_data, "ai_server_token.txt")
+        with open(token_file, "w", encoding="utf-8") as stream:
+            stream.write(self.ai_server_token)
+
+        if getattr(sys, "frozen", False):
+            bundle_root = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+            packaged_host = os.path.join(bundle_root, "AlBaaAIHost.exe")
+            installed_host = os.path.join(app_data, "AlBaaAIHost.exe")
+            if not os.path.isfile(packaged_host):
+                QMessageBox.critical(self, "خادم AI غير موجود", "ملف AlBaaAIHost.exe غير موجود داخل حزمة الباء.")
+                return False
+            shutil.copy2(packaged_host, installed_host)
+            program, arguments = installed_host, []
+            startup_command = f'"{installed_host}"'
+        else:
+            script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "launch_ai_server.py")
+            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            program = pythonw if os.path.isfile(pythonw) else sys.executable
+            arguments = [script]
+            startup_command = f'"{program}" "{script}"'
+
+        startup = QSettings(
+            r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",
+            QSettings.Format.NativeFormat,
+        )
+        startup.setValue("AlBaaAIHost", startup_command)
+        if not QProcess.startDetached(program, arguments):
+            QMessageBox.critical(self, "تعذر تشغيل شبكة AI", "تعذر بدء خادم AI في الخلفية.")
+            return False
+        for _attempt in range(20):
+            QApplication.processEvents()
+            if self.background_ai_is_running():
+                self.ai_server_button.setText("إيقاف شبكة AI")
+                self.main_splitter.widget(1).show()
+                self.output.setPlainText(
+                    "خادم AI يعمل في الخلفية وسيبدأ تلقائيًا مع Windows.\n\n"
+                    f"العنوان المحلي: http://{local_ipv4()}:8765\n"
+                    f"رمز الوصول: {self.ai_server_token}\n\n"
+                    "يمكنك الآن إغلاق أو إعادة تشغيل الباء وسيبقى AI يعمل. "
+                    "أبقِ Ollama وTailscale والكمبيوتر قيد التشغيل."
+                )
+                return True
+            time.sleep(0.1)
+        QMessageBox.critical(self, "تعذر تشغيل شبكة AI", "بدأ الخادم لكنه لم يستجب على المنفذ 8765.")
+        return False
+
+    def stop_background_ai_server(self):
+        request = urllib.request.Request(
+            "http://127.0.0.1:8765/shutdown",
+            data=b"{}",
+            headers={"Authorization": f"Bearer {self.ai_server_token}"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(request, timeout=2).close()
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+        startup = QSettings(
+            r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",
+            QSettings.Format.NativeFormat,
+        )
+        startup.remove("AlBaaAIHost")
+        self.ai_server_button.setText("شبكة AI")
+        self.output.setPlainText("تم إيقاف خادم AI في الخلفية وتعطيل تشغيله التلقائي.")
+
+    def configure_remote_ai(self):
+        url, accepted = QInputDialog.getText(
+            self,
+            "اتصال AI بعيد",
+            "عنوان كمبيوتر AI عبر Tailscale:\nمثال: http://my-desktop:8765\n\nاتركه فارغًا للعودة إلى AI المحلي:",
+            text=self.remote_ai_url,
+        )
+        if not accepted:
+            return
+        url = url.strip().rstrip("/")
+        if not url:
+            self.remote_ai_url = ""
+            self.remote_ai_token = ""
+            settings = QSettings("AlBaa", "AlBaaIDE")
+            settings.remove("remote_ai_url")
+            settings.remove("remote_ai_token")
+            self.remote_ai_button.setText("AI بعيد")
+            QMessageBox.information(self, "AI محلي", "سيستخدم الباء نموذج Ollama الموجود على هذا الجهاز.")
+            return
+        if not re.match(r"^https?://[^\s/]+(?::\d+)?$", url):
+            QMessageBox.warning(self, "عنوان غير صالح", "اكتب عنوانًا مثل: http://my-desktop:8765")
+            return
+        token, accepted = QInputDialog.getText(
+            self,
+            "رمز AI البعيد",
+            "الصق رمز الوصول الظاهر في كمبيوتر AI:",
+            QLineEdit.EchoMode.Password,
+            self.remote_ai_token,
+        )
+        if not accepted or not token.strip():
+            return
+        self.remote_ai_url = url
+        self.remote_ai_token = token.strip()
+        settings = QSettings("AlBaa", "AlBaaIDE")
+        settings.setValue("remote_ai_url", self.remote_ai_url)
+        settings.setValue("remote_ai_token", self.remote_ai_token)
+        self.remote_ai_button.setText("AI بعيد ✓")
+        QMessageBox.information(
+            self,
+            "تم حفظ الاتصال",
+            "سيستخدم مساعد الباء الآن نموذج AI الموجود على كمبيوترك البعيد.",
+        )
+
     def toggle_ai_server(self):
+        if os.name == "nt":
+            if self.background_ai_is_running():
+                self.stop_background_ai_server()
+            elif self.ensure_background_ai_server():
+                QMessageBox.information(
+                    self, "شبكة AI تعمل دائمًا",
+                    "خادم AI يعمل في الخلفية وسيبقى يعمل عند إغلاق الباء، وسيبدأ تلقائيًا مع Windows.",
+                )
+            return
         if self.ai_server is None:
             if self.ensure_ai_server():
                 QMessageBox.information(
@@ -1360,10 +1598,11 @@ class ArabicPyIDE(QMainWindow):
     def ai_export_credentials(self):
         if not self.ensure_ai_server():
             return None, None
-        return self.ai_server.address, self.ai_server_token
+        address = self.ai_server.address if self.ai_server is not None else f"http://{local_ipv4()}:8765"
+        return address, self.ai_server_token
 
     def closeEvent(self, event):
-        if self.ai_server is not None:
+        if self.ai_server is not None and os.name != "nt":
             self.ai_server.stop()
             self.ai_server = None
         super().closeEvent(event)
@@ -1491,9 +1730,10 @@ class ArabicPyIDE(QMainWindow):
         if not is_android_source(source):
             QMessageBox.warning(self, "ليس تطبيقًا", "افتح أو أنشئ مشروع تطبيق من الباء أولًا.")
             return False
-        directory = QFileDialog.getExistingDirectory(self, "اختر مجلد مشروع كل المنصات")
-        if not directory:
+        output_directory = QFileDialog.getExistingDirectory(self, "اختر مكان حفظ تطبيق Windows")
+        if not output_directory:
             return False
+        directory = tempfile.mkdtemp(prefix="albaa-app-build-")
         try:
             export_tauri_project(source, directory)
         except Exception as error:
@@ -1501,14 +1741,15 @@ class ArabicPyIDE(QMainWindow):
             QMessageBox.critical(self, "تعذر التصدير", str(error))
             return False
         self.main_splitter.widget(1).show()
+        self.github_project_path = directory
+        self.cross_platform_output_directory = output_directory
+        self.github_repo_name = None
         self.output.setPlainText(
-            "تم إنشاء مشروع Tauri 2 بنجاح.\n"
-            "المنصات: المتصفح، Windows، Linux، macOS، Android، iOS.\n\n"
-            f"المجلد: {directory}\n\n"
-            "ملفات سطح المكتب تُبنى عبر GitHub Actions. "
-            "يتطلب بناء iOS جهاز macOS وXcode، ويتطلب Android إعداد Android Studio/SDK."
+            "تم تجهيز تطبيقك للبناء.\n"
+            "سيتم الآن إنشاء تطبيق Windows الحقيقي عبر GitHub.\n\n"
+            f"مكان حفظ EXE: {output_directory}"
         )
-        QMessageBox.information(self, "تم إنشاء المشروع", "تم إنشاء مشروع متعدد المنصات بنجاح.")
+        QTimer.singleShot(0, lambda: self.start_github_upload(True, "cross"))
         return True
 
     def github_cli_path(self):
@@ -1563,10 +1804,10 @@ class ArabicPyIDE(QMainWindow):
             self.github_status_label.show()
             self.github_cancel_button.show()
             self.github_elapsed_timer.start(1000)
-            if self.github_operation in ("upload", "build_upload", "build"):
+            if self.github_operation in ("upload", "build_upload", "build_all_upload", "build", "build_all"):
                 self.apk_progress.setRange(0, 100)
                 self.apk_progress.setValue(
-                    10 if self.github_operation in ("upload", "build_upload") else 20
+                    10 if self.github_operation in ("upload", "build_upload", "build_all_upload") else 20
                 )
                 self.apk_progress.setTextVisible(True)
             else:
@@ -1589,10 +1830,12 @@ class ArabicPyIDE(QMainWindow):
             "upload": "رفع المشروع",
             "build_upload": "رفع المشروع",
             "build": "بناء APK",
+            "build_all": "بناء EXE",
+            "build_all_upload": "تجهيز حزمة Windows",
         }
         phase = phases.get(self.github_operation, "GitHub")
         remaining = ""
-        if self.github_operation == "build":
+        if self.github_operation in ("build", "build_all"):
             elapsed_minutes = self.github_elapsed_seconds // 60
             minimum_left = max(1, 10 - elapsed_minutes)
             maximum_left = max(minimum_left, 30 - elapsed_minutes)
@@ -1601,7 +1844,7 @@ class ArabicPyIDE(QMainWindow):
             f"{phase}  •  {minutes:02d}:{seconds:02d}{remaining}"
         )
         tooltip = self.github_phase_label
-        if self.github_operation == "build":
+        if self.github_operation in ("build", "build_all"):
             tooltip += " — يستغرق عادةً 10–30 دقيقة"
         elif self.github_operation in ("login", "scope"):
             tooltip += " — أدخل الرمز الظاهر في المتصفح"
@@ -1620,7 +1863,7 @@ class ArabicPyIDE(QMainWindow):
             return
         self.github_cancel_requested = True
         self.output.appendPlainText("\nجارٍ إلغاء عملية GitHub...")
-        if self.github_operation == "build" and self.github_project_path:
+        if self.github_operation in ("build", "build_all") and self.github_project_path:
             gh_path = (self.github_cli_path() or "gh").replace("'", "''")
             cancel_command = (
                 f"$gh='{gh_path}'; "
@@ -1707,7 +1950,7 @@ class ArabicPyIDE(QMainWindow):
         if data:
             decoded = data.decode("utf-8", errors="replace").rstrip()
             self.output.appendPlainText(decoded)
-            if self.github_operation == "build":
+            if self.github_operation in ("build", "build_all"):
                 lowered = decoded.lower()
                 stages = (
                     (("queued", "waiting"), 25),
@@ -1727,7 +1970,7 @@ class ArabicPyIDE(QMainWindow):
             return
         self.output.appendPlainText("\nتعذر بدء أداة GitHub.")
 
-    def prepare_github_project(self):
+    def prepare_github_project(self, project_type="android"):
         source = self.editor.toPlainText()
         if not is_android_source(source):
             QMessageBox.warning(self, "ليس تطبيقًا", "افتح أو أنشئ تطبيقًا قبل الرفع إلى GitHub.")
@@ -1741,10 +1984,13 @@ class ArabicPyIDE(QMainWindow):
                 return None
             self.github_project_path = directory
         try:
-            ai_url, ai_token = self.ai_export_credentials()
-            if not ai_url:
-                return False
-            export_android_project(source, directory, ai_url, ai_token)
+            if project_type == "cross":
+                export_tauri_project(source, directory)
+            else:
+                ai_url, ai_token = self.ai_export_credentials()
+                if not ai_url:
+                    return False
+                export_android_project(source, directory, ai_url, ai_token)
         except Exception as error:
             self.output.setPlainText(format_error(error, source))
             QMessageBox.critical(self, "تعذر تجهيز المشروع", str(error))
@@ -1757,7 +2003,7 @@ class ArabicPyIDE(QMainWindow):
     def build_apk_with_github(self):
         self.start_github_upload(build_after=True)
 
-    def start_github_upload(self, build_after=False):
+    def start_github_upload(self, build_after=False, project_type="android"):
         if self.github_process is not None:
             QMessageBox.information(self, "GitHub", "انتظر حتى تنتهي عملية GitHub الحالية.")
             return
@@ -1773,11 +2019,14 @@ class ArabicPyIDE(QMainWindow):
                 "اضغط «إعداد GitHub» ووافق على صلاحية workflow قبل الرفع."
             )
             return
-        directory = self.prepare_github_project()
+        directory = self.prepare_github_project(project_type)
         if not directory:
             return
         has_remote = self.git_has_origin(directory)
         repo_name = self.github_repo_name
+        if project_type == "cross" and not has_remote and not repo_name:
+            repo_name = "albaa-private-builds"
+            self.github_repo_name = repo_name
         if not has_remote and not repo_name:
             default_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", os.path.basename(directory)).strip("-.") or "albaa-app"
             repo_name, accepted = QInputDialog.getText(
@@ -1792,8 +2041,9 @@ class ArabicPyIDE(QMainWindow):
             self.github_repo_name = repo_name
         gh_path = self.github_cli_path().replace("'", "''")
         repo_arg = (repo_name or "albaa-app").replace("'", "''")
+        force_option = " --force" if project_type == "cross" else ""
         if has_remote:
-            remote_command = "git push -u origin HEAD; exit $LASTEXITCODE"
+            remote_command = f"git push -u origin HEAD{force_option}; exit $LASTEXITCODE"
         else:
             remote_command = (
                 "git remote remove origin 2>$null; "
@@ -1801,7 +2051,7 @@ class ArabicPyIDE(QMainWindow):
                 "$existing=& $gh repo view $fullRepo --json name --jq .name 2>$null; "
                 "if ($LASTEXITCODE -eq 0) { "
                 "git remote add origin ('https://github.com/' + $fullRepo + '.git'); "
-                "git push -u origin HEAD "
+                f"git push -u origin HEAD{force_option} "
                 f"}} else {{ & $gh repo create '{repo_arg}' --private --source=. --remote=origin --push }}; "
                 "exit $LASTEXITCODE"
             )
@@ -1815,10 +2065,16 @@ class ArabicPyIDE(QMainWindow):
             "if ($LASTEXITCODE -ne 0) { git commit -m 'Update from AlBaa' }; "
             + remote_command
         )
-        self.start_github_command(
-            command, "build_upload" if build_after else "upload",
-            directory, "جارٍ رفع التطبيق إلى GitHub...",
+        operation = (
+            ("build_all_upload" if project_type == "cross" else "build_upload")
+            if build_after else "upload"
         )
+        message = (
+            "جارٍ تجهيز تطبيق Windows للبناء السحابي الخاص..."
+            if project_type == "cross" and build_after
+            else "جارٍ رفع التطبيق إلى GitHub..."
+        )
+        self.start_github_command(command, operation, directory, message)
 
     def git_has_origin(self, directory):
         check = QProcess(self)
@@ -1829,10 +2085,25 @@ class ArabicPyIDE(QMainWindow):
         if not check.waitForStarted(2500) or not check.waitForFinished(5000) or check.exitCode() != 0:
             return False
         origin = bytes(check.readAllStandardOutput()).decode("utf-8", errors="replace").strip().lower()
-        return (
+        valid_url = (
             origin.startswith("https://github.com/")
             or origin.startswith("git@github.com:")
             or origin.startswith("ssh://git@github.com/")
+        )
+        if not valid_url:
+            return False
+        gh_path = self.github_cli_path()
+        if not gh_path:
+            return False
+        verify = QProcess(self)
+        verify.setWorkingDirectory(directory)
+        verify.setProgram(gh_path)
+        verify.setArguments(["repo", "view", origin, "--json", "name"])
+        verify.start()
+        return (
+            verify.waitForStarted(2500)
+            and verify.waitForFinished(8000)
+            and verify.exitCode() == 0
         )
 
     def start_github_command(self, command, operation, directory, message):
@@ -1869,6 +2140,28 @@ class ArabicPyIDE(QMainWindow):
         self.start_github_command(
             command, "build", directory,
             "بدأ إنشاء APK على GitHub. قد يستغرق البناء الأول عدة دقائق...",
+        )
+
+    def start_github_cloud_build_all(self):
+        directory = self.github_project_path
+        gh_path = self.github_cli_path().replace("'", "''")
+        output_root = getattr(self, "cross_platform_output_directory", directory)
+        download_path = os.path.join(output_root, "تطبيق-Windows")
+        self.github_download_path = download_path
+        escaped_download = download_path.replace("'", "''")
+        command = (
+            f"$gh='{gh_path}'; & $gh workflow run build-windows.yml; "
+            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+            "$run=''; for ($i=0; $i -lt 30 -and !$run; $i++) { "
+            "Start-Sleep -Seconds 3; "
+            "$run=& $gh run list --workflow build-windows.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
+            "if (!$run) { Write-Error 'لم يظهر تشغيل حزم المنصات'; exit 1 }; "
+            "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+            f"& $gh run download $run --name albaa-windows-app --dir '{escaped_download}'; exit $LASTEXITCODE"
+        )
+        self.start_github_command(
+            command, "build_all", directory,
+            "بدأ إنشاء Windows EXE وبقية حزم المنصات عبر GitHub...",
         )
 
     def github_process_finished(self, exit_code, _status):
@@ -1921,6 +2214,8 @@ class ArabicPyIDE(QMainWindow):
             QMessageBox.information(self, "تم الرفع", "تم رفع التطبيق إلى مستودع GitHub خاص بنجاح.")
         elif operation == "build_upload":
             self.start_github_cloud_build()
+        elif operation == "build_all_upload":
+            self.start_github_cloud_build_all()
         elif operation == "build":
             apk_files = []
             if self.github_download_path and os.path.isdir(self.github_download_path):
@@ -1932,6 +2227,24 @@ class ArabicPyIDE(QMainWindow):
                 QMessageBox.information(self, "تم إنشاء APK", message)
             else:
                 QMessageBox.warning(self, "لم يُعثر على APK", "نجح GitHub لكن ملف APK غير موجود في مجلد التنزيل.")
+        elif operation == "build_all":
+            packages = []
+            if self.github_download_path and os.path.isdir(self.github_download_path):
+                for root, _dirs, files in os.walk(self.github_download_path):
+                    packages.extend(
+                        os.path.join(root, name) for name in files
+                        if name.lower().endswith((".exe", ".msi"))
+                    )
+            if packages:
+                preferred = next((path for path in packages if path.lower().endswith(".exe")), packages[0])
+                message = f"تم إنشاء وتنزيل تطبيق Windows بنجاح:\n{preferred}"
+                self.output.appendPlainText("\n" + message)
+                QMessageBox.information(self, "تم إنشاء EXE", message)
+            else:
+                QMessageBox.warning(
+                    self, "لم يُعثر على EXE",
+                    "انتهى البناء، لكن لم يُعثر على EXE أو MSI داخل ملف Windows الذي تم تنزيله.",
+                )
 
     def build_android_apk(self):
         if self.android_build_process is not None:
