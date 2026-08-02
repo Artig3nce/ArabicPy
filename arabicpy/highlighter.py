@@ -44,6 +44,24 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
         comment_format.setFontItalic(True)
         self.rules.append((QRegularExpression(r"#.*"), comment_format))
 
+    def set_theme(self, dark):
+        """Use high-contrast syntax colours for the active editor theme."""
+        dark_to_light = {
+            "#569cd6": "#005cc5",  # keywords
+            "#ce9178": "#a31515",  # strings
+            "#b5cea8": "#098658",  # numbers
+            "#dcdcaa": "#795e26",  # builtins/functions
+            "#6a9955": "#237a30",  # comments
+        }
+        light_to_dark = {light: dark_color for dark_color, light in dark_to_light.items()}
+        palette = light_to_dark if dark else dark_to_light
+        for _pattern, text_format in self.rules:
+            current = text_format.foreground().color().name().lower()
+            target = palette.get(current)
+            if target:
+                text_format.setForeground(QColor(target))
+        self.rehighlight()
+
     def _add_words(self, words, text_format):
         for word in words:
             # PCRE's default \b handling does not reliably treat Arabic

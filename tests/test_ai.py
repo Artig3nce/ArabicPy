@@ -1,3 +1,5 @@
+import urllib.error
+
 from arabicpy.ai import reply
 from arabicpy.generator import Generator
 from arabicpy.lexer import Lexer
@@ -11,8 +13,12 @@ def test_ask_builtin_generates_runtime_helper():
     assert code.startswith("print(albaa_ai_reply(")
 
 
-def test_offline_ai_reply_is_available():
-    assert "مساعد" in reply("مرحبا")
+def test_offline_ai_reply_reports_when_ollama_is_unavailable(monkeypatch):
+    def unavailable(*_args, **_kwargs):
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr("arabicpy.ai.urllib.request.urlopen", unavailable)
+    assert "Ollama" in reply("مرحبا")
 
 
 def test_arabic_input_builtin_uses_standard_input():

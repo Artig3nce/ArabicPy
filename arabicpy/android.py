@@ -516,24 +516,36 @@ def parse_android(source):
     return AndroidProgram(title, widgets, events, background_color, bottom_navigation)
 
 
-def generate_kivy(source):
+def generate_kivy(source, ai_server_url=None, ai_token=None):
     program = parse_android(source)
+    has_ai = bool(ai_server_url and ai_token)
     has_page_navigation = any(
         target == "__page__"
         for event in program.events
         for target, _value in event.actions
     )
-    has_pages = has_page_navigation or bool(program.bottom_navigation)
+    has_pages = has_page_navigation or bool(program.bottom_navigation) or has_ai
     widget_classes = {"نص": "Label", "زر": "Button", "حقل": "TextInput", "كلمة_مرور": "TextInput"}
     imports = sorted({widget_classes[widget.kind] for widget in program.widgets})
     if program.bottom_navigation and "Button" not in imports:
         imports.append("Button")
     if has_pages and "Label" not in imports:
         imports.append("Label")
+    if has_ai:
+        for widget_class in ("Button", "Label", "TextInput"):
+            if widget_class not in imports:
+                imports.append(widget_class)
     lines = [
         "from kivy.app import App",
         "from kivy.uix.boxlayout import BoxLayout",
     ]
+    if has_ai:
+        lines.extend([
+            "import json",
+            "import threading",
+            "import urllib.request",
+            "from kivy.clock import Clock",
+        ])
     if program.background_color:
         lines.append("from kivy.core.window import Window")
     for widget_class in imports:
@@ -597,12 +609,24 @@ def generate_kivy(source):
             option_parts.append(
                 f"background_color={hex_to_rgba(widget.background_color)!r}"
             )
+        if widget.kind == "زر":
+            button_color = hex_to_rgba(widget.background_color or "#1976D2")
+            if not widget.background_color:
+                option_parts.append(f"background_color={button_color!r}")
+            option_parts.extend(["background_normal=''", "background_down=''"])
         if widget.kind in ("حقل", "كلمة_مرور"):
             option_parts.append("multiline=False")
         if widget.kind == "كلمة_مرور":
             option_parts.append("password=True")
         options = ", ".join(option_parts)
         lines.append(f"        self.{widget.name} = {widget_class}({options})")
+        if widget.kind == "زر":
+            normal_color = hex_to_rgba(widget.background_color or "#1976D2")
+            pressed_color = [round(channel * 0.72, 4) for channel in normal_color[:3]] + [normal_color[3]]
+            lines.append(
+                f"        self.{widget.name}.bind(state=lambda button, state, normal={normal_color!r}, "
+                f"pressed={pressed_color!r}: setattr(button, 'background_color', pressed if state == 'down' else normal))"
+            )
         if has_pages:
             lines.append(f"        self._page_widgets.setdefault({widget.page!r}, []).append(self.{widget.name})")
             if widget.page == "الرئيسية":
@@ -631,13 +655,27 @@ def generate_kivy(source):
                 f"        self.{widget.bind_to}.bind(text=lambda _field, value: "
                 f"setattr(self.{widget.name}, 'text', value))"
             )
-    if program.bottom_navigation:
+    if has_ai:
+        lines.extend([
+            "        self._ai_question = TextInput(hint_text='اكتب سؤالك', multiline=True, size_hint_y=None, height=100)",
+            "        self._ai_answer = Label(text='مساعد الباء جاهز', halign='right', valign='top')",
+            "        self._ai_answer.bind(size=lambda widget, _size: setattr(widget, 'text_size', (widget.width, None)))",
+            "        self._ai_send = Button(text='إرسال إلى الذكاء', size_hint_y=None, height=52)",
+            "        self._ai_send.bind(on_press=self._ask_ai)",
+            "        self._page_widgets['المساعد'] = [self._ai_question, self._ai_send, self._ai_answer]",
+        ])
+    navigation_items = list(program.bottom_navigation)
+    if has_ai and "المساعد" not in navigation_items:
+        navigation_items.append("المساعد")
+    if navigation_items:
         dark_screen = is_dark_hex(program.background_color or "#FAFAFA")
         navigation_background = [0.02, 0.02, 0.02, 1] if dark_screen else [1, 1, 1, 1]
         navigation_text = [1, 1, 1, 1] if dark_screen else [0.06, 0.09, 0.16, 1]
         lines.append("        bottom_navigation = BoxLayout(size_hint_y=None, height=56, spacing=4)")
-        for item in program.bottom_navigation:
-            lines.append(f"        navigation_button = Button(text={item!r}, background_normal='', background_color={navigation_background!r}, color={navigation_text!r})")
+        for item in navigation_items:
+            navigation_pressed = [round(channel * 0.72, 4) for channel in navigation_background[:3]] + [navigation_background[3]]
+            lines.append(f"        navigation_button = Button(text={item!r}, background_normal='', background_down='', background_color={navigation_background!r}, color={navigation_text!r})")
+            lines.append(f"        navigation_button.bind(state=lambda button, state, normal={navigation_background!r}, pressed={navigation_pressed!r}: setattr(button, 'background_color', pressed if state == 'down' else normal))")
             lines.append(f"        navigation_button.bind(on_press=lambda _button, page={item!r}: self._go_to_page(page))")
             lines.append("        bottom_navigation.add_widget(navigation_button)")
         lines.append("        root.add_widget(bottom_navigation)")
@@ -667,6 +705,34 @@ def generate_kivy(source):
             "            self._content.add_widget(Label(text=f'صفحة {page_name}'))",
             "",
         ])
+    if has_ai:
+        lines.extend([
+            "    def _ask_ai(self, _button):",
+            "        question = self._ai_question.text.strip()",
+            "        if not question:",
+            "            self._ai_answer.text = 'اكتب سؤالاً أولاً'",
+            "            return",
+            "        self._ai_send.disabled = True",
+            "        self._ai_answer.text = 'جارٍ الاتصال بجهازك...'",
+            "        threading.Thread(target=self._request_ai, args=(question,), daemon=True).start()",
+            "",
+            "    def _request_ai(self, question):",
+            f"        url = {str(ai_server_url).rstrip('/')!r} + '/generate'",
+            f"        token = {ai_token!r}",
+            "        try:",
+            "            payload = json.dumps({'question': question}, ensure_ascii=False).encode('utf-8')",
+            "            request = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token}, method='POST')",
+            "            with urllib.request.urlopen(request, timeout=300) as response:",
+            "                answer = json.loads(response.read().decode('utf-8')).get('answer', '')",
+            "        except Exception:",
+            "            answer = 'تعذر الاتصال. تأكد أن الكمبيوتر والهاتف على نفس Wi-Fi وأن خادم الباء يعمل.'",
+            "        Clock.schedule_once(lambda _dt: self._show_ai_answer(answer), 0)",
+            "",
+            "    def _show_ai_answer(self, answer):",
+            "        self._ai_answer.text = answer or 'لم يصل رد من النموذج'",
+            "        self._ai_send.disabled = False",
+            "",
+        ])
     if any(widget.kind == "كلمة_مرور" for widget in program.widgets):
         lines.extend([
             "    def _validate_password(self, value, status, minimum):",
@@ -691,7 +757,7 @@ def is_dark_hex(color):
     return (red * 299 + green * 587 + blue * 114) / 1000 < 128
 
 
-def buildozer_spec(title):
+def buildozer_spec(title, ai_enabled=False):
     safe_title = title.replace("\n", " ").strip() or "تطبيق الباء"
     return f"""[app]
 title = {safe_title}
@@ -703,6 +769,7 @@ version = 0.1
 requirements = python3==3.12.9,hostpython3==3.12.9,kivy
 orientation = portrait
 fullscreen = 0
+{('android.permissions = INTERNET' if ai_enabled else '')}
 android.api = 35
 android.ndk = 28c
 android.accept_sdk_license = True
@@ -761,16 +828,16 @@ jobs:
 '''
 
 
-def export_android_project(source, directory):
+def export_android_project(source, directory, ai_server_url=None, ai_token=None):
     program = parse_android(source)
     os.makedirs(directory, exist_ok=True)
     main_path = os.path.join(directory, "main.py")
     spec_path = os.path.join(directory, "buildozer.spec")
     workflow_path = os.path.join(directory, ".github", "workflows", "build-apk.yml")
     with open(main_path, "w", encoding="utf-8", newline="\n") as file:
-        file.write(generate_kivy(source))
+        file.write(generate_kivy(source, ai_server_url, ai_token))
     with open(spec_path, "w", encoding="utf-8", newline="\n") as file:
-        file.write(buildozer_spec(program.title))
+        file.write(buildozer_spec(program.title, bool(ai_server_url and ai_token)))
     os.makedirs(os.path.dirname(workflow_path), exist_ok=True)
     with open(workflow_path, "w", encoding="utf-8", newline="\n") as file:
         file.write(github_actions_workflow())

@@ -60,6 +60,21 @@ def test_exports_main_and_buildozer_spec(tmp_path):
     assert "android.accept_sdk_license = True" in spec
 
 
+def test_exports_authenticated_lan_ai_client(tmp_path):
+    export_android_project(
+        ANDROID_SOURCE, tmp_path,
+        "http://192.168.1.20:8765", "private-token",
+    )
+
+    main = (tmp_path / "main.py").read_text(encoding="utf-8")
+    spec = (tmp_path / "buildozer.spec").read_text(encoding="utf-8")
+    assert "المساعد" in main
+    assert "http://192.168.1.20:8765" in main
+    assert "Bearer ' + token" in main
+    assert "private-token" in main
+    assert "android.permissions = INTERNET" in spec
+
+
 def test_element_colors_are_generated_for_kivy():
     source = """تطبيق "ألوان"
 رسالة = نص("مرحباً")

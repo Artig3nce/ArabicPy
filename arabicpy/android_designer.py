@@ -2,11 +2,11 @@
 
 import re
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, QTimer, Qt, Signal
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QColorDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QScrollArea, QVBoxLayout, QWidget,
+    QApplication, QColorDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from .android import AndroidEvent, AndroidProgram, AndroidWidget, parse_android
@@ -82,9 +82,15 @@ class DesignerItem(QFrame):
         background_color = self.widget_model.background_color or (
             "#0F172A" if self.widget_model.kind == "زر" else "#F8FAFC"
         )
-        self.control.setStyleSheet(
-            f"color: {text_color}; background-color: {background_color};"
-        )
+        pressed_color = QColor(background_color).darker(125).name()
+        if isinstance(self.control, QPushButton):
+            style = (
+                f"QPushButton {{ color: {text_color}; background-color: {background_color}; }}"
+                f"QPushButton:pressed {{ background-color: {pressed_color}; }}"
+            )
+        else:
+            style = f"color: {text_color}; background-color: {background_color};"
+        self.control.setStyleSheet(style)
 
     def eventFilter(self, watched, event):
         if self.preview_mode:
@@ -117,11 +123,26 @@ class AndroidDesigner(QWidget):
         super().__init__(parent)
         self.program = AndroidProgram("الباء", [], [], background_color="#FFFFFF")
         self.selected_name = None
+        self.selected_navigation_index = None
         self.loading = False
         self.item_widgets = {}
         self.preview_mode = False
         self.last_error = None
         self.setup_ui()
+        self.delete_shortcut = QShortcut(QKeySequence("Delete"), self)
+        self.delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.delete_shortcut.activated.connect(self.delete_selected_from_keyboard)
+
+    def delete_selected_from_keyboard(self):
+        """Delete the selected canvas item without breaking text-field editing."""
+        if self.preview_mode or (
+            self.selected_widget() is None and self.selected_navigation_index is None
+        ):
+            return
+        focused = QApplication.focusWidget()
+        if isinstance(focused, QLineEdit) and focused.hasFocus():
+            return
+        self.delete_selected()
 
     def setup_ui(self):
         self.setObjectName("androidDesigner")
@@ -142,12 +163,38 @@ class AndroidDesigner(QWidget):
         root.addWidget(palette)
 
         canvas_scroll = QScrollArea()
+        self.canvas_scroll = canvas_scroll
         canvas_scroll.setWidgetResizable(True)
         canvas_scroll.setObjectName("designerCanvas")
+        canvas_scroll.viewport().installEventFilter(self)
         canvas_host = QWidget()
         canvas_host_layout = QVBoxLayout(canvas_host)
-        canvas_host_layout.setAlignment(Qt.AlignCenter)
+        canvas_host_layout.setContentsMargins(12, 14, 12, 12)
+        canvas_host_layout.setSpacing(10)
+        canvas_host_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        device_bar = QFrame(objectName="designerPanel")
+        device_bar.setFixedHeight(46)
+        device_bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        device_layout = QHBoxLayout(device_bar)
+        device_layout.setContentsMargins(6, 4, 6, 4)
+        device_layout.setSpacing(4)
+        self.device_buttons = {}
+        for key, label in (
+            ("phone", "هاتف"),
+            ("tablet", "جهاز لوحي"),
+            ("desktop", "حاسوب"),
+            ("browser", "متصفح"),
+        ):
+            button = QPushButton(label, objectName="designerTool")
+            button.setCheckable(True)
+            button.setChecked(key == "phone")
+            button.clicked.connect(lambda _checked=False, value=key: self.set_device_preview(value))
+            self.device_buttons[key] = button
+            device_layout.addWidget(button)
+        canvas_host_layout.addWidget(device_bar, 0, Qt.AlignCenter)
         self.phone = QFrame(objectName="phoneFrame")
+        self.preview_device = "phone"
+        self.preview_logical_size = (360, 620)
         self.phone.setFixedSize(360, 620)
         phone_layout = QVBoxLayout(self.phone)
         phone_layout.setContentsMargins(12, 12, 12, 12)
@@ -168,7 +215,7 @@ class AndroidDesigner(QWidget):
         self.page_placeholder.setStyleSheet("font-size: 18px; font-weight: 600;")
         self.page_placeholder.hide()
         phone_layout.insertWidget(2, self.page_placeholder)
-        canvas_host_layout.addWidget(self.phone)
+        canvas_host_layout.addWidget(self.phone, 0, Qt.AlignHCenter | Qt.AlignTop)
         canvas_scroll.setWidget(canvas_host)
         root.addWidget(canvas_scroll, 1)
 
@@ -221,6 +268,45 @@ class AndroidDesigner(QWidget):
         properties_layout.addStretch()
         root.addWidget(properties)
         self.refresh_canvas()
+        QTimer.singleShot(0, self.fit_device_preview)
+
+    def set_device_preview(self, device):
+        """Switch the responsive design canvas without changing application data."""
+        sizes = {
+            "phone": (360, 620),
+            "tablet": (720, 760),
+            "desktop": (960, 620),
+            "browser": (960, 620),
+        }
+        self.preview_device = device if device in sizes else "phone"
+        self.preview_logical_size = sizes[self.preview_device]
+        self.phone.setProperty("device", device)
+        for key, button in self.device_buttons.items():
+            button.setChecked(key == self.preview_device)
+        self.fit_device_preview()
+
+    def fit_device_preview(self):
+        """Fit the selected device completely inside the current designer viewport."""
+        if not hasattr(self, "canvas_scroll") or not hasattr(self, "phone"):
+            return
+        logical_width, logical_height = self.preview_logical_size
+        viewport = self.canvas_scroll.viewport().size()
+        available_width = max(240, viewport.width() - 40)
+        available_height = max(300, viewport.height() - 72)
+        scale = min(1.0, available_width / logical_width, available_height / logical_height)
+        self.phone.setFixedSize(
+            max(240, round(logical_width * scale)),
+            max(300, round(logical_height * scale)),
+        )
+
+    def eventFilter(self, watched, event):
+        if (
+            hasattr(self, "canvas_scroll")
+            and watched is self.canvas_scroll.viewport()
+            and event.type() == QEvent.Type.Resize
+        ):
+            QTimer.singleShot(0, self.fit_device_preview)
+        return super().eventFilter(watched, event)
 
     def load_source(self, source):
         try:
@@ -232,6 +318,7 @@ class AndroidDesigner(QWidget):
         self.loading = True
         self.program = program
         self.selected_name = None
+        self.selected_navigation_index = None
         self.refresh_canvas()
         self.loading = False
         return True
@@ -310,6 +397,7 @@ class AndroidDesigner(QWidget):
         self.emit_source()
 
     def select_widget(self, name):
+        self.selected_navigation_index = None
         self.selected_name = name
         for item_name, item in self.item_widgets.items():
             item.set_selected(item_name == name)
@@ -318,6 +406,19 @@ class AndroidDesigner(QWidget):
             self.name_edit.setText(widget.name)
             self.text_edit.setText(widget.text)
             self.update_color_buttons(widget)
+
+    def select_navigation(self, index):
+        if self.preview_mode or not (0 <= index < len(self.program.bottom_navigation)):
+            return
+        self.selected_name = None
+        self.selected_navigation_index = index
+        for item in self.item_widgets.values():
+            item.set_selected(False)
+        self.name_edit.setText(f"زر_الشريط_{index + 1}")
+        self.text_edit.setText(self.program.bottom_navigation[index])
+        self.text_color_button.setText("لون النص: تلقائي")
+        self.background_color_button.setText("لون الخلفية: تلقائي")
+        self.refresh_bottom_navigation()
 
     def selected_widget(self):
         return next(
@@ -358,6 +459,15 @@ class AndroidDesigner(QWidget):
         self.emit_source()
 
     def apply_properties(self):
+        if self.selected_navigation_index is not None:
+            text = self.text_edit.text().strip()
+            if not text or '"' in text:
+                QMessageBox.warning(self, "نص غير صالح", "اكتب نصًا صالحًا لزر الشريط السفلي.")
+                return
+            self.program.bottom_navigation[self.selected_navigation_index] = text
+            self.refresh_bottom_navigation()
+            self.emit_source()
+            return
         widget = self.selected_widget()
         if widget is None:
             return
@@ -420,6 +530,16 @@ class AndroidDesigner(QWidget):
         self.background_color_button.setText(f"لون الخلفية: {background_color}")
 
     def move_selected(self, offset):
+        if self.selected_navigation_index is not None:
+            index = self.selected_navigation_index
+            target = index + offset
+            if 0 <= target < len(self.program.bottom_navigation):
+                navigation = self.program.bottom_navigation
+                navigation[index], navigation[target] = navigation[target], navigation[index]
+                self.selected_navigation_index = target
+                self.refresh_bottom_navigation()
+                self.emit_source()
+            return
         widget = self.selected_widget()
         if widget is None:
             return
@@ -433,6 +553,14 @@ class AndroidDesigner(QWidget):
             self.emit_source()
 
     def delete_selected(self):
+        if self.selected_navigation_index is not None:
+            del self.program.bottom_navigation[self.selected_navigation_index]
+            self.selected_navigation_index = None
+            self.name_edit.clear()
+            self.text_edit.clear()
+            self.refresh_bottom_navigation()
+            self.emit_source()
+            return
         widget = self.selected_widget()
         if widget is None:
             return
@@ -472,6 +600,8 @@ class AndroidDesigner(QWidget):
         self.refresh_bottom_navigation()
         if self.selected_name:
             self.select_widget(self.selected_name)
+        elif self.selected_navigation_index is not None:
+            self.select_navigation(self.selected_navigation_index)
         else:
             self.name_edit.clear()
             self.text_edit.clear()
@@ -504,14 +634,22 @@ class AndroidDesigner(QWidget):
         self.bottom_navigation.setVisible(bool(self.program.bottom_navigation))
         screen_color = QColor(self.program.background_color or "#FAFAFA")
         navigation_text = "#F2F2F2" if screen_color.lightness() < 128 else "#0F172A"
-        for label in self.program.bottom_navigation:
+        for index, label in enumerate(self.program.bottom_navigation):
             button = QPushButton(label)
             button.setObjectName("phoneNavigationButton")
+            selected = index == self.selected_navigation_index and not self.preview_mode
+            border_style = "1px solid #007ACC" if selected else "none"
+            selected_background = "rgba(0,122,204,45)" if selected else "transparent"
             button.setStyleSheet(
-                f"background: transparent; color: {navigation_text}; border: none;"
+                f"background: {selected_background}; color: {navigation_text}; "
+                f"border: {border_style}; border-radius: 5px; "
+                "QPushButton:pressed { background-color: rgba(0,0,0,70); }"
             )
             button.clicked.connect(
-                lambda _checked=False, page=label: self.show_preview_page(page)
+                lambda _checked=False, page=label, item_index=index: (
+                    self.show_preview_page(page)
+                    if self.preview_mode else self.select_navigation(item_index)
+                )
             )
             self.bottom_navigation_layout.addWidget(button)
 

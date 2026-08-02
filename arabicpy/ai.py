@@ -1,19 +1,42 @@
-"""Small offline helper available to programs written in الباء."""
+"""Local AI integration for AlBaa through Ollama."""
+
+import json
+import urllib.error
+import urllib.request
 
 
-def reply(question):
-    """Return a friendly Arabic response for a short prompt."""
+DEFAULT_MODEL = "qwen3:8b"
+SYSTEM_PROMPT = (
+    "أنت مساعد الباء، خبير برمجة يتحدث العربية بوضوح. "
+    "ساعد المستخدم في كتابة وشرح وتصحيح كود لغة الباء العربية. "
+    "إذا لم تعرف صيغة من لغة الباء، صرّح بذلك ولا تخترع أمراً غير موجود."
+)
+
+
+def reply(question, model=DEFAULT_MODEL, timeout=300):
+    """Return a local Ollama response for the Arabic `اسأل(...)` command."""
     text = str(question).strip()
-    normalized = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").lower()
-
     if not text:
         return "اكتب سؤالاً بعد اسأل، وسأحاول مساعدتك."
-    if any(word in normalized for word in ("مرحبا", "اهلا", "السلام")):
-        return "مرحباً! أنا مساعد الباء البسيط. كيف يمكنني مساعدتك؟"
-    if "الباء" in normalized:
-        return "الباء لغة برمجة عربية تُحوّل برنامجك إلى Python ثم تشغّله."
-    if any(word in normalized for word in ("اسمك", "من انت")):
-        return "أنا مساعد صغير مدمج في الباء، وأعمل محلياً دون اتصال بالإنترنت."
-    if "كيف" in normalized:
-        return "ابدأ بخطوات صغيرة، واكتب برنامجك ثم اضغط تشغيل."
-    return f"فهمت سؤالك: {text}\nهذه النسخة التجريبية تعمل محلياً، وسنضيف لها نموذج ذكاء أكبر لاحقاً."
+    payload = json.dumps({
+        "model": model,
+        "prompt": f"/no_think\n{SYSTEM_PROMPT}\n\nسؤال المستخدم:\n{text}",
+        "stream": False,
+        "think": False,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        "http://127.0.0.1:11434/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        return result.get("response", "").strip() or "لم يُرجع النموذج إجابة."
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return f"النموذج {model} غير مثبت. ثبّته بالأمر: ollama pull {model}"
+        return f"تعذر تشغيل النموذج المحلي: HTTP {error.code}"
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return "تعذر الاتصال بـ Ollama. شغّل Ollama ثم حاول مجدداً."
