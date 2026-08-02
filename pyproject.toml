@@ -7,6 +7,13 @@ build-backend = "setuptools.build_meta"
 name = "albaa"
 version = "0.1.0"
 description = "Al-Baa Arabic programming language"
+dependencies = [
+    "pypdf>=5",
+    "python-docx>=1.1",
+    "paddlepaddle>=3.3",
+    "paddleocr>=3.7",
+    "pypdfium2>=5.12",
+]
 authors = [
     {name = "Saud"}
 ]

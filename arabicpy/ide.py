@@ -2,20 +2,23 @@ import contextlib
 import base64
 import html
 import io
+import math
 import os
 import re
 import secrets
 import shutil
 import json
+import socket
 from datetime import datetime
 
-from PySide6.QtCore import QProcess, QSettings, QTimer, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QPointF, QProcess, QSettings, QTimer, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtGui import (
-    QColor, QDesktopServices, QFont, QPainter, QPen, QTextBlockFormat, QTextCharFormat, QTextCursor,
+    QColor, QDesktopServices, QFont, QKeySequence, QPainter, QPen, QPolygonF, QTextBlockFormat, QTextCharFormat, QTextCursor,
     QTextFormat,
 )
 from PySide6.QtWidgets import (
-    QApplication, QBoxLayout, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
+    QApplication, QBoxLayout, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLineEdit,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QMenu, QProgressBar, QScrollArea, QSizePolicy, QSplitter, QTabBar, QTabWidget,
     QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
@@ -30,7 +33,9 @@ from .android_designer import AndroidDesigner
 from .tauri_export import export_tauri_project
 from .ai import DEFAULT_MODEL, SYSTEM_PROMPT, reply as albaa_ai_reply
 from .ai_server import AlBaaAIServer
+from .embedded_ai import EMBEDDED_BASE_URL, MODELS, llama_server_path, model_path, server_arguments
 from .errors import format_error
+from .rag import context_for as rag_context, import_document
 
 
 class LineNumberArea(QWidget):
@@ -77,14 +82,21 @@ class SettingsIconButton(QPushButton):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(self.icon_color, 1.5, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(self.icon_color, 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         center_x, center_y = self.width() // 2, self.height() // 2
-        painter.drawEllipse(center_x - 4, center_y - 4, 8, 8)
-        for x1, y1, x2, y2 in (
-            (0, -10, 0, -7), (0, 7, 0, 10), (-10, 0, -7, 0), (7, 0, 10, 0),
-            (-7, -7, -5, -5), (5, 5, 7, 7), (5, -5, 7, -7), (-7, 7, -5, 5),
-        ):
-            painter.drawLine(center_x + x1, center_y + y1, center_x + x2, center_y + y2)
+        # A continuous toothed outline reads as a cog, unlike separate radial
+        # strokes which resemble a sun icon.
+        points = QPolygonF()
+        radii = (8.0, 8.0, 10.5, 10.5)
+        for index in range(32):
+            angle = math.radians(-90 + index * 11.25)
+            radius = radii[index % 4]
+            points.append(QPointF(
+                center_x + math.cos(angle) * radius,
+                center_y + math.sin(angle) * radius,
+            ))
+        painter.drawPolygon(points)
+        painter.drawEllipse(QPointF(center_x, center_y), 3.2, 3.2)
 
 
 class CodeEditor(QPlainTextEdit):
@@ -117,6 +129,20 @@ class CodeEditor(QPlainTextEdit):
         self.highlight_current_line()
         self.apply_line_spacing()
 
+    def keyPressEvent(self, event):
+        """Support both common Windows redo shortcuts in every editor tab."""
+        if event.matches(QKeySequence.Undo):
+            self.undo()
+            event.accept()
+            return
+        if event.matches(QKeySequence.Redo) or (
+            event.key() == Qt.Key_Z
+            and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier)
+        ):
+            self.redo()
+            event.accept()
+            return
+        super().keyPressEvent(event)
     def setPlainText(self, text):
         """Load plain text and enforce Arabic-safe spacing on every block."""
         super().setPlainText(text)
@@ -219,6 +245,50 @@ class CodeEditor(QPlainTextEdit):
             number += 1
 
 
+class FindInput(QLineEdit):
+    escapePressed = Signal()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.escapePressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class WindowControlButton(QPushButton):
+    """Font-independent Windows-style minimize, maximize and close button."""
+
+    def __init__(self, control, window):
+        super().__init__()
+        self.control = control
+        self.window = window
+        self.setObjectName("closeButton" if control == "close" else "windowButton")
+        self.setFixedSize(46, 35)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setPen(QPen(self.palette().buttonText().color(), 1.0))
+        center_x, center_y = self.width() // 2, self.height() // 2
+        if self.control == "minimize":
+            painter.drawLine(center_x - 5, center_y + 4, center_x + 5, center_y + 4)
+        elif self.control == "maximize":
+            if self.window.isMaximized():
+                # Windows restore icon: only the exposed top/right edges of
+                # the rear window are visible behind the front window.
+                painter.drawLine(center_x - 2, center_y - 4, center_x + 5, center_y - 4)
+                painter.drawLine(center_x + 5, center_y - 4, center_x + 5, center_y + 3)
+                painter.drawLine(center_x - 2, center_y - 4, center_x - 2, center_y - 2)
+                painter.drawRect(center_x - 4, center_y - 2, 7, 7)
+            else:
+                painter.drawRect(center_x - 4, center_y - 4, 8, 8)
+        else:
+            painter.drawLine(center_x - 5, center_y - 5, center_x + 5, center_y + 5)
+            painter.drawLine(center_x + 5, center_y - 5, center_x - 5, center_y + 5)
+
+
 class TitleBar(QWidget):
     def __init__(self, parent):
         super().__init__(parent)
@@ -233,7 +303,7 @@ class TitleBar(QWidget):
         logo = QLabel("ب")
         logo.setObjectName("titleLogo")
         logo.setAlignment(Qt.AlignCenter)
-        logo.setFixedSize(22, 22)
+        logo.setFixedSize(30, 26)
         brand = QLabel("الباء")
         brand.setObjectName("brand")
         separator = QLabel("|")
@@ -245,13 +315,15 @@ class TitleBar(QWidget):
         layout.addWidget(separator)
         layout.addWidget(document)
         layout.addStretch()
-        for label, action, name in [("—", parent.showMinimized, "windowButton"), ("□", parent.toggle_maximized, "windowButton"), ("×", parent.close, "closeButton")]:
-            button = QPushButton(label)
-            button.setObjectName(name)
-            button.setFixedSize(46, 35)
+        for control, action in (
+            ("minimize", parent.showMinimized),
+            ("maximize", parent.toggle_maximized),
+            ("close", parent.close),
+        ):
+            button = WindowControlButton(control, parent)
             button.clicked.connect(action)
             layout.addWidget(button)
-            if label == "□":
+            if control == "maximize":
                 parent.maximize_button = button
 
     def mousePressEvent(self, event):
@@ -267,6 +339,11 @@ class TitleBar(QWidget):
     def mouseReleaseEvent(self, event):
         self.old_pos = None
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.parent.toggle_maximized()
+            event.accept()
+
 
 class ArabicPyIDE(QMainWindow):
     def __init__(self):
@@ -274,11 +351,13 @@ class ArabicPyIDE(QMainWindow):
         settings = QSettings("AlBaa", "AlBaaIDE")
         self.ai_server_token = settings.value("ai_server_token", "") or secrets.token_urlsafe(24)
         settings.setValue("ai_server_token", self.ai_server_token)
+        self.ai_model = str(settings.value("ai_model", DEFAULT_MODEL) or DEFAULT_MODEL).strip()
         self.ide_dark = settings.value("ide_dark", settings.value("ai_chat_dark", True, type=bool), type=bool)
         self.ai_chat_dark = self.ide_dark
         self.ai_messages = []
         self.ai_server = None
         self.current_file = None
+        self.autosave_timers = {}
         self.syncing_code_views = False
         self.output_was_visible_before_designer = True
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -313,12 +392,14 @@ class ArabicPyIDE(QMainWindow):
             self.showNormal()
         else:
             self.showMaximized()
+        if hasattr(self, "maximize_button"):
+            self.maximize_button.update()
 
     def stylesheet(self, dark=True):
         base = """
         QMainWindow, QWidget { background: #1e1e1e; color: #cccccc; font-family: 'Tahoma'; font-size: 13px; }
         #titleBar { background: #181818; border-bottom: 1px solid #2b2b2b; }
-        #titleLogo { background: #007ACC; color: white; border-radius: 5px; font-weight: 700; font-size: 14px; }
+        #titleLogo { background: #1d9bf0; color: white; border-radius: 7px; font-weight: 800; font-size: 16px; }
         #brand { color: #ffffff; font-weight: 600; font-size: 14px; }
         #titleSeparator { color: #505050; padding: 0 2px; }
         #titleDocument { color: #969696; }
@@ -334,7 +415,7 @@ class ArabicPyIDE(QMainWindow):
         #aiButton:hover { background: #1594E8; }
         #aiChatPanel { background: #000000; border-left: 1px solid #2f3336; }
         #aiChatHeader { background: #000000; border-bottom: 1px solid #2f3336; }
-        #aiChatAvatar { background: #1d9bf0; color: #ffffff; border-radius: 18px; font-size: 17px; font-weight: 800; }
+        #aiChatAvatar { background: #1d9bf0; color: #ffffff; border-radius: 7px; font-size: 16px; font-weight: 800; }
         #aiChatTitle { color: #ffffff; font-size: 14px; font-weight: 700; padding: 4px; }
         #aiChatSubtitle { color: #d9f1ff; font-size: 10px; }
         #aiChatHistory { background: #101820; border: none; color: #e9edef; padding: 5px; }
@@ -357,6 +438,10 @@ class ArabicPyIDE(QMainWindow):
         #pythonTabSpacer { background: #1e1e1e; border-bottom: 1px solid #1e1e1e; }
         #codeEditor { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Segoe UI'; font-size: 15px; }
         #codePaneTitle { background: #252526; color: #cccccc; border-bottom: 1px solid #333333; padding: 7px 12px; font-weight: 600; }
+        #findBar { background: #252526; border-bottom: 1px solid #333333; }
+        #findInput { background: #1e1e1e; color: #ffffff; border: 1px solid #555555; border-radius: 4px; padding: 5px 8px; selection-background-color: #007acc; }
+        #findInput:focus { border-color: #007acc; }
+        #findStatus { background: transparent; color: #aaaaaa; padding: 0 5px; }
         #pythonPreview { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Segoe UI'; font-size: 15px; }
         #outputHeader { background: #252526; border-top: 1px solid #333333; } #outputTitle { background: transparent; border: none; color: #cccccc; font-weight: 600; padding: 7px 12px; }
         #output { background: #1e1e1e; color: #e0e0e0; border: none; font-family: 'Tahoma'; font-size: 14px; padding: 9px; }
@@ -409,6 +494,9 @@ class ArabicPyIDE(QMainWindow):
         #pythonTabSpacer, #codeEditor, #pythonPreview, #output { background:#ffffff; color:#1f2937; }
         #codeEditor, #pythonPreview { selection-background-color:#b9dcf5; }
         #codePaneTitle, #outputHeader { background:#f3f6f9; color:#334155; border-color:#d7dde5; }
+        #findBar { background:#f3f6f9; border-bottom:1px solid #d7dde5; }
+        #findInput { background:#ffffff; color:#111827; border:1px solid #aeb8c4; selection-background-color:#007acc; selection-color:#ffffff; }
+        #findStatus { color:#667085; }
         #outputTitle { background:transparent; border:none; color:#334155; } QSplitter::handle { background:#d7dde5; }
         #androidDesigner, #designerCanvas { background:#e8edf2; }
         #designerPanel { background:#f3f6f9; } #designerTitle { color:#111827; }
@@ -488,12 +576,21 @@ class ArabicPyIDE(QMainWindow):
         command_layout.addWidget(self.make_button("＋ جديد", self.new_file))
         command_layout.addWidget(self.make_button("فتح", self.open_file))
         command_layout.addWidget(self.make_button("حفظ", self.save_file))
+        self.undo_button = self.make_button("↶ تراجع", lambda: self.editor.undo())
+        self.undo_button.setToolTip("تراجع (Ctrl+Z)")
+        self.undo_button.setEnabled(False)
+        command_layout.addWidget(self.undo_button)
+        self.redo_button = self.make_button("↷ إعادة", lambda: self.editor.redo())
+        self.redo_button.setToolTip("إعادة (Ctrl+Y أو Ctrl+Shift+Z)")
+        self.redo_button.setEnabled(False)
+        command_layout.addWidget(self.redo_button)
         command_layout.addWidget(self.make_button("⌕ بحث", self.find_text))
         self.ai_button = self.make_button("✦ مساعد ذكي", self.ask_local_ai, "aiButton")
         self.ai_button.setCheckable(True)
         command_layout.addWidget(self.ai_button)
         self.ai_server_button = self.make_button("شبكة AI", self.toggle_ai_server)
         command_layout.addWidget(self.ai_server_button)
+        command_layout.addWidget(self.make_button("مستندات RAG", self.add_rag_documents))
         self.python_toggle_button = self.make_button("◀", self.toggle_python_preview)
         self.python_toggle_button.setFixedWidth(34)
         self.python_toggle_button.setToolTip("إظهار كود Python")
@@ -609,6 +706,30 @@ class ArabicPyIDE(QMainWindow):
         source_title = QLabel("الباء — الكود العربي", objectName="codePaneTitle")
         source_title.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         source_layout.addWidget(source_title)
+        self.find_bar = QWidget(objectName="findBar")
+        find_layout = QHBoxLayout(self.find_bar)
+        find_layout.setDirection(QBoxLayout.RightToLeft)
+        find_layout.setContentsMargins(8, 5, 8, 5)
+        find_layout.setSpacing(5)
+        self.find_input = FindInput(objectName="findInput")
+        self.find_input.setPlaceholderText("ابحث في الملف…")
+        self.find_input.setClearButtonEnabled(True)
+        self.find_input.setMaximumWidth(320)
+        self.find_input.returnPressed.connect(self.find_next)
+        self.find_input.escapePressed.connect(self.hide_find_bar)
+        find_layout.addWidget(self.find_input)
+        find_next_button = self.make_button("التالي", self.find_next)
+        find_next_button.setToolTip("النتيجة التالية (Enter)")
+        find_layout.addWidget(find_next_button)
+        self.find_status = QLabel("", objectName="findStatus")
+        find_layout.addWidget(self.find_status)
+        find_close_button = self.make_button("×", self.hide_find_bar)
+        find_close_button.setFixedWidth(30)
+        find_close_button.setToolTip("إغلاق (Escape)")
+        find_layout.addWidget(find_close_button)
+        find_layout.addStretch()
+        self.find_bar.hide()
+        source_layout.addWidget(self.find_bar)
         source_layout.addWidget(self.tab_widget)
         code_splitter.addWidget(source_panel)
 
@@ -660,6 +781,9 @@ class ArabicPyIDE(QMainWindow):
             'اطبع(القسمة)'
         )
         self.editor.document().modificationChanged.connect(self.update_tab_title)
+        self.enable_autosave(self.editor)
+        self.editor.undoAvailable.connect(self.update_undo_redo_buttons)
+        self.editor.redoAvailable.connect(self.update_undo_redo_buttons)
         self.editor.textChanged.connect(self.update_python_preview)
         self.editor.cursorPositionChanged.connect(self.sync_arabic_cursor_to_python)
         self.editor.verticalScrollBar().valueChanged.connect(
@@ -716,7 +840,7 @@ class ArabicPyIDE(QMainWindow):
         chat_header.setContentsMargins(8, 7, 8, 7)
         self.ai_chat_avatar = QLabel("ب", objectName="aiChatAvatar")
         self.ai_chat_avatar.setAlignment(Qt.AlignCenter)
-        self.ai_chat_avatar.setFixedSize(36, 36)
+        self.ai_chat_avatar.setFixedSize(30, 26)
         chat_header.addWidget(self.ai_chat_avatar)
         title_box = QVBoxLayout()
         title_box.setSpacing(0)
@@ -730,6 +854,35 @@ class ArabicPyIDE(QMainWindow):
         close_chat.setFixedSize(28, 28)
         chat_header.addWidget(close_chat)
         chat_layout.addWidget(self.ai_chat_header)
+        model_row = QHBoxLayout()
+        model_row.setContentsMargins(8, 0, 8, 0)
+        model_row.addWidget(QLabel("النموذج:"))
+        self.ai_model_selector = QComboBox(objectName="aiModelSelector")
+        self.ai_model_selector.setEditable(True)
+        self.ai_model_selector.addItems([
+            "qwen3:1.7b",
+            "qwen3:8b",
+        ])
+        if self.ai_model_selector.findText(self.ai_model) < 0:
+            self.ai_model_selector.addItem(self.ai_model)
+        self.ai_model_selector.setCurrentText(self.ai_model)
+        self.ai_model_selector.setToolTip("اختر نموذج Ollama لهذا الجهاز أو اكتب اسمه")
+        self.ai_model_selector.currentTextChanged.connect(self.save_ai_model)
+        model_row.addWidget(self.ai_model_selector, 1)
+        chat_layout.addLayout(model_row)
+        self.ai_download_progress = QProgressBar(objectName="aiDownloadProgress")
+        self.ai_download_progress.setRange(0, 100)
+        self.ai_download_progress.setFormat("تنزيل النموذج: %p%")
+        self.ai_download_progress.setTextVisible(True)
+        self.ai_download_progress.hide()
+        download_row = QHBoxLayout()
+        download_row.setContentsMargins(0, 0, 0, 0)
+        download_row.addWidget(self.ai_download_progress, 1)
+        self.ai_download_pause_button = self.make_button("إيقاف", self.toggle_ai_model_download)
+        self.ai_download_pause_button.setFixedWidth(62)
+        self.ai_download_pause_button.hide()
+        download_row.addWidget(self.ai_download_pause_button)
+        chat_layout.addLayout(download_row)
         self.ai_chat_history = QScrollArea(objectName="aiChatHistory")
         self.ai_chat_history.setWidgetResizable(True)
         self.ai_chat_history.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -771,6 +924,8 @@ class ArabicPyIDE(QMainWindow):
         status_layout.setDirection(QBoxLayout.RightToLeft)
         status_layout.setContentsMargins(4, 0, 4, 0)
         status_layout.addWidget(QLabel("◉  الباء", objectName="statusLabel"))
+        self.autosave_status_label = QLabel("الحفظ التلقائي مفعّل", objectName="statusLabel")
+        status_layout.addWidget(self.autosave_status_label)
         status_layout.addStretch()
         self.position_label = QLabel("السطر 1، العمود 1", objectName="statusLabel")
         status_layout.addWidget(self.position_label)
@@ -791,6 +946,19 @@ class ArabicPyIDE(QMainWindow):
         self.github_phase_label = ""
         self.github_cancel_requested = False
         self.ai_process = None
+        self.embedded_ai_process = None
+        self.pending_ai_payload = None
+        self.pending_ai_engine = None
+        self.pending_ai_model = None
+        self.ai_download_manager = QNetworkAccessManager(self)
+        self.ai_download_reply = None
+        self.ai_download_stream = None
+        self.ai_download_offset = 0
+        self.ai_download_paused = False
+        self.ai_download_profile = None
+        self.ai_download_destination = None
+        self.ai_backend = "ollama"
+        self.ai_engine_wait_attempts = 0
         self.ai_response_buffer = bytearray()
         self.github_elapsed_timer = QTimer(self)
         self.github_elapsed_timer.timeout.connect(self.update_github_elapsed_time)
@@ -844,6 +1012,7 @@ class ArabicPyIDE(QMainWindow):
         if index >= 0:
             self.editor = self.tab_widget.widget(index)
             self.current_file = getattr(self.editor, "file_path", None)
+            self.update_undo_redo_buttons()
             self.update_position()
             self.update_python_preview()
             if self.android_designer.isVisible():
@@ -862,6 +1031,9 @@ class ArabicPyIDE(QMainWindow):
         editor.setPlainText(content)
         editor.document().setModified(False)
         editor.document().modificationChanged.connect(lambda changed: self.update_tab_title(changed))
+        self.enable_autosave(editor)
+        editor.undoAvailable.connect(self.update_undo_redo_buttons)
+        editor.redoAvailable.connect(self.update_undo_redo_buttons)
         editor.cursorPositionChanged.connect(self.update_position)
         editor.cursorPositionChanged.connect(self.sync_arabic_cursor_to_python)
         editor.textChanged.connect(self.update_python_preview)
@@ -875,6 +1047,57 @@ class ArabicPyIDE(QMainWindow):
         self.add_tab_close_button(index, editor)
         self.tab_widget.setCurrentWidget(editor)
         return editor
+
+    def enable_autosave(self, editor):
+        """Attach an independent, debounced autosave timer to an editor tab."""
+        timer = QTimer(editor)
+        timer.setSingleShot(True)
+        timer.setInterval(1000)
+        timer.timeout.connect(lambda source=editor: self.autosave_editor(source))
+        self.autosave_timers[editor] = timer
+        editor.textChanged.connect(lambda source=editor: self.schedule_autosave(source))
+
+    def schedule_autosave(self, editor):
+        timer = self.autosave_timers.get(editor)
+        if timer is not None:
+            timer.start()
+        if hasattr(self, "autosave_status_label"):
+            if getattr(editor, "file_path", None):
+                self.autosave_status_label.setText("بانتظار الحفظ التلقائي…")
+            else:
+                self.autosave_status_label.setText("احفظ الملف أول مرة لتفعيل الحفظ التلقائي")
+
+    def autosave_editor(self, editor):
+        """Atomically save a named, modified document without interrupting typing."""
+        path = getattr(editor, "file_path", None)
+        if not path or not editor.document().isModified():
+            return
+        temporary = path + ".autosave.tmp"
+        try:
+            with open(temporary, "w", encoding="utf-8") as file:
+                file.write(editor.toPlainText())
+            os.replace(temporary, path)
+            editor.document().setModified(False)
+            if editor is self.editor:
+                self.current_file = path
+                self.update_tab_title(False)
+            self.remember_project_file(path)
+            if hasattr(self, "autosave_status_label"):
+                self.autosave_status_label.setText("تم الحفظ تلقائيًا")
+        except OSError as error:
+            with contextlib.suppress(OSError):
+                os.remove(temporary)
+            if hasattr(self, "autosave_status_label"):
+                self.autosave_status_label.setText("تعذر الحفظ التلقائي")
+                self.autosave_status_label.setToolTip(str(error))
+
+    def update_undo_redo_buttons(self, *_):
+        """Keep toolbar actions in sync with the active document's history."""
+        editor = getattr(self, "editor", None)
+        if editor is None:
+            return
+        self.undo_button.setEnabled(editor.document().isUndoAvailable())
+        self.redo_button.setEnabled(editor.document().isRedoAvailable())
 
     def rename_tab(self, index):
         if index < 0:
@@ -1102,9 +1325,42 @@ class ArabicPyIDE(QMainWindow):
         self.main_splitter.widget(1).show()
         self.output.setPlainText("الباء\n\nلغة برمجة عربية مع محرر لكتابة البرامج وتشغيلها.\nاستخدم ملف > فتح أو زر فتح لبدء العمل.")
 
+    def add_rag_documents(self):
+        paths, _filter = QFileDialog.getOpenFileNames(
+            self,
+            "إضافة مستندات إلى معرفة RAG",
+            "",
+            "المستندات المدعومة (*.txt *.md *.apy *.py *.json *.csv *.pdf *.docx)",
+        )
+        if not paths:
+            return
+        added, errors = [], []
+        for path in paths:
+            self.output.setPlainText(f"جارٍ استخراج وفهرسة:\n{os.path.basename(path)}\n\nقد يستغرق OCR بعض الوقت في أول استخدام.")
+            QApplication.processEvents()
+            try:
+                added.append(import_document(path).name)
+            except Exception as error:
+                errors.append(f"{os.path.basename(path)}: {error}")
+        self.main_splitter.widget(1).show()
+        message = f"تمت إضافة {len(added)} مستند إلى مكتبة RAG."
+        if added:
+            message += "\n\n" + "\n".join(f"✓ {name}" for name in added)
+        if errors:
+            message += "\n\nتعذر إضافة:\n" + "\n".join(errors)
+        self.output.setPlainText(message)
+
     def ask_local_ai(self, _checked=False):
         self.toggle_ai_chat(show=True)
         self.ai_chat_input.setFocus()
+
+    def save_ai_model(self, model):
+        """Persist the Ollama model independently on each device."""
+        model = str(model).strip()
+        if not model:
+            return
+        self.ai_model = model
+        QSettings("AlBaa", "AlBaaIDE").setValue("ai_model", model)
 
     def toggle_ai_chat(self, _checked=False, show=None):
         visible = not self.ai_chat_panel.isVisible() if show is None else show
@@ -1151,7 +1407,7 @@ class ArabicPyIDE(QMainWindow):
             f"#aiChatHeader {{ background:{panel}; border-bottom:1px solid {border}; border-radius:0; }}"
         )
         self.ai_chat_avatar.setStyleSheet(
-            "#aiChatAvatar { background:#1d9bf0; color:white; border-radius:18px; font-size:17px; font-weight:800; }"
+            "#aiChatAvatar { background:#1d9bf0; color:white; border-radius:7px; font-size:16px; font-weight:800; }"
         )
         self.ai_chat_title.setStyleSheet(
             f"background:transparent; color:{text}; border:none; font-size:14px; font-weight:700;"
@@ -1254,21 +1510,259 @@ class ArabicPyIDE(QMainWindow):
             return
         self.ai_chat_input.clear()
         self.append_ai_message("user", question)
-        ollama = shutil.which("ollama")
-        if not ollama:
-            self.append_ai_message("assistant", "Ollama غير مثبت أو غير موجود في PATH.")
-            return
         prompt = (
             f"{SYSTEM_PROMPT}\n\n"
+            f"معرفة موثقة مسترجعة من قاعدة الباء:\n{rag_context(question)}\n\n"
             f"كود الباء الحالي:\n{self.editor.toPlainText()}\n\n"
             f"سؤال المستخدم:\n{question}"
         )
-        payload = json.dumps({
-            "model": DEFAULT_MODEL,
-            "prompt": prompt,
+        model = self.ai_model_selector.currentText().strip() or DEFAULT_MODEL
+        self.save_ai_model(model)
+        if shutil.which("ollama"):
+            self.ai_backend = "ollama"
+            payload = {
+                "model": model, "prompt": prompt, "stream": False, "think": False,
+            }
+            self.start_ai_http_request("http://127.0.0.1:11434/api/generate", payload)
+            return
+        engine = llama_server_path()
+        if engine is None:
+            self.append_ai_message(
+                "assistant",
+                "محرك الذكاء المضمّن غير موجود في هذه النسخة. أعد بناء الباء لتضمين llama.cpp.",
+            )
+            return
+        profile = MODELS.get(model)
+        if profile is None:
+            self.append_ai_message("assistant", "هذا النموذج غير مدعوم في المحرك المضمّن.")
+            return
+        settings = QSettings("AlBaa", "AlBaaIDE")
+        consent_key = f"embedded_model_consent/{model}"
+        if not settings.value(consent_key, False, type=bool):
+            answer = QMessageBox.question(
+                self, "تنزيل نموذج الذكاء",
+                f"سيقوم الباء بتنزيل {profile.label_ar} بحجم يقارب {profile.download_gb:.1f} GB.\n\nهل تريد المتابعة؟",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            settings.setValue(consent_key, True)
+        self.ai_backend = "embedded"
+        self.pending_ai_payload = {
+            "model": profile.id,
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "think": False,
-        }, ensure_ascii=False)
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        local_model = model_path(model)
+        if local_model.is_file() and local_model.stat().st_size > 10_000_000:
+            self.start_embedded_ai(engine, model, local_model)
+        else:
+            self.download_embedded_model(engine, model, profile, local_model)
+
+    def download_embedded_model(self, engine, model, profile, destination):
+        """Download a selected GGUF model while showing byte-accurate progress."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        partial = destination.with_suffix(destination.suffix + ".part")
+        offset = partial.stat().st_size if partial.exists() else 0
+        try:
+            self.ai_download_stream = open(partial, "ab" if offset else "wb")
+        except OSError as error:
+            self.append_ai_message("assistant", f"تعذر إنشاء ملف النموذج: {error}")
+            return
+        self.pending_ai_engine = engine
+        self.pending_ai_model = model
+        self.ai_download_profile = profile
+        self.ai_download_destination = destination
+        self.ai_download_offset = offset
+        self.ai_download_expected_total = None
+        self.ai_download_paused = False
+        request = QNetworkRequest(QUrl(profile.download_url))
+        # Large Hugging Face downloads can finish their bytes and then report
+        # an HTTP/2 protocol error in Qt. HTTP/1.1 is slower only negligibly
+        # here and is substantially more reliable for resumable GGUF files.
+        request.setAttribute(QNetworkRequest.Attribute.Http2AllowedAttribute, False)
+        request.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+        )
+        if offset:
+            request.setRawHeader(b"Range", f"bytes={offset}-".encode("ascii"))
+        reply = self.ai_download_manager.get(request)
+        self.ai_download_reply = reply
+        reply.readyRead.connect(self.write_ai_model_chunk)
+        reply.downloadProgress.connect(self.update_ai_download_progress)
+        reply.metaDataChanged.connect(self.validate_ai_download_resume)
+        reply.finished.connect(lambda: self.finish_ai_model_download(partial, destination))
+        estimated_total = max(1, int(profile.download_gb * (1024 ** 3)))
+        self.ai_download_progress.setRange(0, 100)
+        self.ai_download_progress.setValue(min(99, int(offset * 100 / estimated_total)))
+        self.ai_download_progress.show()
+        self.ai_download_pause_button.setText("إيقاف")
+        self.ai_download_pause_button.show()
+        self.ai_send_button.setEnabled(False)
+        self.ai_thinking_label.setText("جارٍ تنزيل نموذج الذكاء…")
+        self.ai_thinking_label.show()
+
+    def validate_ai_download_resume(self):
+        """Restart safely if the remote host ignored our Range request."""
+        if self.ai_download_reply is None or not self.ai_download_offset:
+            return
+        status = self.ai_download_reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+        if status == 200:
+            self.ai_download_paused = True
+            self.ai_download_reply.abort()
+
+    def toggle_ai_model_download(self):
+        if self.ai_download_reply is not None:
+            self.ai_download_paused = True
+            self.ai_download_reply.abort()
+            return
+        if self.ai_download_profile is not None and self.ai_download_destination is not None:
+            self.download_embedded_model(
+                self.pending_ai_engine,
+                self.pending_ai_model,
+                self.ai_download_profile,
+                self.ai_download_destination,
+            )
+
+    def write_ai_model_chunk(self):
+        if self.ai_download_reply is not None and self.ai_download_stream is not None:
+            self.ai_download_stream.write(bytes(self.ai_download_reply.readAll()))
+
+    def update_ai_download_progress(self, received, total):
+        if total > 0:
+            accumulated = self.ai_download_offset + received
+            complete_total = self.ai_download_offset + total
+            self.ai_download_expected_total = complete_total
+            percent = max(0, min(100, int(accumulated * 100 / complete_total)))
+            received_gb = accumulated / (1024 ** 3)
+            total_gb = complete_total / (1024 ** 3)
+            self.ai_download_progress.setValue(percent)
+            self.ai_download_progress.setFormat(
+                f"تنزيل النموذج: {percent}% — {received_gb:.2f} / {total_gb:.2f} GB"
+            )
+        else:
+            self.ai_download_progress.setRange(0, 0)
+            self.ai_download_progress.setFormat("جارٍ تنزيل النموذج…")
+
+    def finish_ai_model_download(self, partial, destination):
+        reply = self.ai_download_reply
+        self.write_ai_model_chunk()
+        if self.ai_download_stream is not None:
+            self.ai_download_stream.close()
+        self.ai_download_stream = None
+        self.ai_download_reply = None
+        failed = reply is None or reply.error() != QNetworkReply.NetworkError.NoError
+        error_text = reply.errorString() if reply is not None else "خطأ غير معروف"
+        status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) if reply is not None else None
+        if reply is not None:
+            content_range = bytes(reply.rawHeader(b"Content-Range")).decode("ascii", errors="ignore")
+            total_match = re.search(r"/(\d+)$", content_range)
+            if total_match:
+                self.ai_download_expected_total = int(total_match.group(1))
+        # Some Qt versions report a protocol error after emitting 100%. Accept
+        # the download only when its exact announced size and GGUF signature
+        # prove that all model bytes reached disk.
+        if failed and partial.is_file() and self.ai_download_expected_total:
+            try:
+                with open(partial, "rb") as downloaded:
+                    valid_header = downloaded.read(4) == b"GGUF"
+                complete_size = partial.stat().st_size == self.ai_download_expected_total
+            except OSError:
+                valid_header = complete_size = False
+            if valid_header and complete_size:
+                failed = False
+        if reply is not None:
+            reply.deleteLater()
+        if self.ai_download_paused:
+            # A 200 response after requesting a range means resume is unsupported;
+            # discard the newly appended bytes and restart cleanly.
+            if self.ai_download_offset and status == 200:
+                try:
+                    partial.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                self.ai_download_offset = 0
+                self.ai_download_paused = False
+                self.download_embedded_model(
+                    self.pending_ai_engine, self.pending_ai_model,
+                    self.ai_download_profile, self.ai_download_destination,
+                )
+                return
+            self.ai_download_progress.setRange(0, 100)
+            self.ai_download_progress.setFormat("تم إيقاف التنزيل — اضغط متابعة")
+            self.ai_download_pause_button.setText("متابعة")
+            self.ai_thinking_label.setText("تنزيل النموذج متوقف مؤقتًا")
+            self.ai_send_button.setEnabled(False)
+            return
+        if failed:
+            self.ai_download_progress.hide()
+            self.ai_thinking_label.hide()
+            self.ai_send_button.setEnabled(False)
+            self.ai_download_pause_button.setText("متابعة")
+            self.append_ai_message("assistant", f"تعذر تنزيل النموذج: {error_text}")
+            return
+        try:
+            os.replace(partial, destination)
+        except OSError as error:
+            self.append_ai_message("assistant", f"تعذر حفظ النموذج: {error}")
+            self.ai_send_button.setEnabled(True)
+            return
+        self.ai_download_progress.setRange(0, 100)
+        self.ai_download_progress.setValue(100)
+        self.ai_download_progress.setFormat("اكتمل تنزيل النموذج — 100%")
+        self.ai_download_pause_button.hide()
+        self.ai_download_profile = None
+        self.ai_download_destination = None
+        engine, model = self.pending_ai_engine, self.pending_ai_model
+        self.pending_ai_engine = self.pending_ai_model = None
+        self.start_embedded_ai(engine, model, destination)
+
+    def start_embedded_ai(self, engine, model, local_model=None):
+        """Start the bundled llama.cpp server and wait without blocking the UI."""
+        if self.embedded_ai_process is None:
+            process = QProcess(self)
+            process.setProgram(str(engine))
+            process.setArguments(server_arguments(model, local_model))
+            process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+            process.finished.connect(self.embedded_ai_stopped)
+            process.start()
+            self.embedded_ai_process = process
+        self.ai_thinking_label.setText("جارٍ تنزيل أو تحميل نموذج الذكاء…")
+        self.ai_thinking_label.show()
+        self.ai_send_button.setEnabled(False)
+        self.ai_engine_wait_attempts = 0
+        QTimer.singleShot(500, self.wait_for_embedded_ai)
+
+    def wait_for_embedded_ai(self):
+        """Poll the loopback server until the model is ready."""
+        self.ai_engine_wait_attempts += 1
+        try:
+            connection = socket.create_connection(("127.0.0.1", 11435), timeout=0.15)
+            connection.close()
+        except OSError:
+            if self.embedded_ai_process is None or self.ai_engine_wait_attempts >= 3600:
+                self.ai_thinking_label.hide()
+                self.ai_send_button.setEnabled(True)
+                self.append_ai_message("assistant", "تعذر تشغيل محرك الذكاء المضمّن.")
+                return
+            QTimer.singleShot(500, self.wait_for_embedded_ai)
+            return
+        payload = self.pending_ai_payload
+        self.pending_ai_payload = None
+        self.ai_download_progress.hide()
+        self.ai_download_pause_button.hide()
+        self.ai_thinking_label.setText("مساعد الباء يكتب الآن…")
+        self.start_ai_http_request(f"{EMBEDDED_BASE_URL}/v1/chat/completions", payload)
+
+    def embedded_ai_stopped(self, _exit_code, _status):
+        if self.embedded_ai_process is not None:
+            self.embedded_ai_process.deleteLater()
+        self.embedded_ai_process = None
+
+    def start_ai_http_request(self, endpoint, payload):
+        """Send a request to either supported local AI runtime."""
         self.ai_thinking_label.show()
         self.ai_button.setEnabled(False)
         self.ai_send_button.setEnabled(False)
@@ -1282,8 +1776,9 @@ class ArabicPyIDE(QMainWindow):
         process.errorOccurred.connect(self.local_ai_error)
         process.setProgram("curl.exe")
         process.setArguments([
-            "-sS", "-X", "POST", "http://127.0.0.1:11434/api/generate",
-            "-H", "Content-Type: application/json", "-d", payload,
+            "-sS", "-X", "POST", endpoint,
+            "-H", "Content-Type: application/json",
+            "-d", json.dumps(payload, ensure_ascii=False),
         ])
         process.start()
 
@@ -1306,23 +1801,29 @@ class ArabicPyIDE(QMainWindow):
         self.ai_thinking_label.hide()
         raw = bytes(self.ai_response_buffer).decode("utf-8", errors="replace")
         try:
-            answer = json.loads(raw).get("response", "").strip()
+            result = json.loads(raw)
+            if self.ai_backend == "embedded":
+                answer = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            else:
+                answer = result.get("response", "").strip()
         except json.JSONDecodeError:
             answer = ""
         if exit_code == 0 and answer:
             self.append_ai_message("assistant", answer)
         else:
-            self.append_ai_message("assistant", f"تعذر تشغيل {DEFAULT_MODEL}. تأكد أن Ollama يعمل.")
+            self.append_ai_message("assistant", f"تعذر تشغيل {self.ai_model}. تأكد أن النموذج مثبت أو أعد المحاولة.")
 
     def local_ai_error(self, _error):
         self.ai_thinking_label.hide()
         if self.ai_process is not None:
-            self.append_ai_message("assistant", "تعذر بدء الاتصال بـ Ollama.")
+            self.append_ai_message("assistant", "تعذر بدء الاتصال بمحرك الذكاء المحلي.")
 
     def ensure_ai_server(self):
         if self.ai_server is not None:
             return True
-        server = AlBaaAIServer(self.ai_server_token)
+        model = self.ai_model_selector.currentText().strip() or DEFAULT_MODEL
+        self.save_ai_model(model)
+        server = AlBaaAIServer(self.ai_server_token, model=model)
         try:
             server.start()
         except OSError as error:
@@ -1366,6 +1867,15 @@ class ArabicPyIDE(QMainWindow):
         if self.ai_server is not None:
             self.ai_server.stop()
             self.ai_server = None
+        if self.embedded_ai_process is not None:
+            self.embedded_ai_process.terminate()
+            self.embedded_ai_process.waitForFinished(2000)
+            self.embedded_ai_process = None
+        if self.ai_download_reply is not None:
+            self.ai_download_reply.abort()
+        if self.ai_download_stream is not None:
+            self.ai_download_stream.close()
+            self.ai_download_stream = None
         super().closeEvent(event)
 
     def new_android_file(self):
@@ -2294,10 +2804,14 @@ class ArabicPyIDE(QMainWindow):
         try:
             with open(editor.file_path, "w", encoding="utf-8") as file:
                 file.write(editor.toPlainText())
+            timer = self.autosave_timers.get(editor)
+            if timer is not None:
+                timer.stop()
             editor.document().setModified(False)
             self.current_file = editor.file_path
             self.update_tab_title(False)
             self.remember_project_file(editor.file_path)
+            self.autosave_status_label.setText("تم الحفظ")
             return
         except OSError as error:
             self.output.setPlainText(f"تعذر حفظ الملف:\n{error}")
@@ -2317,13 +2831,32 @@ class ArabicPyIDE(QMainWindow):
             self.output.setPlainText(f"تعذر حفظ الملف:\n{error}")
 
     def find_text(self):
-        text, ok = QInputDialog.getText(self, "بحث", "ابحث عن:")
-        if ok and text:
-            found = self.editor.document().find(text, self.editor.textCursor())
-            if found.isNull():
-                found = self.editor.document().find(text)
-            if not found.isNull():
-                self.editor.setTextCursor(found)
+        self.find_bar.show()
+        selected = self.editor.textCursor().selectedText()
+        if selected:
+            self.find_input.setText(selected)
+        self.find_status.clear()
+        self.find_input.setFocus()
+        self.find_input.selectAll()
+
+    def hide_find_bar(self):
+        self.find_bar.hide()
+        self.editor.setFocus()
+
+    def find_next(self):
+        text = self.find_input.text()
+        if not text:
+            self.find_status.setText("اكتب كلمة للبحث")
+            return
+        found = self.editor.document().find(text, self.editor.textCursor())
+        if found.isNull():
+            found = self.editor.document().find(text)
+        if found.isNull():
+            self.find_status.setText("لا توجد نتائج")
+            return
+        self.editor.setTextCursor(found)
+        self.editor.ensureCursorVisible()
+        self.find_status.setText("تم العثور")
 
     def run_code(self):
         source = self.editor.toPlainText()

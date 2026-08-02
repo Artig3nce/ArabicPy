@@ -4,7 +4,7 @@
 a = Analysis(
     ['launch_ide.py'],
     pathex=[],
-    binaries=[],
+    binaries=[('vendor/llama.cpp/*', 'ai-engine')],
     datas=[],
     hiddenimports=[],
     hookspath=[],

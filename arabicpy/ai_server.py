@@ -8,6 +8,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .ai import DEFAULT_MODEL, SYSTEM_PROMPT
+from .rag import context_for
 
 
 def local_ipv4():
@@ -68,7 +69,11 @@ class AlBaaAIServer:
                         return
                     payload = json.dumps({
                         "model": owner.model,
-                        "prompt": f"{SYSTEM_PROMPT}\n\nسؤال مستخدم تطبيق الهاتف:\n{question}",
+                        "prompt": (
+                            f"{SYSTEM_PROMPT}\n\n"
+                            f"معرفة موثقة مسترجعة من قاعدة الباء:\n{context_for(question)}\n\n"
+                            f"سؤال مستخدم تطبيق الهاتف:\n{question}"
+                        ),
                         "stream": False,
                         "think": False,
                     }).encode("utf-8")
