@@ -15,9 +15,10 @@ import time
 import urllib.error
 import urllib.request
 import socket
+import subprocess
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QObject, QPointF, QProcess, QSettings, QTimer, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QPointF, QProcess, QSettings, QThread, QTimer, QRect, QSize, Qt, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtGui import (
     QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPainter, QPen, QPolygonF, QTextBlockFormat, QTextCharFormat, QTextCursor,
@@ -138,6 +139,34 @@ class AIChatInput(QTextEdit):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+class RAGImportWorker(QThread):
+    """Index RAG documents without freezing the IDE."""
+
+    progress = Signal(int, str)
+    completed = Signal(list, list)
+
+    def __init__(self, paths, parent=None):
+        super().__init__(parent)
+        self.paths = list(paths)
+
+    def run(self):
+        added, errors = [], []
+        total = max(1, len(self.paths))
+        for file_index, path in enumerate(self.paths):
+            name = os.path.basename(path)
+
+            def report(value, stage="", index=file_index, filename=name):
+                overall = int(((index + max(0, min(100, value)) / 100) / total) * 100)
+                self.progress.emit(overall, filename)
+
+            try:
+                added.append(import_document(path, progress=report).name)
+            except Exception as error:
+                errors.append(f"{name}: {error}")
+            self.progress.emit(int(((file_index + 1) / total) * 100), name)
+        self.completed.emit(added, errors)
 
 
 class SettingsIconButton(QPushButton):
@@ -646,6 +675,7 @@ class ArabicPyIDE(QMainWindow):
             ("إعداد GitHub", self.setup_github),
             ("رفع التطبيق إلى GitHub", self.upload_to_github),
             ("إنشاء APK عبر GitHub", self.build_apk_with_github),
+            ("إنشاء تطبيق iOS عبر GitHub", self.build_ios_with_github),
         ]))
         menu_layout.addWidget(self.make_menu_button("تعليمات", [
             ("حول الباء", self.show_about),
@@ -672,7 +702,6 @@ class ArabicPyIDE(QMainWindow):
         command_layout.addWidget(self.make_button("⌕ بحث", self.find_text))
         self.ai_button = self.make_button("✦ مساعد ذكي", self.ask_local_ai, "aiButton")
         self.ai_button.setCheckable(True)
-        command_layout.addWidget(self.ai_button)
         self.ai_server_button = self.make_button("شبكة AI", self.toggle_ai_server)
         command_layout.addWidget(self.ai_server_button)
         self.remote_ai_button = self.make_button("AI بعيد", self.configure_remote_ai)
@@ -680,7 +709,16 @@ class ArabicPyIDE(QMainWindow):
         if self.remote_ai_url:
             self.remote_ai_button.setText("AI بعيد ✓")
         command_layout.addWidget(self.remote_ai_button)
-        command_layout.addWidget(self.make_button("مستندات RAG", self.add_rag_documents))
+        self.rag_button = self.make_button("مستندات RAG", self.add_rag_documents)
+        command_layout.addWidget(self.rag_button)
+        self.rag_progress = QProgressBar(objectName="ragProgress")
+        self.rag_progress.setRange(0, 100)
+        self.rag_progress.setValue(0)
+        self.rag_progress.setFixedWidth(190)
+        self.rag_progress.setFixedHeight(20)
+        self.rag_progress.setTextVisible(True)
+        self.rag_progress.hide()
+        command_layout.addWidget(self.rag_progress)
         self.python_toggle_button = self.make_button("◀", self.toggle_python_preview)
         self.python_toggle_button.setFixedWidth(34)
         self.python_toggle_button.setToolTip("إظهار كود Python")
@@ -716,11 +754,15 @@ class ArabicPyIDE(QMainWindow):
         self.github_apk_button = self.make_button("▣ إنشاء APK", self.build_apk_with_github)
         self.github_apk_button.setToolTip("إنشاء APK سحابيًا عبر GitHub Actions")
         command_layout.addWidget(self.github_apk_button)
+        self.github_ios_button = self.make_button("▣ إنشاء iOS", self.build_ios_with_github)
+        self.github_ios_button.setToolTip("إنشاء تطبيق iOS Simulator سحابيًا على macOS عبر GitHub Actions")
+        command_layout.addWidget(self.github_ios_button)
         self.package_button = self.make_button("▣ حزم المنصات", self.export_cross_platform)
         self.package_button.setToolTip("توليد مشروع للمتصفح وWindows وLinux وmacOS وAndroid وiOS")
         command_layout.addWidget(self.package_button)
         self.designer_button = self.make_button("تصميم", self.toggle_android_designer)
         command_layout.addWidget(self.designer_button)
+        command_layout.addWidget(self.ai_button)
         self.run_button = self.make_button("▶ تشغيل", self.run_code, "runButton")
         command_layout.addWidget(self.run_button)
         layout.addWidget(command_bar)
@@ -953,6 +995,13 @@ class ArabicPyIDE(QMainWindow):
             "qwen3:1.7b",
             "qwen3:8b",
         ])
+        installed_models = self.installed_ollama_models()
+        for installed_model in installed_models:
+            if self.ai_model_selector.findText(installed_model) < 0:
+                self.ai_model_selector.addItem(installed_model)
+        if installed_models and self.ai_model not in installed_models:
+            self.ai_model = self.preferred_ollama_model(installed_models)
+            QSettings("AlBaa", "AlBaaIDE").setValue("ai_model", self.ai_model)
         if self.ai_model_selector.findText(self.ai_model) < 0:
             self.ai_model_selector.addItem(self.ai_model)
         self.ai_model_selector.setCurrentText(self.ai_model)
@@ -1416,6 +1465,8 @@ class ArabicPyIDE(QMainWindow):
         self.output.setPlainText("الباء\n\nلغة برمجة عربية مع محرر لكتابة البرامج وتشغيلها.\nاستخدم ملف > فتح أو زر فتح لبدء العمل.")
 
     def add_rag_documents(self):
+        if getattr(self, "rag_worker", None) is not None and self.rag_worker.isRunning():
+            return
         paths, _filter = QFileDialog.getOpenFileNames(
             self,
             "إضافة مستندات إلى معرفة RAG",
@@ -1424,21 +1475,38 @@ class ArabicPyIDE(QMainWindow):
         )
         if not paths:
             return
-        added, errors = [], []
-        for path in paths:
-            self.output.setPlainText(f"جارٍ استخراج وفهرسة:\n{os.path.basename(path)}\n\nقد يستغرق OCR بعض الوقت في أول استخدام.")
-            QApplication.processEvents()
-            try:
-                added.append(import_document(path).name)
-            except Exception as error:
-                errors.append(f"{os.path.basename(path)}: {error}")
         self.main_splitter.widget(1).show()
+        self.rag_button.setEnabled(False)
+        self.rag_progress.setValue(0)
+        self.rag_progress.setFormat("RAG 0%")
+        self.rag_progress.show()
+        self.output.setPlainText("بدأ استخراج وفهرسة المستندات...")
+        self.rag_worker = RAGImportWorker(paths, self)
+        self.rag_worker.progress.connect(self.update_rag_progress)
+        self.rag_worker.completed.connect(self.finish_rag_import)
+        self.rag_worker.finished.connect(self.rag_worker.deleteLater)
+        self.rag_worker.start()
+
+    def update_rag_progress(self, value, filename):
+        self.rag_progress.setValue(value)
+        self.rag_progress.setFormat(f"RAG {value}%")
+        self.output.setPlainText(
+            f"جارٍ استخراج وفهرسة:\n{filename}\n\n"
+            f"التقدم: {value}%\nقد يستغرق OCR بعض الوقت في أول استخدام."
+        )
+
+    def finish_rag_import(self, added, errors):
+        self.rag_progress.setValue(100)
+        self.rag_progress.setFormat("RAG 100%")
+        self.rag_button.setEnabled(True)
         message = f"تمت إضافة {len(added)} مستند إلى مكتبة RAG."
         if added:
             message += "\n\n" + "\n".join(f"✓ {name}" for name in added)
         if errors:
             message += "\n\nتعذر إضافة:\n" + "\n".join(errors)
         self.output.setPlainText(message)
+        QTimer.singleShot(2500, self.rag_progress.hide)
+        self.rag_worker = None
 
     def ask_local_ai(self, _checked=False):
         self.toggle_ai_chat(show=True)
@@ -1451,6 +1519,37 @@ class ArabicPyIDE(QMainWindow):
             return
         self.ai_model = model
         QSettings("AlBaa", "AlBaaIDE").setValue("ai_model", model)
+
+    @staticmethod
+    def installed_ollama_models():
+        """Return locally installed Ollama model names without opening a console."""
+        if not shutil.which("ollama"):
+            return []
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            result = subprocess.run(
+                ["ollama", "list"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=8,
+                creationflags=creationflags,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if result.returncode != 0:
+            return []
+        models = []
+        for line in result.stdout.splitlines()[1:]:
+            columns = line.split()
+            if columns:
+                models.append(columns[0])
+        return models
+
+    @staticmethod
+    def preferred_ollama_model(models):
+        """Prefer the balanced desktop model, then any installed Qwen model."""
+        for preferred in (DEFAULT_MODEL, "qwen3:8b", "qwen3:14b", "qwen3:1.7b"):
+            if preferred in models:
+                return preferred
+        return next((model for model in models if model.startswith("qwen")), models[0])
 
     def toggle_ai_chat(self, _checked=False, show=None):
         visible = not self.ai_chat_panel.isVisible() if show is None else show
@@ -1512,8 +1611,25 @@ class ArabicPyIDE(QMainWindow):
         self.ai_thinking_label.setStyleSheet(f"color:{muted}; padding:2px 8px; font-size:11px;")
 
     def append_ai_message(self, sender, message):
+        if sender == "assistant":
+            message = self.clean_ai_markdown(message)
         self.ai_messages.append((sender, message, datetime.now().strftime("%H:%M")))
         self.render_ai_messages()
+
+    @staticmethod
+    def clean_ai_markdown(message):
+        """Turn common model Markdown into clean plain text for chat bubbles."""
+        text = str(message).replace("\r\n", "\n")
+        text = re.sub(r"^\s*```[^\n]*\n?", "", text, flags=re.MULTILINE)
+        text = text.replace("```", "")
+        text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
+        text = re.sub(r"^\s*[-+*]\s+", "• ", text, flags=re.MULTILINE)
+        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"__(.+?)__", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", text)
+        text = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", text)
+        text = re.sub(r"`([^`\n]+)`", r"\1", text)
+        return text.strip()
 
     def render_ai_messages(self):
         while self.ai_chat_messages_layout.count() > 1:
@@ -1616,6 +1732,10 @@ class ArabicPyIDE(QMainWindow):
             )
             return
         model = self.ai_model_selector.currentText().strip() or DEFAULT_MODEL
+        installed_models = self.installed_ollama_models() if shutil.which("ollama") else []
+        if installed_models and model not in installed_models:
+            model = self.preferred_ollama_model(installed_models)
+            self.ai_model_selector.setCurrentText(model)
         self.save_ai_model(model)
         if shutil.which("ollama"):
             self.ai_backend = "ollama"
@@ -2308,7 +2428,7 @@ class ArabicPyIDE(QMainWindow):
     def set_github_busy(self, busy, label="عملية GitHub جارية"):
         for button in (
             self.github_setup_button, self.github_upload_button,
-            self.github_apk_button,
+            self.github_apk_button, self.github_ios_button,
         ):
             button.setEnabled(not busy)
         if busy:
@@ -2319,10 +2439,10 @@ class ArabicPyIDE(QMainWindow):
             self.github_status_label.show()
             self.github_cancel_button.show()
             self.github_elapsed_timer.start(1000)
-            if self.github_operation in ("upload", "build_upload", "build_all_upload", "build", "build_all"):
+            if self.github_operation in ("upload", "build_upload", "build_all_upload", "build_ios_upload", "build", "build_all", "build_ios"):
                 self.apk_progress.setRange(0, 100)
                 self.apk_progress.setValue(
-                    10 if self.github_operation in ("upload", "build_upload", "build_all_upload") else 20
+                    10 if self.github_operation in ("upload", "build_upload", "build_all_upload", "build_ios_upload") else 20
                 )
                 self.apk_progress.setTextVisible(True)
             else:
@@ -2347,10 +2467,12 @@ class ArabicPyIDE(QMainWindow):
             "build": "بناء APK",
             "build_all": "بناء EXE",
             "build_all_upload": "تجهيز حزمة Windows",
+            "build_ios": "بناء iOS",
+            "build_ios_upload": "تجهيز تطبيق iOS",
         }
         phase = phases.get(self.github_operation, "GitHub")
         remaining = ""
-        if self.github_operation in ("build", "build_all"):
+        if self.github_operation in ("build", "build_all", "build_ios"):
             elapsed_minutes = self.github_elapsed_seconds // 60
             minimum_left = max(1, 10 - elapsed_minutes)
             maximum_left = max(minimum_left, 30 - elapsed_minutes)
@@ -2359,7 +2481,7 @@ class ArabicPyIDE(QMainWindow):
             f"{phase}  •  {minutes:02d}:{seconds:02d}{remaining}"
         )
         tooltip = self.github_phase_label
-        if self.github_operation in ("build", "build_all"):
+        if self.github_operation in ("build", "build_all", "build_ios"):
             tooltip += " — يستغرق عادةً 10–30 دقيقة"
         elif self.github_operation in ("login", "scope"):
             tooltip += " — أدخل الرمز الظاهر في المتصفح"
@@ -2378,11 +2500,16 @@ class ArabicPyIDE(QMainWindow):
             return
         self.github_cancel_requested = True
         self.output.appendPlainText("\nجارٍ إلغاء عملية GitHub...")
-        if self.github_operation in ("build", "build_all") and self.github_project_path:
+        if self.github_operation in ("build", "build_all", "build_ios") and self.github_project_path:
             gh_path = (self.github_cli_path() or "gh").replace("'", "''")
+            workflow = {
+                "build": "build-apk.yml",
+                "build_all": "build-windows.yml",
+                "build_ios": "build-ios.yml",
+            }.get(self.github_operation, "build-apk.yml")
             cancel_command = (
                 f"$gh='{gh_path}'; "
-                "$run=& $gh run list --workflow build-apk.yml --event workflow_dispatch "
+                f"$run=& $gh run list --workflow {workflow} --event workflow_dispatch "
                 "--limit 1 --json databaseId --jq '.[0].databaseId'; "
                 "if ($run) { & $gh run cancel $run }"
             )
@@ -2499,7 +2626,7 @@ class ArabicPyIDE(QMainWindow):
                 return None
             self.github_project_path = directory
         try:
-            if project_type == "cross":
+            if project_type in ("cross", "ios"):
                 export_tauri_project(source, directory)
             else:
                 ai_url, ai_token = self.ai_export_credentials()
@@ -2517,6 +2644,9 @@ class ArabicPyIDE(QMainWindow):
 
     def build_apk_with_github(self):
         self.start_github_upload(build_after=True)
+
+    def build_ios_with_github(self):
+        self.start_github_upload(build_after=True, project_type="ios")
 
     def start_github_upload(self, build_after=False, project_type="android"):
         if self.github_process is not None:
@@ -2580,13 +2710,18 @@ class ArabicPyIDE(QMainWindow):
             "if ($LASTEXITCODE -ne 0) { git commit -m 'Update from AlBaa' }; "
             + remote_command
         )
-        operation = (
-            ("build_all_upload" if project_type == "cross" else "build_upload")
-            if build_after else "upload"
-        )
+        if build_after:
+            operation = {
+                "cross": "build_all_upload",
+                "ios": "build_ios_upload",
+            }.get(project_type, "build_upload")
+        else:
+            operation = "upload"
         message = (
             "جارٍ تجهيز تطبيق Windows للبناء السحابي الخاص..."
             if project_type == "cross" and build_after
+            else "جارٍ تجهيز تطبيق iOS للبناء على macOS..."
+            if project_type == "ios" and build_after
             else "جارٍ رفع التطبيق إلى GitHub..."
         )
         self.start_github_command(command, operation, directory, message)
@@ -2679,6 +2814,28 @@ class ArabicPyIDE(QMainWindow):
             "بدأ إنشاء Windows EXE وبقية حزم المنصات عبر GitHub...",
         )
 
+    def start_github_cloud_build_ios(self):
+        directory = self.github_project_path
+        gh_path = self.github_cli_path().replace("'", "''")
+        output_root = getattr(self, "cross_platform_output_directory", directory)
+        download_path = os.path.join(output_root, "تطبيق-iOS-Simulator")
+        self.github_download_path = download_path
+        escaped_download = download_path.replace("'", "''")
+        command = (
+            f"$gh='{gh_path}'; & $gh workflow run build-ios.yml; "
+            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+            "$run=''; for ($i=0; $i -lt 30 -and !$run; $i++) { "
+            "Start-Sleep -Seconds 3; "
+            "$run=& $gh run list --workflow build-ios.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
+            "if (!$run) { Write-Error 'لم يظهر تشغيل بناء iOS'; exit 1 }; "
+            "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+            f"& $gh run download $run --name albaa-ios-simulator --dir '{escaped_download}'; exit $LASTEXITCODE"
+        )
+        self.start_github_command(
+            command, "build_ios", directory,
+            "بدأ إنشاء تطبيق iOS Simulator على GitHub macOS...",
+        )
+
     def github_process_finished(self, exit_code, _status):
         operation = self.github_operation
         was_cancelled = self.github_cancel_requested
@@ -2731,6 +2888,8 @@ class ArabicPyIDE(QMainWindow):
             self.start_github_cloud_build()
         elif operation == "build_all_upload":
             self.start_github_cloud_build_all()
+        elif operation == "build_ios_upload":
+            self.start_github_cloud_build_ios()
         elif operation == "build":
             apk_files = []
             if self.github_download_path and os.path.isdir(self.github_download_path):
@@ -2759,6 +2918,28 @@ class ArabicPyIDE(QMainWindow):
                 QMessageBox.warning(
                     self, "لم يُعثر على EXE",
                     "انتهى البناء، لكن لم يُعثر على EXE أو MSI داخل ملف Windows الذي تم تنزيله.",
+                )
+        elif operation == "build_ios":
+            app_bundles = []
+            if self.github_download_path and os.path.isdir(self.github_download_path):
+                for root, dirs, files in os.walk(self.github_download_path):
+                    app_bundles.extend(os.path.join(root, name) for name in dirs if name.endswith(".app"))
+                    app_bundles.extend(
+                        os.path.join(root, name) for name in files
+                        if name.lower().endswith((".ipa", ".zip"))
+                    )
+            if app_bundles:
+                message = (
+                    "تم إنشاء وتنزيل تطبيق iOS Simulator بنجاح:\n"
+                    f"{app_bundles[0]}\n\n"
+                    "هذه النسخة للمحاكي. التثبيت على iPhone يحتاج شهادة Apple وتوقيع IPA."
+                )
+                self.output.appendPlainText("\n" + message)
+                QMessageBox.information(self, "تم إنشاء iOS", message)
+            else:
+                QMessageBox.warning(
+                    self, "لم يُعثر على تطبيق iOS",
+                    "انتهى البناء، لكن لم يُعثر على حزمة .app داخل ملف iOS الذي تم تنزيله.",
                 )
 
     def build_android_apk(self):

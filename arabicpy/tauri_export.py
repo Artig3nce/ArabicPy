@@ -164,5 +164,35 @@ jobs:
           path: src-tauri/target/release/bundle/**
           if-no-files-found: error
 ''')
+    _write(os.path.join(directory, ".github", "workflows", "build-ios.yml"), '''name: Build iOS simulator application
+on:
+  workflow_dispatch:
+jobs:
+  ios-simulator:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - name: Install dependencies
+        run: npm install
+      - name: Initialize iOS project
+        run: npm run tauri ios init -- --ci
+      - name: Build iOS simulator app
+        run: npm run tauri ios build -- --debug --target aarch64-sim
+      - name: Upload iOS simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: albaa-ios-simulator
+          path: src-tauri/gen/apple/build/**
+          if-no-files-found: error
+''')
     _write(os.path.join(directory, "README.md"), "# تطبيق الباء\n\nمشروع Tauri 2 قابل للبناء على Windows وLinux وmacOS، والتهيئة لـ Android وiOS عبر أوامر Tauri mobile. يتطلب بناء iOS جهاز macOS وXcode.\n")
     return directory

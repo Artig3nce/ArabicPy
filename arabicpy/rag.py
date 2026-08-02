@@ -67,8 +67,10 @@ def documents_directory() -> Path:
     return directory
 
 
-def import_document(source) -> Path:
+def import_document(source, progress=None) -> Path:
     """Copy a document into the persistent RAG library without trusting its name."""
+    report = progress or (lambda _value, _stage="": None)
+    report(2, "checking")
     source = Path(source)
     extension = source.suffix.lower()
     if extension not in SUPPORTED_DOCUMENTS:
@@ -76,35 +78,47 @@ def import_document(source) -> Path:
     if not source.is_file() or source.stat().st_size > 25 * 1024 * 1024:
         raise ValueError("المستند غير موجود أو حجمه أكبر من 25MB")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+    report(12, "copying")
     safe_stem = re.sub(r"[^\w\u0600-\u06ff.-]+", "_", source.stem).strip("._") or "document"
     destination = documents_directory() / f"{safe_stem}-{digest}{extension}"
     if not destination.exists():
         shutil.copy2(source, destination)
+    report(20, "extracting")
     extracted = destination.with_suffix(destination.suffix + ".rag")
     if not extracted.exists():
-        text = _read_document(destination)
+        text = _read_document(destination, report)
         if not text.strip():
             raise ValueError("لم يمكن استخراج نص من المستند حتى باستخدام OCR")
         extracted.write_text(text, encoding="utf-8")
+    report(100, "done")
     return destination
 
 
-def _read_document(path: Path) -> str:
+def _read_document(path: Path, progress=None) -> str:
+    report = progress or (lambda _value, _stage="": None)
     extension = path.suffix.lower()
     if extension == ".pdf":
         from pypdf import PdfReader
         reader = PdfReader(str(path))
-        pages = [page.extract_text() or "" for page in reader.pages]
+        total_pages = max(1, len(reader.pages))
+        pages = []
+        for index, page in enumerate(reader.pages):
+            pages.append(page.extract_text() or "")
+            report(20 + int(40 * (index + 1) / total_pages), "extracting")
         scanned_pages = [index for index, text in enumerate(pages) if len(text.strip()) < 20]
         if scanned_pages:
-            recognized = _ocr_pdf_pages(path, scanned_pages)
+            recognized = _ocr_pdf_pages(path, scanned_pages, progress=report)
             for index, text in recognized.items():
                 if text.strip():
                     pages[index] = text
         return "\n\n".join(pages)
     if extension == ".docx":
         from docx import Document
-        return "\n".join(paragraph.text for paragraph in Document(str(path)).paragraphs)
+        report(65, "extracting")
+        text = "\n".join(paragraph.text for paragraph in Document(str(path)).paragraphs)
+        report(90, "indexing")
+        return text
+    report(75, "extracting")
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -143,19 +157,22 @@ def _ocr_result_text(results) -> str:
     return "\n".join(lines)
 
 
-def _ocr_pdf_pages(path: Path, page_indexes) -> dict[int, str]:
+def _ocr_pdf_pages(path: Path, page_indexes, progress=None) -> dict[int, str]:
     """Render only image-only pages and recognize Arabic/English locally."""
     import pypdfium2 as pdfium
     import numpy as np
     engine = _get_ocr_engine()
     document = pdfium.PdfDocument(str(path))
     recognized = {}
+    report = progress or (lambda _value, _stage="": None)
+    total_pages = max(1, len(page_indexes))
     try:
-        for index in page_indexes:
+        for position, index in enumerate(page_indexes):
             page = document[index]
             try:
                 image = page.render(scale=2.0).to_pil()
                 recognized[index] = _ocr_result_text(engine.predict(np.asarray(image)))
+                report(60 + int(30 * (position + 1) / total_pages), "ocr")
             finally:
                 page.close()
     finally:

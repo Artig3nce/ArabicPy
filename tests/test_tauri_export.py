@@ -16,6 +16,7 @@ def test_exports_tauri_react_project_for_all_platforms(tmp_path):
     config = json.loads((tmp_path / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
     workflow = (tmp_path / ".github" / "workflows" / "build-all.yml").read_text(encoding="utf-8")
     windows_workflow = (tmp_path / ".github" / "workflows" / "build-windows.yml").read_text(encoding="utf-8")
+    ios_workflow = (tmp_path / ".github" / "workflows" / "build-ios.yml").read_text(encoding="utf-8")
     app = (tmp_path / "src" / "App.tsx").read_text(encoding="utf-8")
     assert package["devDependencies"]["@tauri-apps/cli"] == "^2"
     assert config["productName"] == "الباء"
@@ -25,3 +26,6 @@ def test_exports_tauri_react_project_for_all_platforms(tmp_path):
     assert "path: dist/**" in workflow
     assert "runs-on: windows-latest" in windows_workflow
     assert "name: albaa-windows-app" in windows_workflow
+    assert "runs-on: macos-latest" in ios_workflow
+    assert "--target aarch64-sim" in ios_workflow
+    assert "name: albaa-ios-simulator" in ios_workflow
