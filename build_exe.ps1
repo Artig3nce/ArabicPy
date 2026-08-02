@@ -3,6 +3,10 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
+if (-not (Test-Path -LiteralPath (Join-Path $projectRoot "vendor\llama.cpp\llama-server.exe"))) {
+    & (Join-Path $projectRoot "prepare_embedded_ai.ps1")
+}
+
 Write-Host "Building AlBaa.exe..." -ForegroundColor Cyan
 python assets\generate_icon.py
 if ($LASTEXITCODE -ne 0) {

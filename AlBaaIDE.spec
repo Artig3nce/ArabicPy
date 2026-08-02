@@ -5,7 +5,7 @@ a = Analysis(
     ['launch_ide.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/albaa.ico', 'assets'), ('dist/AlBaaAIHost.exe', '.')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -4,6 +4,8 @@ import json
 import urllib.error
 import urllib.request
 
+from .rag import context_for
+
 
 DEFAULT_MODEL = "qwen3:8b"
 SYSTEM_PROMPT = (
@@ -20,7 +22,11 @@ def reply(question, model=DEFAULT_MODEL, timeout=300):
         return "اكتب سؤالاً بعد اسأل، وسأحاول مساعدتك."
     payload = json.dumps({
         "model": model,
-        "prompt": f"/no_think\n{SYSTEM_PROMPT}\n\nسؤال المستخدم:\n{text}",
+        "prompt": (
+            f"/no_think\n{SYSTEM_PROMPT}\n\n"
+            f"معرفة موثقة مسترجعة من قاعدة الباء:\n{context_for(text)}\n\n"
+            f"سؤال المستخدم:\n{text}"
+        ),
         "stream": False,
         "think": False,
     }).encode("utf-8")
