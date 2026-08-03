@@ -10,14 +10,22 @@ from PySide6.QtWidgets import (
 )
 
 from .android import AndroidEvent, AndroidProgram, AndroidWidget, parse_android
+from .i18n import TRANSLATIONS
+
+
+def _t(text, language, **kwargs):
+    """Standalone counterpart to ArabicPyIDE.t() -- this widget has no window reference."""
+    if language == "ar":
+        text = TRANSLATIONS.get(text, text)
+    return text.format(**kwargs) if kwargs else text
 
 
 COLOR_THEMES = {
-    "اجتماعي داكن": {
+    "Dark Social": {
         "screen": "#000000", "text": "#F2F2F2", "surface": "#0A0A0A",
         "button": "#F2F2F2", "button_text": "#0F1419", "navigation": True,
     },
-    "نظيف ومضيء": {
+    "Clean & Bright": {
         "screen": "#FFFFFF", "text": "#0F172A", "surface": "#F8FAFC",
         "button": "#0F172A", "button_text": "#FFFFFF", "navigation": True,
     },
@@ -28,9 +36,10 @@ class DesignerItem(QFrame):
     selected = Signal(str)
     activated = Signal(str)
 
-    def __init__(self, widget_model, parent=None):
+    def __init__(self, widget_model, parent=None, language="en"):
         super().__init__(parent)
         self.widget_model = widget_model
+        self.language = language
         self.preview_mode = False
         self.setObjectName("designerItem")
         layout = QVBoxLayout(self)
@@ -41,6 +50,8 @@ class DesignerItem(QFrame):
             control.setAlignment(Qt.AlignCenter)
         elif widget_model.kind == "زر":
             control = QPushButton(widget_model.text)
+        elif widget_model.kind == "دردشة":
+            control = self._build_chat_preview()
         else:
             control = QLineEdit()
             control.setPlaceholderText(widget_model.text)
@@ -52,11 +63,12 @@ class DesignerItem(QFrame):
             control.clicked.connect(
                 lambda _checked=False: self.activated.emit(self.widget_model.name)
             )
-        self.apply_colors()
+        if widget_model.kind != "دردشة":
+            self.apply_colors()
         control.installEventFilter(self)
         layout.addWidget(control)
         if widget_model.kind == "كلمة_مرور":
-            self.password_status = QLabel("أدخل كلمة المرور")
+            self.password_status = QLabel(_t("Enter password", self.language))
             self.password_status.setAlignment(Qt.AlignCenter)
             layout.addWidget(self.password_status)
             control.textChanged.connect(self.validate_password)
@@ -69,11 +81,37 @@ class DesignerItem(QFrame):
             and any(not char.isalnum() for char in value)
         )
         if valid:
-            self.password_status.setText("كلمة المرور قوية")
+            self.password_status.setText(_t("Strong password", self.language))
             self.password_status.setStyleSheet("color: #22C55E;")
         else:
-            self.password_status.setText(f"استخدم {minimum} خانات مع أرقام ورموز")
+            self.password_status.setText(_t("Use {min}+ characters with digits and symbols", self.language, min=minimum))
             self.password_status.setStyleSheet("color: #EF4444;")
+
+    def _build_chat_preview(self):
+        """A static mockup of the scrolling AI chat the real app will generate."""
+        box = QWidget()
+        box.setFixedHeight(170)
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+        user_bubble = QLabel(_t("Sample question", self.language))
+        user_bubble.setAlignment(Qt.AlignRight)
+        user_bubble.setStyleSheet(
+            "background:#007ACC; color:white; border-radius:8px; padding:6px 10px;"
+        )
+        ai_bubble = QLabel(_t("Sample AI answer", self.language))
+        ai_bubble.setAlignment(Qt.AlignLeft)
+        ai_bubble.setStyleSheet(
+            "background:#2d2d30; color:#e0e0e0; border-radius:8px; padding:6px 10px;"
+        )
+        layout.addWidget(user_bubble)
+        layout.addWidget(ai_bubble)
+        layout.addStretch(1)
+        input_row = QLineEdit()
+        input_row.setPlaceholderText(_t("Type a message...", self.language))
+        input_row.setEnabled(False)
+        layout.addWidget(input_row)
+        return box
 
     def apply_colors(self):
         text_color = self.widget_model.text_color or (
@@ -119,9 +157,10 @@ class DesignerItem(QFrame):
 class AndroidDesigner(QWidget):
     sourceChanged = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, language="en"):
         super().__init__(parent)
-        self.program = AndroidProgram("الباء", [], [], background_color="#FFFFFF")
+        self.language = language
+        self.program = AndroidProgram(self.t("Al-Baa"), [], [], background_color="#FFFFFF")
         self.selected_name = None
         self.selected_navigation_index = None
         self.loading = False
@@ -132,6 +171,9 @@ class AndroidDesigner(QWidget):
         self.delete_shortcut = QShortcut(QKeySequence("Delete"), self)
         self.delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.delete_shortcut.activated.connect(self.delete_selected_from_keyboard)
+
+    def t(self, text, **kwargs):
+        return _t(text, self.language, **kwargs)
 
     def delete_selected_from_keyboard(self):
         """Delete the selected canvas item without breaking text-field editing."""
@@ -154,8 +196,11 @@ class AndroidDesigner(QWidget):
         self.palette_panel = palette
         palette.setFixedWidth(150)
         palette_layout = QVBoxLayout(palette)
-        palette_layout.addWidget(QLabel("العناصر", objectName="designerTitle"))
-        for kind, label in (("نص", "+ نص"), ("زر", "+ زر"), ("حقل", "+ حقل إدخال")):
+        palette_layout.addWidget(QLabel(self.t("Elements"), objectName="designerTitle"))
+        for kind, label in (
+            ("نص", self.t("+ Text")), ("زر", self.t("+ Button")), ("حقل", self.t("+ Input Field")),
+            ("دردشة", self.t("+ AI Chat")),
+        ):
             button = QPushButton(label, objectName="designerTool")
             button.clicked.connect(lambda _checked=False, value=kind: self.add_widget(value))
             palette_layout.addWidget(button)
@@ -180,10 +225,10 @@ class AndroidDesigner(QWidget):
         device_layout.setSpacing(4)
         self.device_buttons = {}
         for key, label in (
-            ("phone", "هاتف"),
-            ("tablet", "جهاز لوحي"),
-            ("desktop", "حاسوب"),
-            ("browser", "متصفح"),
+            ("phone", self.t("Phone")),
+            ("tablet", self.t("Tablet")),
+            ("desktop", self.t("Desktop")),
+            ("browser", self.t("Browser")),
         ):
             button = QPushButton(label, objectName="designerTool")
             button.setCheckable(True)
@@ -223,46 +268,46 @@ class AndroidDesigner(QWidget):
         self.properties_panel = properties
         properties.setFixedWidth(210)
         properties_layout = QVBoxLayout(properties)
-        properties_layout.addWidget(QLabel("الخصائص", objectName="designerTitle"))
-        properties_layout.addWidget(QLabel("اسم التطبيق"))
+        properties_layout.addWidget(QLabel(self.t("Properties"), objectName="designerTitle"))
+        properties_layout.addWidget(QLabel(self.t("App Name")))
         self.app_title_edit = QLineEdit()
         self.app_title_edit.editingFinished.connect(self.apply_app_title)
         properties_layout.addWidget(self.app_title_edit)
-        self.screen_color_button = QPushButton("لون خلفية الشاشة")
+        self.screen_color_button = QPushButton(self.t("Screen Background Color"))
         self.screen_color_button.clicked.connect(self.choose_screen_color)
         properties_layout.addWidget(self.screen_color_button)
-        properties_layout.addWidget(QLabel("قوالب التطبيق", objectName="designerTitle"))
+        properties_layout.addWidget(QLabel(self.t("App Templates"), objectName="designerTitle"))
         for theme_name in COLOR_THEMES:
-            theme_button = QPushButton(theme_name, objectName="designerTool")
+            theme_button = QPushButton(self.t(theme_name), objectName="designerTool")
             theme_button.clicked.connect(
                 lambda _checked=False, name=theme_name: self.apply_color_theme(name)
             )
             properties_layout.addWidget(theme_button)
-        properties_layout.addWidget(QLabel("اسم العنصر"))
+        properties_layout.addWidget(QLabel(self.t("Element Name")))
         self.name_edit = QLineEdit()
         properties_layout.addWidget(self.name_edit)
-        properties_layout.addWidget(QLabel("النص"))
+        properties_layout.addWidget(QLabel(self.t("Text")))
         self.text_edit = QLineEdit()
         properties_layout.addWidget(self.text_edit)
-        self.text_color_button = QPushButton("لون النص")
+        self.text_color_button = QPushButton(self.t("Text Color"))
         self.text_color_button.clicked.connect(lambda: self.choose_color("text"))
         properties_layout.addWidget(self.text_color_button)
-        self.background_color_button = QPushButton("لون الخلفية")
+        self.background_color_button = QPushButton(self.t("Background Color"))
         self.background_color_button.clicked.connect(lambda: self.choose_color("background"))
         properties_layout.addWidget(self.background_color_button)
-        reset_colors_button = QPushButton("إعادة الألوان الافتراضية")
+        reset_colors_button = QPushButton(self.t("Reset to Default Colors"))
         reset_colors_button.clicked.connect(self.reset_colors)
         properties_layout.addWidget(reset_colors_button)
-        apply_button = QPushButton("تطبيق التغييرات")
+        apply_button = QPushButton(self.t("Apply Changes"))
         apply_button.clicked.connect(self.apply_properties)
         properties_layout.addWidget(apply_button)
-        up_button = QPushButton("تحريك لأعلى")
+        up_button = QPushButton(self.t("Move Up"))
         up_button.clicked.connect(lambda: self.move_selected(-1))
         properties_layout.addWidget(up_button)
-        down_button = QPushButton("تحريك لأسفل")
+        down_button = QPushButton(self.t("Move Down"))
         down_button.clicked.connect(lambda: self.move_selected(1))
         properties_layout.addWidget(down_button)
-        delete_button = QPushButton("حذف العنصر", objectName="designerDelete")
+        delete_button = QPushButton(self.t("Delete Element"), objectName="designerDelete")
         delete_button.clicked.connect(self.delete_selected)
         properties_layout.addWidget(delete_button)
         properties_layout.addStretch()
@@ -365,32 +410,39 @@ class AndroidDesigner(QWidget):
         ]
         for item in self.item_widgets.values():
             item.setVisible(item in page_items)
-        self.page_placeholder.setText(f"صفحة {page_name}")
+        self.page_placeholder.setText(self.t("Page {name}", name=page_name))
         self.page_placeholder.setVisible(not page_items)
 
     def add_widget(self, kind):
-        prefixes = {"نص": "نص", "زر": "زر", "حقل": "حقل"}
-        defaults = {"نص": "نص جديد", "زر": "زر جديد", "حقل": "اكتب هنا"}
+        prefixes = {"نص": "Text", "زر": "Button", "حقل": "Field", "دردشة": "Chat"}
+        defaults = {
+            "نص": self.t("New Text"), "زر": self.t("New Button"), "حقل": self.t("Type here"),
+            "دردشة": "",
+        }
         used = {widget.name for widget in self.program.widgets}
         number = 1
         while f"{prefixes[kind]}_{number}" in used:
             number += 1
         widget = AndroidWidget(f"{prefixes[kind]}_{number}", kind, defaults[kind])
-        matching_widget = next(
-            (item for item in reversed(self.program.widgets) if item.kind == kind),
-            None,
-        )
-        if matching_widget is not None:
-            widget.text_color = matching_widget.text_color
-            widget.background_color = matching_widget.background_color
-        else:
-            dark_screen = QColor(self.program.background_color or "#FAFAFA").lightness() < 128
-            if kind == "زر":
-                widget.text_color = "#0F1419" if dark_screen else "#FFFFFF"
-                widget.background_color = "#F2F2F2" if dark_screen else "#0F172A"
+        # The chat widget's colors are fixed in the generated app (matches the
+        # IDE's own AI panel), so it doesn't participate in text/background
+        # color inheritance the way text/button/field widgets do.
+        if kind != "دردشة":
+            matching_widget = next(
+                (item for item in reversed(self.program.widgets) if item.kind == kind),
+                None,
+            )
+            if matching_widget is not None:
+                widget.text_color = matching_widget.text_color
+                widget.background_color = matching_widget.background_color
             else:
-                widget.text_color = "#F2F2F2" if dark_screen else "#0F172A"
-                widget.background_color = "#0A0A0A" if dark_screen else "#F8FAFC"
+                dark_screen = QColor(self.program.background_color or "#FAFAFA").lightness() < 128
+                if kind == "زر":
+                    widget.text_color = "#0F1419" if dark_screen else "#FFFFFF"
+                    widget.background_color = "#F2F2F2" if dark_screen else "#0F172A"
+                else:
+                    widget.text_color = "#F2F2F2" if dark_screen else "#0F172A"
+                    widget.background_color = "#0A0A0A" if dark_screen else "#F8FAFC"
         self.program.widgets.append(widget)
         self.selected_name = widget.name
         self.refresh_canvas()
@@ -414,10 +466,10 @@ class AndroidDesigner(QWidget):
         self.selected_navigation_index = index
         for item in self.item_widgets.values():
             item.set_selected(False)
-        self.name_edit.setText(f"زر_الشريط_{index + 1}")
+        self.name_edit.setText(f"NavButton_{index + 1}")
         self.text_edit.setText(self.program.bottom_navigation[index])
-        self.text_color_button.setText("لون النص: تلقائي")
-        self.background_color_button.setText("لون الخلفية: تلقائي")
+        self.text_color_button.setText(self.t("Text Color: Auto"))
+        self.background_color_button.setText(self.t("Background Color: Auto"))
         self.refresh_bottom_navigation()
 
     def selected_widget(self):
@@ -435,7 +487,7 @@ class AndroidDesigner(QWidget):
 
     def choose_screen_color(self):
         current = self.program.background_color or "#FAFAFA"
-        color = QColorDialog.getColor(QColor(current), self, "اختر لون خلفية الشاشة")
+        color = QColorDialog.getColor(QColor(current), self, self.t("Choose Screen Background Color"))
         if not color.isValid():
             return
         self.program.background_color = color.name().upper()
@@ -454,7 +506,9 @@ class AndroidDesigner(QWidget):
                 widget.text_color = theme["text"]
                 widget.background_color = theme["surface"]
         if theme.get("navigation") and not self.program.bottom_navigation:
-            self.program.bottom_navigation = ["الرئيسية", "البحث", "التنبيهات", "الرسائل"]
+            self.program.bottom_navigation = [
+                self.t("Home"), self.t("Search"), self.t("Alerts"), self.t("Messages"),
+            ]
         self.refresh_canvas()
         self.emit_source()
 
@@ -462,7 +516,7 @@ class AndroidDesigner(QWidget):
         if self.selected_navigation_index is not None:
             text = self.text_edit.text().strip()
             if not text or '"' in text:
-                QMessageBox.warning(self, "نص غير صالح", "اكتب نصًا صالحًا لزر الشريط السفلي.")
+                QMessageBox.warning(self, self.t("Invalid Text"), self.t("Enter valid text for the bottom navigation button."))
                 return
             self.program.bottom_navigation[self.selected_navigation_index] = text
             self.refresh_bottom_navigation()
@@ -474,13 +528,13 @@ class AndroidDesigner(QWidget):
         name = self.name_edit.text().strip()
         text = self.text_edit.text().strip()
         if not re.fullmatch(r"[\w\u0600-\u06ff]+", name) or name[0].isdigit():
-            QMessageBox.warning(self, "اسم غير صالح", "استخدم حروفاً وأرقاماً وشرطة سفلية فقط.")
+            QMessageBox.warning(self, self.t("Invalid Name"), self.t("Use only letters, numbers, and underscores."))
             return
         if any(item.name == name and item is not widget for item in self.program.widgets):
-            QMessageBox.warning(self, "اسم مكرر", "يوجد عنصر آخر بهذا الاسم.")
+            QMessageBox.warning(self, self.t("Duplicate Name"), self.t("Another element already has this name."))
             return
         if '"' in text:
-            QMessageBox.warning(self, "نص غير صالح", "علامة الاقتباس المزدوجة غير مدعومة داخل النص حالياً.")
+            QMessageBox.warning(self, self.t("Invalid Text"), self.t("Double quotes aren't currently supported inside text."))
             return
 
         old_name = widget.name
@@ -504,7 +558,7 @@ class AndroidDesigner(QWidget):
         current = (
             widget.text_color if color_type == "text" else widget.background_color
         ) or "#FFFFFF"
-        color = QColorDialog.getColor(QColor(current), self, "اختر اللون")
+        color = QColorDialog.getColor(QColor(current), self, self.t("Choose Color"))
         if not color.isValid():
             return
         if color_type == "text":
@@ -524,10 +578,10 @@ class AndroidDesigner(QWidget):
         self.emit_source()
 
     def update_color_buttons(self, widget):
-        text_color = widget.text_color or "افتراضي"
-        background_color = widget.background_color or "افتراضي"
-        self.text_color_button.setText(f"لون النص: {text_color}")
-        self.background_color_button.setText(f"لون الخلفية: {background_color}")
+        text_color = widget.text_color or self.t("Default")
+        background_color = widget.background_color or self.t("Default")
+        self.text_color_button.setText(self.t("Text Color: {color}", color=text_color))
+        self.background_color_button.setText(self.t("Background Color: {color}", color=background_color))
 
     def move_selected(self, offset):
         if self.selected_navigation_index is not None:
@@ -587,7 +641,7 @@ class AndroidDesigner(QWidget):
         self.refresh_phone_color()
         self.app_title_edit.setText(self.program.title)
         for widget in self.program.widgets:
-            item = DesignerItem(widget)
+            item = DesignerItem(widget, language=self.language)
             item.selected.connect(self.select_widget)
             item.activated.connect(self.run_preview_event)
             self.canvas_layout.addWidget(item)
@@ -605,8 +659,8 @@ class AndroidDesigner(QWidget):
         else:
             self.name_edit.clear()
             self.text_edit.clear()
-            self.text_color_button.setText("لون النص")
-            self.background_color_button.setText("لون الخلفية")
+            self.text_color_button.setText(self.t("Text Color"))
+            self.background_color_button.setText(self.t("Background Color"))
 
     def refresh_phone_color(self):
         color = self.program.background_color or "#FAFAFA"
@@ -624,7 +678,7 @@ class AndroidDesigner(QWidget):
         self.bottom_navigation.setStyleSheet(
             f"background-color: {surface}; border-top: 1px solid {border};"
         )
-        self.screen_color_button.setText(f"لون خلفية الشاشة: {color}")
+        self.screen_color_button.setText(self.t("Screen Background Color: {color}", color=color))
 
     def refresh_bottom_navigation(self):
         while self.bottom_navigation_layout.count():
@@ -735,6 +789,9 @@ class AndroidDesigner(QWidget):
                     lines.append("    تحتوي على رقم")
                 if widget.require_symbols:
                     lines.append("    تحتوي على رمز")
+            elif widget.kind == "دردشة":
+                generated_names[widget.name] = widget.name
+                lines.append("انشئ صندوق دردشة")
             else:
                 generated_names[widget.name] = widget.name
                 if widget.kind == "نص" and widget.natural_syntax:

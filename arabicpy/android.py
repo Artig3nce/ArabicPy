@@ -26,6 +26,7 @@ ARABIC_COLOR_NAMES = {
     "رمادي": "#6B7280",
 }
 COLOR_VALUE_PATTERN = r"أسود|اسود|أبيض|ابيض|أزرق|ازرق|أخضر|اخضر|أحمر|احمر|رمادي|#[0-9a-fA-F]{6}"
+NATURAL_CHAT_PATTERN = re.compile(r'^انشئ\s+صندوق\s+دردشة\s*$')
 NATURAL_BUTTON_PATTERN = re.compile(r'^انشئ\s+زر\s+اسمه\s+(?P<text>.+?)\s*$')
 BUTTON_FUNCTION_PATTERN = re.compile(
     r'^انشئ\s+زر\s+(?P<text>[^،,]+?)\s*[،,]\s*'
@@ -257,6 +258,18 @@ def parse_android(source):
             ]
             if not bottom_navigation:
                 raise ArabicPyError("أضف زرًا واحدًا على الأقل إلى الشريط السفلي", line_number, 1)
+            index += 1
+            continue
+
+        chat_match = NATURAL_CHAT_PATTERN.match(stripped)
+        if chat_match:
+            number = 1
+            while f"دردشة_{number}" in widget_names:
+                number += 1
+            name = f"دردشة_{number}"
+            widget_names.add(name)
+            last_widget = AndroidWidget(name, "دردشة", "", page=current_page)
+            widgets.append(last_widget)
             index += 1
             continue
 
@@ -519,6 +532,7 @@ def parse_android(source):
 def generate_kivy(source, ai_server_url=None, ai_token=None):
     program = parse_android(source)
     has_ai = bool(ai_server_url and ai_token)
+    has_chat_widgets = any(widget.kind == "دردشة" for widget in program.widgets)
     has_page_navigation = any(
         target == "__page__"
         for event in program.events
@@ -526,7 +540,9 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
     )
     has_pages = has_page_navigation or bool(program.bottom_navigation) or has_ai
     widget_classes = {"نص": "Label", "زر": "Button", "حقل": "TextInput", "كلمة_مرور": "TextInput"}
-    imports = sorted({widget_classes[widget.kind] for widget in program.widgets})
+    imports = sorted({
+        widget_classes[widget.kind] for widget in program.widgets if widget.kind in widget_classes
+    })
     if program.bottom_navigation and "Button" not in imports:
         imports.append("Button")
     if has_pages and "Label" not in imports:
@@ -535,11 +551,15 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
         for widget_class in ("Button", "Label", "TextInput"):
             if widget_class not in imports:
                 imports.append(widget_class)
+    if has_chat_widgets:
+        for widget_class in ("Button", "Label", "TextInput", "ScrollView"):
+            if widget_class not in imports:
+                imports.append(widget_class)
     lines = [
         "from kivy.app import App",
         "from kivy.uix.boxlayout import BoxLayout",
     ]
-    if has_ai:
+    if has_ai or has_chat_widgets:
         lines.extend([
             "import json",
             "import threading",
@@ -549,9 +569,10 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
     if program.background_color:
         lines.append("from kivy.core.window import Window")
     for widget_class in imports:
-        lines.append(f"from kivy.uix.{widget_class.lower()} import {widget_class}")
+        module = "scrollview" if widget_class == "ScrollView" else widget_class.lower()
+        lines.append(f"from kivy.uix.{module} import {widget_class}")
 
-    colored_labels = any(
+    colored_labels = has_chat_widgets or any(
         widget.kind == "نص" and widget.background_color
         for widget in program.widgets
     )
@@ -595,6 +616,32 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
         lines.append("        root.add_widget(self._content)")
 
     for widget in program.widgets:
+        if widget.kind == "دردشة":
+            name = widget.name
+            lines.append(f"        self.{name}_log = BoxLayout(orientation='vertical', size_hint_y=None, spacing=8, padding=(4, 8))")
+            lines.append(f"        self.{name}_log.bind(minimum_height=self.{name}_log.setter('height'))")
+            lines.append(f"        self.{name}_scroll = ScrollView(size_hint=(1, 1))")
+            lines.append(f"        self.{name}_scroll.add_widget(self.{name}_log)")
+            lines.append(f"        self.{name}_input = TextInput(hint_text='اكتب رسالتك...', multiline=False, size_hint_y=None, height=48)")
+            lines.append(
+                f"        self.{name}_send = Button(text='إرسال', size_hint_y=None, height=48, size_hint_x=None, "
+                f"width=90, background_normal='', background_down='', background_color={hex_to_rgba('#007ACC')!r})"
+            )
+            lines.append(f"        self.{name}_row = BoxLayout(size_hint_y=None, height=48, spacing=8)")
+            lines.append(f"        self.{name}_row.add_widget(self.{name}_input)")
+            lines.append(f"        self.{name}_row.add_widget(self.{name}_send)")
+            lines.append(f"        self.{name}_box = BoxLayout(orientation='vertical', spacing=8)")
+            lines.append(f"        self.{name}_box.add_widget(self.{name}_scroll)")
+            lines.append(f"        self.{name}_box.add_widget(self.{name}_row)")
+            lines.append(f"        self.{name}_send.bind(on_press=self._ask_ai_{name})")
+            lines.append(f"        self.{name}_input.bind(on_text_validate=self._ask_ai_{name})")
+            if has_pages:
+                lines.append(f"        self._page_widgets.setdefault({widget.page!r}, []).append(self.{name}_box)")
+                if widget.page == "الرئيسية":
+                    lines.append(f"        self._content.add_widget(self.{name}_box)")
+            else:
+                lines.append(f"        root.add_widget(self.{name}_box)")
+            continue
         widget_class = widget_classes[widget.kind]
         if widget.kind == "نص" and widget.background_color:
             widget_class = "ColoredLabel"
@@ -655,7 +702,10 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
                 f"        self.{widget.bind_to}.bind(text=lambda _field, value: "
                 f"setattr(self.{widget.name}, 'text', value))"
             )
-    if has_ai:
+    # A user-placed chat widget is a richer, explicit AI surface -- skip the
+    # automatic single-question fallback page so apps don't end up with two
+    # redundant AI entry points.
+    if has_ai and not has_chat_widgets:
         lines.extend([
             "        self._ai_question = TextInput(hint_text='اكتب سؤالك', multiline=True, size_hint_y=None, height=100)",
             "        self._ai_answer = Label(text='مساعد الباء جاهز', halign='right', valign='top')",
@@ -665,7 +715,7 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
             "        self._page_widgets['المساعد'] = [self._ai_question, self._ai_send, self._ai_answer]",
         ])
     navigation_items = list(program.bottom_navigation)
-    if has_ai and "المساعد" not in navigation_items:
+    if has_ai and not has_chat_widgets and "المساعد" not in navigation_items:
         navigation_items.append("المساعد")
     if navigation_items:
         dark_screen = is_dark_hex(program.background_color or "#FAFAFA")
@@ -705,7 +755,7 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
             "            self._content.add_widget(Label(text=f'صفحة {page_name}'))",
             "",
         ])
-    if has_ai:
+    if has_ai and not has_chat_widgets:
         lines.extend([
             "    def _ask_ai(self, _button):",
             "        question = self._ai_question.text.strip()",
@@ -733,6 +783,51 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
             "        self._ai_send.disabled = False",
             "",
         ])
+    if has_chat_widgets:
+        lines.extend([
+            "    def _add_chat_bubble(self, log, text, is_user):",
+            "        bubble = ColoredLabel(",
+            "            text=text, size_hint_y=None, halign='right' if is_user else 'left', valign='top',",
+            "            color=[1, 1, 1, 1] if is_user else [0.92, 0.92, 0.93, 1],",
+            f"            background_color={hex_to_rgba('#007ACC')!r} if is_user else [0.16, 0.16, 0.18, 1],",
+            "        )",
+            "        bubble.padding = (12, 8)",
+            "        bubble.bind(width=lambda w, value: setattr(w, 'text_size', (value - 24, None)))",
+            "        bubble.bind(texture_size=lambda w, value: setattr(w, 'height', value[1] + 16))",
+            "        log.add_widget(bubble)",
+            "",
+        ])
+        for widget in program.widgets:
+            if widget.kind != "دردشة":
+                continue
+            name = widget.name
+            lines.extend([
+                f"    def _ask_ai_{name}(self, *_args):",
+                f"        question = self.{name}_input.text.strip()",
+                "        if not question:",
+                "            return",
+                f"        self.{name}_input.text = ''",
+                f"        self._add_chat_bubble(self.{name}_log, question, True)",
+                f"        self.{name}_send.disabled = True",
+                f"        threading.Thread(target=self._request_ai_{name}, args=(question,), daemon=True).start()",
+                "",
+                f"    def _request_ai_{name}(self, question):",
+                f"        url = {str(ai_server_url).rstrip('/')!r} + '/generate'",
+                f"        token = {ai_token!r}",
+                "        try:",
+                "            payload = json.dumps({'question': question}, ensure_ascii=False).encode('utf-8')",
+                "            request = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token}, method='POST')",
+                "            with urllib.request.urlopen(request, timeout=300) as response:",
+                "                answer = json.loads(response.read().decode('utf-8')).get('answer', '')",
+                "        except Exception:",
+                "            answer = 'تعذر الاتصال. تأكد أن الكمبيوتر والهاتف على نفس Wi-Fi وأن خادم الباء يعمل.'",
+                f"        Clock.schedule_once(lambda _dt: self._show_ai_answer_{name}(answer), 0)",
+                "",
+                f"    def _show_ai_answer_{name}(self, answer):",
+                f"        self._add_chat_bubble(self.{name}_log, answer or 'لم يصل رد من النموذج', False)",
+                f"        self.{name}_send.disabled = False",
+                "",
+            ])
     if any(widget.kind == "كلمة_مرور" for widget in program.widgets):
         lines.extend([
             "    def _validate_password(self, value, status, minimum):",

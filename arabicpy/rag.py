@@ -212,6 +212,30 @@ def user_knowledge() -> tuple[KnowledgeChunk, ...]:
     return tuple(chunks)
 
 
+def list_documents() -> list[Path]:
+    """Uploaded RAG documents, most recently added first."""
+    directory = documents_directory()
+    files = [p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_DOCUMENTS]
+    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def document_display_name(path: Path) -> str:
+    """Strip the content-hash suffix added at import time for a clean display name."""
+    path = Path(path)
+    return path.stem.rsplit("-", 1)[0] + path.suffix
+
+
+def remove_document(path) -> None:
+    """Delete an uploaded document and its cached extracted text."""
+    path = Path(path)
+    extracted = path.with_suffix(path.suffix + ".rag")
+    for target in (path, extracted):
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def retrieve(query: str, limit: int = 4) -> list[KnowledgeChunk]:
     """Return the most relevant verified chunks using a compact BM25-style score."""
     query_tokens = _tokens(query)
@@ -235,7 +259,14 @@ def retrieve(query: str, limit: int = 4) -> list[KnowledgeChunk]:
         if score:
             scores.append((score, index))
     scores.sort(key=lambda item: (-item[0], item[1]))
-    return [documents[index] for _score, index in scores[:limit]]
+    if scores:
+        return [documents[index] for _score, index in scores[:limit]]
+    # A vague query ("talk about the PDF I added") can share no vocabulary
+    # with the document's actual text and score zero everywhere. Fall back to
+    # the user's own uploaded chunks rather than reporting "no knowledge
+    # found" when they clearly just asked about something they uploaded.
+    uploaded = documents[len(KNOWLEDGE):]
+    return list(uploaded[:limit])
 
 
 def context_for(query: str, limit: int = 4) -> str:

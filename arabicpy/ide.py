@@ -17,6 +17,7 @@ import urllib.request
 import socket
 import subprocess
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QProcess, QSettings, QThread, QTimer, QRect, QSize, Qt, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from .generator import Generator
 from .highlighter import ArabicPyHighlighter
+from .dart_highlighter import DartHighlighter
 from .lexer import Lexer
 from .parser import Parser
 from .android import export_android_project, generate_kivy, is_android_source
@@ -42,7 +44,14 @@ from .ai import DEFAULT_MODEL, SYSTEM_PROMPT, reply as albaa_ai_reply
 from .ai_server import AlBaaAIServer, local_ipv4
 from .embedded_ai import EMBEDDED_BASE_URL, MODELS, llama_server_path, model_path, server_arguments
 from .errors import format_error
-from .rag import context_for as rag_context, import_document
+from .rag import (
+    context_for as rag_context,
+    document_display_name as rag_display_name,
+    import_document,
+    list_documents as list_rag_documents,
+    remove_document as remove_rag_document,
+)
+from .i18n import LANGUAGE_NAMES, TRANSLATIONS
 
 
 def apply_native_dark_title_bar(widget, dark):
@@ -100,20 +109,6 @@ class NativeDialogThemeFilter(QObject):
             """
             )
             dialog.setProperty("albaaDialogStyled", True)
-        translations = {
-            "ok": "حسنًا", "&ok": "حسنًا",
-            "cancel": "إلغاء", "&cancel": "إلغاء",
-            "yes": "نعم", "&yes": "نعم",
-            "no": "لا", "&no": "لا",
-            "close": "إغلاق", "&close": "إغلاق",
-            "open": "فتح", "&open": "فتح",
-            "save": "حفظ", "&save": "حفظ",
-            "retry": "إعادة المحاولة", "&retry": "إعادة المحاولة",
-        }
-        for button in dialog.findChildren(QPushButton):
-            translated = translations.get(button.text().strip().lower())
-            if translated:
-                button.setText(translated)
 
 
 class LineNumberArea(QWidget):
@@ -139,6 +134,36 @@ class AIChatInput(QTextEdit):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+class SendIconButton(QPushButton):
+    """A crisp vector send arrow, unlike the ➤ glyph whose look depends on font fallback."""
+
+    def __init__(self, callback, parent=None):
+        super().__init__(parent)
+        self.setObjectName("aiSendButton")
+        self.icon_color = QColor("#ffffff")
+        self.clicked.connect(callback)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self.icon_color if self.isEnabled() else QColor(255, 255, 255, 110))
+        center_x, center_y = self.width() / 2, self.height() / 2
+        size = min(self.width(), self.height()) * 0.26
+        # A plain triangle instead of an arrow-with-stem: the stem shape had
+        # most of its area low and narrow with a wide flared head up top,
+        # so its visual weight sat off-center even though the bounding box
+        # was symmetric. Nudged up slightly for optical centering, since a
+        # triangle's centroid otherwise reads as sitting a touch low.
+        arrow = QPolygonF([
+            QPointF(center_x, center_y - size * 1.15),
+            QPointF(center_x + size, center_y + size * 0.65),
+            QPointF(center_x - size, center_y + size * 0.65),
+        ])
+        painter.drawPolygon(arrow)
 
 
 class RAGImportWorker(QThread):
@@ -175,7 +200,7 @@ class SettingsIconButton(QPushButton):
     def __init__(self, callback):
         super().__init__()
         self.setObjectName("settingsButton")
-        self.setToolTip("الإعدادات")
+        self.setToolTip("Settings")
         self.setFixedHeight(44)
         self.icon_color = QColor("#ffffff")
         self.clicked.connect(callback)
@@ -216,12 +241,7 @@ class CodeEditor(QPlainTextEdit):
         # collisions between dots/diacritics on adjacent source lines.
         self.setFont(QFont("Segoe UI", 13))
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
-        self.setLayoutDirection(Qt.RightToLeft)
-        # QTextEdit's layout direction alone does not change paragraph
-        # alignment. Arabic source should start at the right-hand edge.
-        text_option = self.document().defaultTextOption()
-        text_option.setAlignment(Qt.AlignRight | Qt.AlignAbsolute)
-        self.document().setDefaultTextOption(text_option)
+        self.set_text_direction(Qt.LeftToRight)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.error_line = None
         self.current_line_color = "#2a2d2e"
@@ -234,6 +254,15 @@ class CodeEditor(QPlainTextEdit):
         self.update_line_number_area_width(0)
         self.highlight_current_line()
         self.apply_line_spacing()
+
+    def set_text_direction(self, direction):
+        """Set paragraph direction and matching alignment together -- Qt doesn't derive one from the other."""
+        self.setLayoutDirection(direction)
+        text_option = self.document().defaultTextOption()
+        text_option.setAlignment(
+            (Qt.AlignRight if direction == Qt.RightToLeft else Qt.AlignLeft) | Qt.AlignAbsolute
+        )
+        self.document().setDefaultTextOption(text_option)
 
     def keyPressEvent(self, event):
         """Support both common Windows redo shortcuts in every editor tab."""
@@ -406,15 +435,15 @@ class TitleBar(QWidget):
         layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(7)
 
-        logo = QLabel("ب")
+        logo = QLabel(parent.t("B"))
         logo.setObjectName("titleLogo")
         logo.setAlignment(Qt.AlignCenter)
         logo.setFixedSize(30, 26)
-        brand = QLabel("الباء")
+        brand = QLabel("Al-Baa")
         brand.setObjectName("brand")
         separator = QLabel("|")
         separator.setObjectName("titleSeparator")
-        document = QLabel("لغة البرمجة العربية")
+        document = QLabel(parent.t("Arabic Programming Language"))
         document.setObjectName("titleDocument")
         layout.addWidget(logo)
         layout.addWidget(brand)
@@ -451,6 +480,53 @@ class TitleBar(QWidget):
             event.accept()
 
 
+class LanguagePickerDialog(QDialog):
+    """First-run (and settings-triggered) prompt to choose the IDE's language."""
+
+    def __init__(self, parent=None, dark=True):
+        super().__init__(parent)
+        self.setWindowTitle("Choose a Language / اختر اللغة")
+        self.setModal(True)
+        self.setFixedSize(360, 220)
+        self.chosen_language = None
+        background = "#1e1e1e" if dark else "#f5f7fa"
+        text = "#f2f2f2" if dark else "#1f2937"
+        self.setStyleSheet(f"QDialog {{ background:{background}; }} QLabel {{ color:{text}; }}")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+        title = QLabel("Choose a language\nاختر اللغة")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 15px; font-weight: 700;")
+        layout.addWidget(title)
+        layout.addStretch(1)
+        for code, label in (("en", "English"), ("ar", "العربية")):
+            button = QPushButton(label)
+            button.setFixedHeight(42)
+            button.setStyleSheet(
+                "QPushButton { background:#007ACC; color:white; border:none; border-radius:6px; "
+                "font-size:14px; font-weight:600; } QPushButton:hover { background:#1594E8; }"
+            )
+            button.clicked.connect(lambda _checked=False, value=code: self.choose(value))
+            layout.addWidget(button)
+        layout.addStretch(1)
+        hint = QLabel("You can change this later from Settings.\nيمكنك تغيير هذا لاحقًا من الإعدادات.")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet("font-size: 10px; color: #9d9d9d;")
+        layout.addWidget(hint)
+
+    def choose(self, code):
+        self.chosen_language = code
+        self.accept()
+
+    def closeEvent(self, event):
+        # A first-run language choice isn't optional -- default to English
+        # rather than leaving the IDE in an undefined language state.
+        if self.chosen_language is None:
+            self.chosen_language = "en"
+        super().closeEvent(event)
+
+
 class ArabicPyIDE(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -462,6 +538,15 @@ class ArabicPyIDE(QMainWindow):
         self.ai_model = str(settings.value("ai_model", DEFAULT_MODEL) or DEFAULT_MODEL).strip()
         self.ide_dark = settings.value("ide_dark", settings.value("ai_chat_dark", True, type=bool), type=bool)
         self.ai_chat_dark = self.ide_dark
+        self.language = str(settings.value("ui_language", "") or "")
+        if self.language not in LANGUAGE_NAMES:
+            picker = LanguagePickerDialog(dark=self.ide_dark)
+            picker.exec()
+            self.language = picker.chosen_language or "en"
+            settings.setValue("ui_language", self.language)
+        self.rtl = self.language == "ar"
+        self.direction = Qt.RightToLeft if self.rtl else Qt.LeftToRight
+        self.box_direction = QBoxLayout.RightToLeft if self.rtl else QBoxLayout.LeftToRight
         self.ai_messages = []
         self.ai_server = None
         self.current_file = None
@@ -469,7 +554,7 @@ class ArabicPyIDE(QMainWindow):
         self.syncing_code_views = False
         self.output_was_visible_before_designer = True
         self.setWindowFlags(Qt.FramelessWindowHint)
-        self.setWindowTitle("الباء")
+        self.setWindowTitle("Al-Baa")
         bundle_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__)))
         self.setWindowIcon(QIcon(os.path.join(bundle_root, "assets", "albaa.ico")))
         self.resize(1400, 900)
@@ -478,7 +563,7 @@ class ArabicPyIDE(QMainWindow):
         self.setStyleSheet(self.stylesheet(self.ide_dark))
         self.setup_ui()
         if os.name == "nt" and self.background_ai_is_running():
-            self.ai_server_button.setText("إيقاف شبكة AI")
+            self.ai_server_button.setText(self.t("Stop AI Network"))
         for editor in self.findChildren(CodeEditor):
             editor.set_theme(self.ide_dark)
         for highlighter in self.findChildren(ArabicPyHighlighter):
@@ -509,11 +594,17 @@ class ArabicPyIDE(QMainWindow):
         if hasattr(self, "maximize_button"):
             self.maximize_button.update()
 
+    def t(self, text, **kwargs):
+        """Translate an English UI string (used as its own dict key) to the active language."""
+        if self.language == "ar":
+            text = TRANSLATIONS.get(text, text)
+        return text.format(**kwargs) if kwargs else text
+
     def stylesheet(self, dark=True):
         base = """
         QMainWindow, QWidget { background: #1e1e1e; color: #cccccc; font-family: 'Tahoma'; font-size: 13px; }
         #titleBar { background: #181818; border-bottom: 1px solid #2b2b2b; }
-        #titleLogo { background: #1d9bf0; color: white; border-radius: 7px; font-weight: 800; font-size: 16px; }
+        #titleLogo { background: #007ACC; color: white; border-radius: 7px; font-weight: 800; font-size: 16px; }
         #brand { color: #ffffff; font-weight: 600; font-size: 14px; }
         #titleSeparator { color: #505050; padding: 0 2px; }
         #titleDocument { color: #969696; }
@@ -527,17 +618,22 @@ class ArabicPyIDE(QMainWindow):
         #runButton:hover { background: #1a9b70; }
         #aiButton { background: #007ACC; color: white; border: none; border-radius: 3px; padding: 6px 12px; font-weight: 600; }
         #aiButton:hover { background: #1594E8; }
-        #aiChatPanel { background: #000000; border-left: 1px solid #2f3336; }
-        #aiChatHeader { background: #000000; border-bottom: 1px solid #2f3336; }
-        #aiChatAvatar { background: #1d9bf0; color: #ffffff; border-radius: 7px; font-size: 16px; font-weight: 800; }
+        #aiChatPanel { background: #252526; border-left: 1px solid #333333; }
+        #aiChatHeader { background: #252526; border-bottom: 1px solid #333333; }
+        #aiChatAvatar { background: #007ACC; color: #ffffff; border-radius: 7px; font-size: 16px; font-weight: 800; }
         #aiChatTitle { color: #ffffff; font-size: 14px; font-weight: 700; padding: 4px; }
-        #aiChatSubtitle { color: #d9f1ff; font-size: 10px; }
-        #aiChatHistory { background: #101820; border: none; color: #e9edef; padding: 5px; }
-        #aiChatInput { background: #1d2a34; color: #e9edef; border: 1px solid #344550; border-radius: 18px; padding: 9px 12px; }
-        #aiChatInput:focus { border: 1px solid #168bd2; }
-        #aiThinking { color: #8696a0; padding: 2px 8px; font-size: 11px; }
-        #aiSendButton { background: #168bd2; color: white; border: none; border-radius: 21px; font-size: 18px; font-weight: 700; }
-        #aiSendButton:hover { background: #27a4ed; }
+        #aiChatSubtitle { color: #9d9d9d; font-size: 10px; }
+        #aiChatHistory { background: #1e1e1e; border: 1px solid #333333; border-radius: 14px; color: #e0e0e0; padding: 5px; }
+        #aiComposer { background: #2d2d30; border: 1px solid #3c3c3c; border-radius: 18px; }
+        #aiChatInput { background: transparent; color: #e0e0e0; border: none; padding: 2px; }
+        #aiThinking { color: #9d9d9d; padding: 2px 8px; font-size: 11px; }
+        #aiAttachButton { background: transparent; color: #9d9d9d; border: 1px solid #3c3c3c; border-radius: 13px; font-size: 15px; font-weight: 700; padding: 0; outline: none; }
+        #aiAttachButton:hover, #aiAttachButton:pressed { background: #37373d; color: #ffffff; border: 1px solid #3c3c3c; outline: none; }
+        #aiAttachButton:focus { border: 1px solid #3c3c3c; outline: none; }
+        #aiSendButton { background: #007ACC; color: white; border: none; border-radius: 15px; font-size: 14px; font-weight: 700; outline: none; }
+        #aiSendButton:hover { background: #1594E8; }
+        #aiSendButton:pressed, #aiSendButton:focus { outline: none; }
+        #aiSendButton:disabled { background: #1c3a4d; }
         #themeButton, #aiCloseButton { background: transparent; color: white; border: none; border-radius: 4px; font-size: 15px; padding: 5px 9px; }
         #themeButton:hover, #aiCloseButton:hover { background: rgba(255,255,255,35); }
         #activityBar { background: #333333; min-width: 48px; max-width: 48px; }
@@ -583,6 +679,17 @@ class ArabicPyIDE(QMainWindow):
         QTabWidget QTabBar::tab:hover { background: #37373d; color: #ffffff; }
         #tabCloseButton { background: transparent; color: #c8c8c8; border: none; border-radius: 3px; font-size: 16px; font-weight: 600; padding: 0; }
         #tabCloseButton:hover { background: #c42b1c; color: #ffffff; }
+        #ragLibraryPage { background: #1e1e1e; }
+        #ragLibraryHeader { color: #ffffff; font-size: 15px; font-weight: 700; padding: 4px 2px; }
+        #ragLibraryCount { color: #9d9d9d; font-size: 12px; padding: 4px 2px; }
+        #ragLibraryList { background: #181818; border: 1px solid #333333; border-radius: 8px; outline: none; color: #e0e0e0; padding: 4px; }
+        #ragLibraryList::item { padding: 10px; border-radius: 6px; margin: 2px 0; }
+        #ragLibraryList::item:selected { background: #264f78; color: #ffffff; }
+        #ragLibraryList::item:hover { background: #2a2d2e; }
+        #ragLibraryEmpty { color: #9d9d9d; font-size: 13px; }
+        #ragRemoveButton { background: transparent; color: #f2b8b5; border: 1px solid #4d3330; border-radius: 4px; padding: 6px 12px; }
+        #ragRemoveButton:hover { background: #4d1f1a; color: #ffffff; border-color: #a1260d; }
+        #ragRemoveButton:disabled { color: #5c4a48; border-color: #333333; }
         """
         if dark:
             return base
@@ -619,23 +726,33 @@ class ArabicPyIDE(QMainWindow):
         #tabCloseButton { color:#526173; }
         QMenu { background:#ffffff; color:#1f2937; border:1px solid #d7dde5; }
         QMenu::item:selected { background:#dceeff; color:#111827; }
+        #ragLibraryPage { background:#ffffff; }
+        #ragLibraryHeader { color:#111827; }
+        #ragLibraryCount { color:#667085; }
+        #ragLibraryList { background:#f8fafc; border:1px solid #d7dde5; color:#1f2937; }
+        #ragLibraryList::item:selected { background:#dce8f5; color:#111827; }
+        #ragLibraryList::item:hover { background:#eef2f6; }
+        #ragLibraryEmpty { color:#667085; }
+        #ragRemoveButton { color:#a1260d; border:1px solid #f0c6bd; }
+        #ragRemoveButton:hover { background:#fbe3df; color:#7c1d0a; border-color:#a1260d; }
+        #ragRemoveButton:disabled { color:#c9a9a3; border-color:#e5e7eb; }
         """
 
     def make_button(self, text, callback, name="toolButton"):
-        button = QPushButton(text)
+        button = QPushButton(self.t(text))
         button.setObjectName(name)
         button.clicked.connect(callback)
         return button
 
     def make_menu_button(self, text, actions):
         """Create a real, clickable top-level menu instead of a decorative label."""
-        button = QPushButton(text)
+        button = QPushButton(self.t(text))
         button.setObjectName("menuItem")
-        button.setLayoutDirection(Qt.RightToLeft)
+        button.setLayoutDirection(self.direction)
         menu = QMenu(button)
-        menu.setLayoutDirection(Qt.RightToLeft)
+        menu.setLayoutDirection(self.direction)
         for label, callback in actions:
-            menu.addAction(label, callback)
+            menu.addAction(self.t(label), callback)
         button.setMenu(menu)
         return button
 
@@ -648,68 +765,69 @@ class ArabicPyIDE(QMainWindow):
 
         menu_bar = QWidget(objectName="menuBar")
         menu_layout = QHBoxLayout(menu_bar)
-        menu_layout.setDirection(QBoxLayout.RightToLeft)
+        menu_layout.setDirection(self.box_direction)
         menu_layout.setContentsMargins(8, 1, 8, 1)
-        menu_layout.addWidget(self.make_menu_button("ملف", [
-            ("ملف جديد", self.new_file), ("فتح ملف...", self.open_file),
-            ("حفظ", self.save_file), ("تحديث المستكشف", self.refresh_file_list),
-            ("مشروع تطبيق جديد", self.new_android_file),
-            ("تصدير مشروع لكل المنصات...", self.export_cross_platform),
+        menu_layout.addWidget(self.make_menu_button("File", [
+            ("New File", self.new_file), ("New Flutter File", self.new_flutter_file),
+            ("Open File...", self.open_file),
+            ("Save", self.save_file), ("Refresh Explorer", self.refresh_file_list),
+            ("New Android Project", self.new_android_file),
+            ("Export Cross-Platform Project...", self.export_cross_platform),
         ]))
-        menu_layout.addWidget(self.make_menu_button("تحرير", [
-            ("تراجع", lambda: self.editor.undo()), ("إعادة", lambda: self.editor.redo()),
-            ("قص", lambda: self.editor.cut()), ("نسخ", lambda: self.editor.copy()),
-            ("لصق", lambda: self.editor.paste()),
+        menu_layout.addWidget(self.make_menu_button("Edit", [
+            ("Undo", lambda: self.editor.undo()), ("Redo", lambda: self.editor.redo()),
+            ("Cut", lambda: self.editor.cut()), ("Copy", lambda: self.editor.copy()),
+            ("Paste", lambda: self.editor.paste()),
         ]))
-        menu_layout.addWidget(self.make_menu_button("تحديد", [
-            ("تحديد الكل", lambda: self.editor.selectAll()),
-            ("بحث...", self.find_text),
+        menu_layout.addWidget(self.make_menu_button("Select", [
+            ("Select All", lambda: self.editor.selectAll()),
+            ("Find...", self.find_text),
         ]))
-        menu_layout.addWidget(self.make_menu_button("عرض", [
-            ("إظهار / إخفاء المستكشف", self.toggle_sidebar),
-            ("إظهار / إخفاء المخرجات", self.toggle_output),
-            ("إظهار / إخفاء كود Python", self.toggle_python_preview),
+        menu_layout.addWidget(self.make_menu_button("View", [
+            ("Toggle Explorer", self.toggle_sidebar),
+            ("Toggle Output", self.toggle_output),
+            ("Toggle Python Code", self.toggle_python_preview),
         ]))
-        menu_layout.addWidget(self.make_menu_button("تشغيل", [
-            ("تشغيل البرنامج", self.run_code), ("مسح المخرجات", self.clear_output),
-            ("إعداد GitHub", self.setup_github),
-            ("رفع التطبيق إلى GitHub", self.upload_to_github),
-            ("إنشاء APK عبر GitHub", self.build_apk_with_github),
-            ("إنشاء تطبيق iOS عبر GitHub", self.build_ios_with_github),
+        menu_layout.addWidget(self.make_menu_button("Run", [
+            ("Run Program", self.run_code), ("Clear Output", self.clear_output),
+            ("Setup GitHub", self.setup_github),
+            ("Push App to GitHub", self.upload_to_github),
+            ("Build APK via GitHub", self.build_apk_with_github),
+            ("Build iOS App via GitHub", self.build_ios_with_github),
         ]))
-        menu_layout.addWidget(self.make_menu_button("تعليمات", [
-            ("حول الباء", self.show_about),
+        menu_layout.addWidget(self.make_menu_button("Help", [
+            ("About Al-Baa", self.show_about),
         ]))
         menu_layout.addStretch()
         layout.addWidget(menu_bar)
 
         command_bar = QWidget(objectName="commandBar")
         command_layout = QHBoxLayout(command_bar)
-        command_layout.setDirection(QBoxLayout.RightToLeft)
+        command_layout.setDirection(self.box_direction)
         command_layout.setContentsMargins(10, 4, 10, 4)
         command_layout.setSpacing(4)
-        command_layout.addWidget(self.make_button("＋ جديد", self.new_file))
-        command_layout.addWidget(self.make_button("فتح", self.open_file))
-        command_layout.addWidget(self.make_button("حفظ", self.save_file))
-        self.undo_button = self.make_button("↶ تراجع", lambda: self.editor.undo())
-        self.undo_button.setToolTip("تراجع (Ctrl+Z)")
+        command_layout.addWidget(self.make_button("＋ New", self.new_file))
+        command_layout.addWidget(self.make_button("Open", self.open_file))
+        command_layout.addWidget(self.make_button("Save", self.save_file))
+        self.undo_button = self.make_button("↶ Undo", lambda: self.editor.undo())
+        self.undo_button.setToolTip(self.t("Undo (Ctrl+Z)"))
         self.undo_button.setEnabled(False)
         command_layout.addWidget(self.undo_button)
-        self.redo_button = self.make_button("↷ إعادة", lambda: self.editor.redo())
-        self.redo_button.setToolTip("إعادة (Ctrl+Y أو Ctrl+Shift+Z)")
+        self.redo_button = self.make_button("↷ Redo", lambda: self.editor.redo())
+        self.redo_button.setToolTip(self.t("Redo (Ctrl+Y or Ctrl+Shift+Z)"))
         self.redo_button.setEnabled(False)
         command_layout.addWidget(self.redo_button)
-        command_layout.addWidget(self.make_button("⌕ بحث", self.find_text))
-        self.ai_button = self.make_button("✦ مساعد ذكي", self.ask_local_ai, "aiButton")
+        command_layout.addWidget(self.make_button("⌕ Find", self.find_text))
+        self.ai_button = self.make_button("✦ AI Assistant", self.ask_local_ai, "aiButton")
         self.ai_button.setCheckable(True)
-        self.ai_server_button = self.make_button("شبكة AI", self.toggle_ai_server)
+        self.ai_server_button = self.make_button("AI Network", self.toggle_ai_server)
         command_layout.addWidget(self.ai_server_button)
-        self.remote_ai_button = self.make_button("AI بعيد", self.configure_remote_ai)
-        self.remote_ai_button.setToolTip("استخدام نموذج الباء الموجود على كمبيوتر آخر")
+        self.remote_ai_button = self.make_button("Remote AI", self.configure_remote_ai)
+        self.remote_ai_button.setToolTip(self.t("Use an Al-Baa model running on another computer"))
         if self.remote_ai_url:
-            self.remote_ai_button.setText("AI بعيد ✓")
+            self.remote_ai_button.setText(self.t("Remote AI ✓"))
         command_layout.addWidget(self.remote_ai_button)
-        self.rag_button = self.make_button("مستندات RAG", self.add_rag_documents)
+        self.rag_button = self.make_button("RAG Documents", self.add_rag_documents)
         command_layout.addWidget(self.rag_button)
         self.rag_progress = QProgressBar(objectName="ragProgress")
         self.rag_progress.setRange(0, 100)
@@ -719,9 +837,9 @@ class ArabicPyIDE(QMainWindow):
         self.rag_progress.setTextVisible(True)
         self.rag_progress.hide()
         command_layout.addWidget(self.rag_progress)
-        self.python_toggle_button = self.make_button("◀", self.toggle_python_preview)
+        self.python_toggle_button = self.make_button("◀" if self.rtl else "▶", self.toggle_python_preview)
         self.python_toggle_button.setFixedWidth(34)
-        self.python_toggle_button.setToolTip("إظهار كود Python")
+        self.python_toggle_button.setToolTip(self.t("Show Python Code"))
         command_layout.addWidget(self.python_toggle_button)
         command_layout.addStretch()
         self.apk_progress = QProgressBar()
@@ -740,35 +858,35 @@ class ArabicPyIDE(QMainWindow):
         )
         self.github_status_label.hide()
         command_layout.addWidget(self.github_status_label)
-        self.github_cancel_button = self.make_button("إلغاء", self.cancel_github_operation)
+        self.github_cancel_button = self.make_button("Cancel", self.cancel_github_operation)
         self.github_cancel_button.setFixedWidth(58)
         self.github_cancel_button.hide()
         command_layout.addWidget(self.github_cancel_button)
-        self.theme_button = self.make_button("☀ المظهر", self.toggle_ide_theme, "themeButton")
-        self.theme_button.setToolTip("تبديل مظهر الباء بالكامل")
+        self.theme_button = self.make_button("☀ Theme", self.toggle_ide_theme, "themeButton")
+        self.theme_button.setToolTip(self.t("Toggle Al-Baa's overall theme"))
         command_layout.addWidget(self.theme_button)
-        self.github_setup_button = self.make_button("إعداد GitHub", self.setup_github)
+        self.github_setup_button = self.make_button("Setup GitHub", self.setup_github)
         command_layout.addWidget(self.github_setup_button)
-        self.github_upload_button = self.make_button("↑ رفع إلى GitHub", self.upload_to_github)
+        self.github_upload_button = self.make_button("↑ Push to GitHub", self.upload_to_github)
         command_layout.addWidget(self.github_upload_button)
-        self.github_apk_button = self.make_button("▣ إنشاء APK", self.build_apk_with_github)
-        self.github_apk_button.setToolTip("إنشاء APK سحابيًا عبر GitHub Actions")
+        self.github_apk_button = self.make_button("▣ Build APK", self.build_apk_with_github)
+        self.github_apk_button.setToolTip(self.t("Build an APK in the cloud via GitHub Actions"))
         command_layout.addWidget(self.github_apk_button)
-        self.github_ios_button = self.make_button("▣ إنشاء iOS", self.build_ios_with_github)
-        self.github_ios_button.setToolTip("إنشاء تطبيق iOS Simulator سحابيًا على macOS عبر GitHub Actions")
+        self.github_ios_button = self.make_button("▣ Build iOS", self.build_ios_with_github)
+        self.github_ios_button.setToolTip(self.t("Build an iOS Simulator app in the cloud on macOS via GitHub Actions"))
         command_layout.addWidget(self.github_ios_button)
-        self.package_button = self.make_button("▣ حزم المنصات", self.export_cross_platform)
-        self.package_button.setToolTip("توليد مشروع للمتصفح وWindows وLinux وmacOS وAndroid وiOS")
+        self.package_button = self.make_button("▣ Cross-Platform Bundle", self.export_cross_platform)
+        self.package_button.setToolTip(self.t("Generate a project for Browser, Windows, Linux, macOS, Android, and iOS"))
         command_layout.addWidget(self.package_button)
-        self.designer_button = self.make_button("تصميم", self.toggle_android_designer)
+        self.designer_button = self.make_button("Designer", self.toggle_android_designer)
         command_layout.addWidget(self.designer_button)
         command_layout.addWidget(self.ai_button)
-        self.run_button = self.make_button("▶ تشغيل", self.run_code, "runButton")
+        self.run_button = self.make_button("▶ Run", self.run_code, "runButton")
         command_layout.addWidget(self.run_button)
         layout.addWidget(command_bar)
 
         workspace = QHBoxLayout()
-        workspace.setDirection(QBoxLayout.RightToLeft)
+        workspace.setDirection(self.box_direction)
         workspace.setSpacing(0)
         activity = QWidget(objectName="activityBar")
         activity_layout = QVBoxLayout(activity)
@@ -776,7 +894,8 @@ class ArabicPyIDE(QMainWindow):
         self.activity_buttons = []
         for i, (icon, action) in enumerate([
             ("▱", self.show_explorer), ("⌕", self.find_text),
-            ("⑂", self.show_run_panel), ("▣", self.show_about),
+            ("⑂", self.show_run_panel), ("▤", self.show_rag_library),
+            ("▣", self.show_about),
         ]):
             button = QPushButton(icon, objectName="activityButton")
             button.setCheckable(True)
@@ -784,24 +903,29 @@ class ArabicPyIDE(QMainWindow):
             button.clicked.connect(action)
             self.activity_buttons.append(button)
             activity_layout.addWidget(button)
+        self.new_language_button = QPushButton("⊕", objectName="activityButton")
+        self.new_language_button.setToolTip(self.t("New File (choose language)"))
+        self.new_language_button.clicked.connect(self.choose_new_file_language)
+        activity_layout.addWidget(self.new_language_button)
         activity_layout.addStretch()
-        self.settings_button = SettingsIconButton(self.show_about)
+        self.settings_button = SettingsIconButton(self.change_language)
+        self.settings_button.setToolTip(self.t("Settings"))
         activity_layout.addWidget(self.settings_button)
         workspace.addWidget(activity)
 
         editor_splitter = QSplitter(Qt.Horizontal)
-        editor_splitter.setLayoutDirection(Qt.RightToLeft)
+        editor_splitter.setLayoutDirection(self.direction)
         sidebar = QWidget(objectName="sideBar")
-        sidebar.setLayoutDirection(Qt.RightToLeft)
+        sidebar.setLayoutDirection(self.direction)
         self.sidebar = sidebar
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
-        sidebar_layout.addWidget(QLabel("المستكشف", objectName="panelTitle"))
-        project = QLabel("⌄  مشاريعي", objectName="panelTitle")
+        sidebar_layout.addWidget(QLabel(self.t("EXPLORER"), objectName="panelTitle"))
+        project = QLabel(self.t("⌄  My Projects"), objectName="panelTitle")
         sidebar_layout.addWidget(project)
         self.file_list = QListWidget(objectName="fileList")
-        self.file_list.setLayoutDirection(Qt.RightToLeft)
+        self.file_list.setLayoutDirection(self.direction)
         self.file_list.itemDoubleClicked.connect(self.open_project_file)
         sidebar_layout.addWidget(self.file_list)
         editor_splitter.addWidget(sidebar)
@@ -813,13 +937,13 @@ class ArabicPyIDE(QMainWindow):
         tabs = QWidget(objectName="tabBar")
         tabs_layout = QHBoxLayout(tabs)
         tabs_layout.setContentsMargins(0, 0, 0, 0)
-        self.active_tab = QLabel("  ●  غير محفوظ.apy    ×", objectName="activeTab")
+        self.active_tab = QLabel(f"  ●  {self.t('Untitled.apy')}    ×", objectName="activeTab")
         tabs_layout.addWidget(self.active_tab)
         tabs_layout.addStretch()
         editor_layout.addWidget(tabs)
         tabs.hide()
         self.tab_widget = QTabWidget()
-        self.tab_widget.setLayoutDirection(Qt.RightToLeft)
+        self.tab_widget.setLayoutDirection(self.direction)
         self.tab_widget.setTabsClosable(False)
         self.tab_widget.setMovable(True)
         self.tab_widget.currentChanged.connect(self.switch_tab)
@@ -829,35 +953,35 @@ class ArabicPyIDE(QMainWindow):
         self.tab_widget.setCornerWidget(add_tab, Qt.TopLeftCorner)
 
         code_splitter = QSplitter(Qt.Horizontal)
-        code_splitter.setLayoutDirection(Qt.RightToLeft)
+        code_splitter.setLayoutDirection(self.direction)
         self.code_splitter = code_splitter
         source_panel = QWidget()
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.setSpacing(0)
-        source_title = QLabel("الباء — الكود العربي", objectName="codePaneTitle")
-        source_title.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        source_title = QLabel(self.t("Al-Baa — Arabic Code"), objectName="codePaneTitle")
+        source_title.setAlignment((Qt.AlignRight if self.rtl else Qt.AlignLeft) | Qt.AlignVCenter)
         source_layout.addWidget(source_title)
         self.find_bar = QWidget(objectName="findBar")
         find_layout = QHBoxLayout(self.find_bar)
-        find_layout.setDirection(QBoxLayout.RightToLeft)
+        find_layout.setDirection(self.box_direction)
         find_layout.setContentsMargins(8, 5, 8, 5)
         find_layout.setSpacing(5)
         self.find_input = FindInput(objectName="findInput")
-        self.find_input.setPlaceholderText("ابحث في الملف…")
+        self.find_input.setPlaceholderText(self.t("Search in file…"))
         self.find_input.setClearButtonEnabled(True)
         self.find_input.setMaximumWidth(320)
         self.find_input.returnPressed.connect(self.find_next)
         self.find_input.escapePressed.connect(self.hide_find_bar)
         find_layout.addWidget(self.find_input)
-        find_next_button = self.make_button("التالي", self.find_next)
-        find_next_button.setToolTip("النتيجة التالية (Enter)")
+        find_next_button = self.make_button("Next", self.find_next)
+        find_next_button.setToolTip(self.t("Next result (Enter)"))
         find_layout.addWidget(find_next_button)
         self.find_status = QLabel("", objectName="findStatus")
         find_layout.addWidget(self.find_status)
         find_close_button = self.make_button("×", self.hide_find_bar)
         find_close_button.setFixedWidth(30)
-        find_close_button.setToolTip("إغلاق (Escape)")
+        find_close_button.setToolTip(self.t("Close (Escape)"))
         find_layout.addWidget(find_close_button)
         find_layout.addStretch()
         self.find_bar.hide()
@@ -870,17 +994,15 @@ class ArabicPyIDE(QMainWindow):
         python_layout = QVBoxLayout(python_panel)
         python_layout.setContentsMargins(0, 0, 0, 0)
         python_layout.setSpacing(0)
-        python_title = QLabel("Python — كود بايثون", objectName="codePaneTitle")
-        python_title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        python_title = QLabel(self.t("Python Code"), objectName="codePaneTitle")
+        python_title.setAlignment((Qt.AlignRight if self.rtl else Qt.AlignLeft) | Qt.AlignVCenter)
         python_layout.addWidget(python_title)
         self.python_tab_spacer = QWidget(objectName="pythonTabSpacer")
         python_layout.addWidget(self.python_tab_spacer)
         self.python_preview = CodeEditor()
         self.python_preview.setObjectName("pythonPreview")
-        self.python_preview.setLayoutDirection(Qt.LeftToRight)
-        python_text_option = self.python_preview.document().defaultTextOption()
-        python_text_option.setAlignment(Qt.AlignLeft | Qt.AlignAbsolute)
-        self.python_preview.document().setDefaultTextOption(python_text_option)
+        # Python source is always Latin-script/LTR, independent of UI language.
+        self.python_preview.set_text_direction(Qt.LeftToRight)
         self.python_preview.setFont(QFont("Segoe UI", 13))
         self.python_preview.setReadOnly(True)
         self.python_preview.setLineWrapMode(QPlainTextEdit.NoWrap)
@@ -890,11 +1012,15 @@ class ArabicPyIDE(QMainWindow):
         code_splitter.setSizes([650, 650])
         python_panel.hide()
         editor_layout.addWidget(code_splitter)
-        self.android_designer = AndroidDesigner()
+        self.android_designer = AndroidDesigner(language=self.language)
         self.android_designer.sourceChanged.connect(self.apply_designer_source)
         self.android_designer.hide()
         editor_layout.addWidget(self.android_designer)
+        self.rag_library_page = self.build_rag_library_page()
+        self.rag_library_page.hide()
+        editor_layout.addWidget(self.rag_library_page)
         self.editor = CodeEditor()
+        self.editor.set_text_direction(self.direction)
         self.highlighter = ArabicPyHighlighter(self.editor.document())
         self.editor.setPlainText(
             'الرقم_الأول = 20\n'
@@ -926,8 +1052,8 @@ class ArabicPyIDE(QMainWindow):
             lambda value: self.sync_scrollbars(self.python_preview, self.editor, value)
         )
         self.editor.file_path = None
-        self.editor.display_name = "غير محفوظ.apy"
-        initial_index = self.tab_widget.addTab(self.editor, "غير محفوظ.apy")
+        self.editor.display_name = self.t("Untitled.apy")
+        initial_index = self.tab_widget.addTab(self.editor, self.t("Untitled.apy"))
         self.add_tab_close_button(initial_index, self.editor)
         QTimer.singleShot(0, self.align_code_pane_headers)
         self.update_python_preview()
@@ -943,20 +1069,20 @@ class ArabicPyIDE(QMainWindow):
         output_layout.setSpacing(0)
         header = QWidget(objectName="outputHeader")
         header_layout = QHBoxLayout(header)
-        header_layout.setDirection(QBoxLayout.RightToLeft)
-        header_layout.setContentsMargins(0, 0, 8, 0)
-        header_layout.addWidget(QLabel("المخرجات", objectName="outputTitle"))
+        header_layout.setDirection(self.box_direction)
+        header_layout.setContentsMargins(8, 0, 0, 0)
+        header_layout.addWidget(QLabel(self.t("OUTPUT"), objectName="outputTitle"))
         header_layout.addStretch()
-        clear = self.make_button("مسح", self.clear_output)
+        clear = self.make_button("Clear", self.clear_output)
         header_layout.addWidget(clear)
         output_layout.addWidget(header)
         self.output = QPlainTextEdit(objectName="output")
-        self.output.setLayoutDirection(Qt.RightToLeft)
+        self.output.setLayoutDirection(self.direction)
         output_text_option = self.output.document().defaultTextOption()
-        output_text_option.setAlignment(Qt.AlignRight | Qt.AlignAbsolute)
+        output_text_option.setAlignment((Qt.AlignRight if self.rtl else Qt.AlignLeft) | Qt.AlignAbsolute)
         self.output.document().setDefaultTextOption(output_text_option)
         self.output.setReadOnly(True)
-        self.output.setPlainText("جاهز للتشغيل.")
+        self.output.setPlainText(self.t("Ready to run."))
         output_layout.addWidget(self.output)
         main_splitter.addWidget(output_panel)
         main_splitter.setSizes([650, 190])
@@ -970,14 +1096,14 @@ class ArabicPyIDE(QMainWindow):
         self.ai_chat_header = QWidget(objectName="aiChatHeader")
         chat_header = QHBoxLayout(self.ai_chat_header)
         chat_header.setContentsMargins(8, 7, 8, 7)
-        self.ai_chat_avatar = QLabel("ب", objectName="aiChatAvatar")
+        self.ai_chat_avatar = QLabel("B", objectName="aiChatAvatar")
         self.ai_chat_avatar.setAlignment(Qt.AlignCenter)
         self.ai_chat_avatar.setFixedSize(30, 26)
         chat_header.addWidget(self.ai_chat_avatar)
         title_box = QVBoxLayout()
         title_box.setSpacing(0)
-        self.ai_chat_title = QLabel("مساعد الباء", objectName="aiChatTitle")
-        self.ai_chat_subtitle = QLabel("متصل الآن", objectName="aiChatSubtitle")
+        self.ai_chat_title = QLabel(self.t("Al-Baa Assistant"), objectName="aiChatTitle")
+        self.ai_chat_subtitle = QLabel(self.t("Connected"), objectName="aiChatSubtitle")
         title_box.addWidget(self.ai_chat_title)
         title_box.addWidget(self.ai_chat_subtitle)
         chat_header.addLayout(title_box)
@@ -987,8 +1113,9 @@ class ArabicPyIDE(QMainWindow):
         chat_header.addWidget(close_chat)
         chat_layout.addWidget(self.ai_chat_header)
         model_row = QHBoxLayout()
-        model_row.setContentsMargins(8, 0, 8, 0)
-        model_row.addWidget(QLabel("النموذج:"))
+        model_row.setContentsMargins(8, 2, 8, 6)
+        self.ai_model_label = QLabel(self.t("Model:"), objectName="aiModelLabel")
+        model_row.addWidget(self.ai_model_label)
         self.ai_model_selector = QComboBox(objectName="aiModelSelector")
         self.ai_model_selector.setEditable(True)
         self.ai_model_selector.addItems([
@@ -1005,19 +1132,19 @@ class ArabicPyIDE(QMainWindow):
         if self.ai_model_selector.findText(self.ai_model) < 0:
             self.ai_model_selector.addItem(self.ai_model)
         self.ai_model_selector.setCurrentText(self.ai_model)
-        self.ai_model_selector.setToolTip("اختر نموذج Ollama لهذا الجهاز أو اكتب اسمه")
+        self.ai_model_selector.setToolTip(self.t("Choose an Ollama model for this device, or type its name"))
         self.ai_model_selector.currentTextChanged.connect(self.save_ai_model)
         model_row.addWidget(self.ai_model_selector, 1)
         chat_layout.addLayout(model_row)
         self.ai_download_progress = QProgressBar(objectName="aiDownloadProgress")
         self.ai_download_progress.setRange(0, 100)
-        self.ai_download_progress.setFormat("تنزيل النموذج: %p%")
+        self.ai_download_progress.setFormat(self.t("Downloading model: %p%"))
         self.ai_download_progress.setTextVisible(True)
         self.ai_download_progress.hide()
         download_row = QHBoxLayout()
         download_row.setContentsMargins(0, 0, 0, 0)
         download_row.addWidget(self.ai_download_progress, 1)
-        self.ai_download_pause_button = self.make_button("إيقاف", self.toggle_ai_model_download)
+        self.ai_download_pause_button = self.make_button("Pause", self.toggle_ai_model_download)
         self.ai_download_pause_button.setFixedWidth(62)
         self.ai_download_pause_button.hide()
         download_row.addWidget(self.ai_download_pause_button)
@@ -1032,26 +1159,46 @@ class ArabicPyIDE(QMainWindow):
         self.ai_chat_messages_layout.addStretch(1)
         self.ai_chat_history.setWidget(self.ai_chat_content)
         chat_layout.addWidget(self.ai_chat_history)
-        self.ai_thinking_label = QLabel("مساعد الباء يكتب الآن…", objectName="aiThinking")
-        self.ai_thinking_label.setAlignment(Qt.AlignRight)
+        self.ai_thinking_label = QLabel(objectName="aiThinking")
+        self.ai_thinking_label.setAlignment(Qt.AlignRight if self.rtl else Qt.AlignLeft)
         self.ai_thinking_label.hide()
         chat_layout.addWidget(self.ai_thinking_label)
+        # A small braille-spinner cycle next to the status text, like the
+        # busy indicator in VS Code/Copilot Chat, instead of a static label.
+        self.ai_thinking_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        self.ai_thinking_frame_index = 0
+        self.ai_thinking_animated = True
+        self.set_ai_thinking_text(self.t("Al-Baa Assistant is thinking"))
+        self.ai_thinking_timer = QTimer(self)
+        self.ai_thinking_timer.setInterval(90)
+        self.ai_thinking_timer.timeout.connect(self.animate_ai_thinking)
+        self.ai_thinking_timer.start()
         self.ai_composer = QWidget(objectName="aiComposer")
-        self.ai_composer.setFixedHeight(58)
         self.ai_composer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        composer_layout = QHBoxLayout(self.ai_composer)
-        composer_layout.setContentsMargins(0, 5, 0, 5)
-        composer_layout.setSpacing(7)
+        composer_layout = QVBoxLayout(self.ai_composer)
+        composer_layout.setContentsMargins(12, 8, 12, 8)
+        composer_layout.setSpacing(4)
         self.ai_chat_input = AIChatInput(objectName="aiChatInput")
-        self.ai_chat_input.setPlaceholderText("اكتب رسالتك هنا...")
-        self.ai_chat_input.setToolTip("Enter للإرسال — Shift+Enter لسطر جديد")
-        self.ai_chat_input.setFixedHeight(48)
+        self.ai_chat_input.setPlaceholderText(self.t("Type your message..."))
+        self.ai_chat_input.setToolTip(self.t("Enter to send — Shift+Enter for a new line"))
+        self.ai_chat_input.setFixedHeight(38)
         self.ai_chat_input.submitted.connect(self.send_ai_message)
         composer_layout.addWidget(self.ai_chat_input)
-        self.ai_send_button = self.make_button("➤", self.send_ai_message, "aiSendButton")
-        self.ai_send_button.setToolTip("إرسال")
-        self.ai_send_button.setFixedSize(44, 44)
-        composer_layout.addWidget(self.ai_send_button)
+        composer_icon_row = QHBoxLayout()
+        composer_icon_row.setContentsMargins(0, 0, 0, 0)
+        composer_icon_row.setSpacing(6)
+        self.ai_attach_button = self.make_button("+", self.add_rag_documents, "aiAttachButton")
+        self.ai_attach_button.setToolTip(self.t("Add a document to the RAG knowledge base"))
+        self.ai_attach_button.setFixedSize(26, 26)
+        self.ai_attach_button.setFocusPolicy(Qt.NoFocus)
+        composer_icon_row.addWidget(self.ai_attach_button)
+        composer_icon_row.addStretch(1)
+        self.ai_send_button = SendIconButton(self.send_ai_message)
+        self.ai_send_button.setToolTip(self.t("Send"))
+        self.ai_send_button.setFixedSize(30, 30)
+        self.ai_send_button.setFocusPolicy(Qt.NoFocus)
+        composer_icon_row.addWidget(self.ai_send_button)
+        composer_layout.addLayout(composer_icon_row)
         chat_layout.addWidget(self.ai_composer)
         self.apply_ai_chat_theme()
         self.ai_chat_panel.hide()
@@ -1060,15 +1207,15 @@ class ArabicPyIDE(QMainWindow):
 
         status = QWidget(objectName="statusBar")
         status_layout = QHBoxLayout(status)
-        status_layout.setDirection(QBoxLayout.RightToLeft)
+        status_layout.setDirection(self.box_direction)
         status_layout.setContentsMargins(4, 0, 4, 0)
-        status_layout.addWidget(QLabel("◉  الباء", objectName="statusLabel"))
-        self.autosave_status_label = QLabel("الحفظ التلقائي مفعّل", objectName="statusLabel")
+        status_layout.addWidget(QLabel("◉  Al-Baa", objectName="statusLabel"))
+        self.autosave_status_label = QLabel(self.t("Autosave enabled"), objectName="statusLabel")
         status_layout.addWidget(self.autosave_status_label)
         status_layout.addStretch()
-        self.position_label = QLabel("السطر 1، العمود 1", objectName="statusLabel")
+        self.position_label = QLabel(self.t("Line 1, Column 1"), objectName="statusLabel")
         status_layout.addWidget(self.position_label)
-        status_layout.addWidget(QLabel("UTF-8     العربية", objectName="statusLabel"))
+        status_layout.addWidget(QLabel(self.t("UTF-8     Arabic"), objectName="statusLabel"))
         self.editor.cursorPositionChanged.connect(self.update_position)
         layout.addWidget(status)
         self.setCentralWidget(root)
@@ -1139,12 +1286,12 @@ class ArabicPyIDE(QMainWindow):
         if index >= 0:
             name = os.path.basename(
                 getattr(self.editor, "file_path", "")
-                or getattr(self.editor, "display_name", "غير محفوظ.apy")
+                or getattr(self.editor, "display_name", self.t("Untitled.apy"))
             )
             marker = "● " if modified else ""
             self.tab_widget.setTabText(index, marker + name)
         return
-        name = os.path.basename(self.current_file) if self.current_file else "غير محفوظ.apy"
+        name = os.path.basename(self.current_file) if self.current_file else self.t("Untitled.apy")
         self.active_tab.setText(f"  {'●' if modified else '◇'}  {name}    ×")
 
     def switch_tab(self, index):
@@ -1160,12 +1307,18 @@ class ArabicPyIDE(QMainWindow):
                 else:
                     self.hide_android_designer()
 
-    def add_editor_tab(self, content="", path=None):
+    def add_editor_tab(self, content="", path=None, code_language="albaa"):
         editor = CodeEditor()
+        editor.code_language = code_language
+        # Dart/Flutter source is Latin-script, so it stays LTR regardless of
+        # the active UI language -- same reasoning as the Python preview pane.
+        editor.set_text_direction(Qt.LeftToRight if code_language == "flutter" else self.direction)
         editor.set_theme(self.ide_dark)
         editor.file_path = path
-        editor.display_name = os.path.basename(path) if path else "غير محفوظ.apy"
-        editor.highlighter = ArabicPyHighlighter(editor.document())
+        default_name = self.t("main.dart") if code_language == "flutter" else self.t("Untitled.apy")
+        editor.display_name = os.path.basename(path) if path else default_name
+        highlighter_cls = DartHighlighter if code_language == "flutter" else ArabicPyHighlighter
+        editor.highlighter = highlighter_cls(editor.document())
         editor.highlighter.set_theme(self.ide_dark)
         editor.setPlainText(content)
         editor.document().setModified(False)
@@ -1181,7 +1334,7 @@ class ArabicPyIDE(QMainWindow):
                 source_editor, self.python_preview, value
             )
         )
-        name = os.path.basename(path) if path else "غير محفوظ.apy"
+        name = os.path.basename(path) if path else default_name
         index = self.tab_widget.addTab(editor, name)
         self.add_tab_close_button(index, editor)
         self.tab_widget.setCurrentWidget(editor)
@@ -1202,9 +1355,9 @@ class ArabicPyIDE(QMainWindow):
             timer.start()
         if hasattr(self, "autosave_status_label"):
             if getattr(editor, "file_path", None):
-                self.autosave_status_label.setText("بانتظار الحفظ التلقائي…")
+                self.autosave_status_label.setText(self.t("Waiting to autosave…"))
             else:
-                self.autosave_status_label.setText("احفظ الملف أول مرة لتفعيل الحفظ التلقائي")
+                self.autosave_status_label.setText(self.t("Save the file once to enable autosave"))
 
     def autosave_editor(self, editor):
         """Atomically save a named, modified document without interrupting typing."""
@@ -1222,12 +1375,12 @@ class ArabicPyIDE(QMainWindow):
                 self.update_tab_title(False)
             self.remember_project_file(path)
             if hasattr(self, "autosave_status_label"):
-                self.autosave_status_label.setText("تم الحفظ تلقائيًا")
+                self.autosave_status_label.setText(self.t("Autosaved"))
         except OSError as error:
             with contextlib.suppress(OSError):
                 os.remove(temporary)
             if hasattr(self, "autosave_status_label"):
-                self.autosave_status_label.setText("تعذر الحفظ التلقائي")
+                self.autosave_status_label.setText(self.t("Autosave failed"))
                 self.autosave_status_label.setToolTip(str(error))
 
     def update_undo_redo_buttons(self, *_):
@@ -1243,9 +1396,9 @@ class ArabicPyIDE(QMainWindow):
             return
         editor = self.tab_widget.widget(index)
         old_path = getattr(editor, "file_path", None)
-        current_name = os.path.basename(old_path or getattr(editor, "display_name", "غير محفوظ.apy"))
+        current_name = os.path.basename(old_path or getattr(editor, "display_name", self.t("Untitled.apy")))
         name, accepted = QInputDialog.getText(
-            self, "تغيير اسم الملف", "الاسم الجديد:", text=current_name
+            self, self.t("Rename File"), self.t("New name:"), text=current_name
         )
         if not accepted:
             return
@@ -1253,7 +1406,7 @@ class ArabicPyIDE(QMainWindow):
         if not name:
             return
         if os.path.basename(name) != name or any(character in name for character in '<>:"/\\|?*'):
-            QMessageBox.warning(self, "اسم غير صالح", "اكتب اسم ملف فقط بدون مسار أو رموز غير مسموحة.")
+            QMessageBox.warning(self, self.t("Invalid Name"), self.t("Enter a filename only, without a path or disallowed characters."))
             return
         if not os.path.splitext(name)[1]:
             name += ".apy"
@@ -1261,12 +1414,12 @@ class ArabicPyIDE(QMainWindow):
             new_path = os.path.join(os.path.dirname(old_path), name)
             if os.path.normcase(new_path) != os.path.normcase(old_path):
                 if os.path.exists(new_path):
-                    QMessageBox.warning(self, "الاسم مستخدم", "يوجد ملف بهذا الاسم بالفعل.")
+                    QMessageBox.warning(self, self.t("Name In Use"), self.t("A file with this name already exists."))
                     return
                 try:
                     os.rename(old_path, new_path)
                 except OSError as error:
-                    QMessageBox.critical(self, "تعذر تغيير الاسم", str(error))
+                    QMessageBox.critical(self, self.t("Could Not Rename"), str(error))
                     return
                 editor.file_path = new_path
                 self.current_file = new_path
@@ -1281,7 +1434,7 @@ class ArabicPyIDE(QMainWindow):
         close_button = QPushButton("×")
         close_button.setObjectName("tabCloseButton")
         close_button.setFixedSize(20, 20)
-        close_button.setToolTip("إغلاق")
+        close_button.setToolTip(self.t("Close"))
         close_button.clicked.connect(
             lambda: self.close_tab(self.tab_widget.indexOf(editor))
         )
@@ -1301,11 +1454,16 @@ class ArabicPyIDE(QMainWindow):
         if not hasattr(self, "python_preview") or not hasattr(self, "editor"):
             return
 
+        if getattr(self.editor, "code_language", "albaa") != "albaa":
+            self.set_python_preview_text(
+                self.t("# Python preview isn't available for Flutter/Dart files.")
+            )
+            return
+
         source = self.editor.toPlainText()
         if not source.strip():
             self.set_python_preview_text(
-                "# اكتب كود الباء في الجهة اليمنى\n"
-                "# The generated Python code will appear here."
+                self.t("# Write Al-Baa code on the left\n# The generated Python code will appear here.")
             )
             return
 
@@ -1320,17 +1478,16 @@ class ArabicPyIDE(QMainWindow):
                 python_code = Generator().generate(ast)
                 python_code = self.match_source_spacing(source, python_code)
             self.set_python_preview_text(
-                python_code or "# No Python code has been generated yet."
+                python_code or self.t("# No Python code has been generated yet.")
             )
         except Exception as error:
             line = getattr(error, "line", None)
             column = getattr(error, "column", None)
             location = ""
             if line is not None:
-                location = f"\n# Error at line {line}, column {column or 1}."
+                location = self.t("\n# Error at line {line}, column {column}.", line=line, column=column or 1)
             self.set_python_preview_text(
-                "# Fix or complete the Al-Baa code to generate Python."
-                f"{location}"
+                self.t("# Fix or complete the Al-Baa code to generate Python.") + location
             )
 
     def set_python_preview_text(self, text):
@@ -1422,7 +1579,9 @@ class ArabicPyIDE(QMainWindow):
         if not hasattr(self, "position_label"):
             return
         cursor = self.editor.textCursor()
-        self.position_label.setText(f"السطر {cursor.blockNumber() + 1}، العمود {cursor.columnNumber() + 1}")
+        self.position_label.setText(
+            self.t("Line {line}, Column {column}", line=cursor.blockNumber() + 1, column=cursor.columnNumber() + 1)
+        )
 
     def clear_output(self):
         self.output.clear()
@@ -1437,50 +1596,137 @@ class ArabicPyIDE(QMainWindow):
     def toggle_python_preview(self):
         visible = not self.python_panel.isVisible()
         self.python_panel.setVisible(visible)
+        # The Python panel sits on the side opposite the Arabic source panel,
+        # which flips with UI direction -- so the collapse/expand arrows must
+        # flip too, always pointing toward where the hidden panel will appear.
+        collapse_arrow, expand_arrow = ("▶", "◀") if self.rtl else ("◀", "▶")
         if visible:
             self.code_splitter.setSizes([700, 700])
-            self.python_toggle_button.setText("▶")
-            self.python_toggle_button.setToolTip("إخفاء كود Python")
+            self.python_toggle_button.setText(collapse_arrow)
+            self.python_toggle_button.setToolTip(self.t("Hide Python Code"))
             QTimer.singleShot(0, self.align_code_pane_headers)
         else:
-            self.python_toggle_button.setText("◀")
-            self.python_toggle_button.setToolTip("إظهار كود Python")
+            self.python_toggle_button.setText(expand_arrow)
+            self.python_toggle_button.setToolTip(self.t("Show Python Code"))
 
     def set_active_activity(self, active_button):
         for button in self.activity_buttons:
             button.setChecked(button is active_button)
 
     def show_explorer(self):
+        self.restore_editor_view()
         self.sidebar.show()
         self.refresh_file_list()
         self.set_active_activity(self.activity_buttons[0])
 
     def show_run_panel(self):
+        self.restore_editor_view()
         self.main_splitter.widget(1).show()
-        self.output.setPlainText("لوحة التشغيل جاهزة. اضغط ▶ تشغيل لتشغيل البرنامج الحالي.")
+        self.output.setPlainText(self.t("Run panel ready. Click ▶ Run to run the current program."))
         self.set_active_activity(self.activity_buttons[2])
 
     def show_about(self):
+        self.restore_editor_view()
         self.main_splitter.widget(1).show()
-        self.output.setPlainText("الباء\n\nلغة برمجة عربية مع محرر لكتابة البرامج وتشغيلها.\nاستخدم ملف > فتح أو زر فتح لبدء العمل.")
+        self.output.setPlainText(self.t("Al-Baa\n\nAn Arabic programming language with an editor for writing and running programs.\nUse File > Open or the Open button to get started."))
+
+    def restore_editor_view(self):
+        """Leave the RAG library page (if open) and bring the code editor back."""
+        if self.rag_library_page.isVisible():
+            self.rag_library_page.hide()
+            self.code_splitter.show()
+
+    def build_rag_library_page(self):
+        """A dedicated page listing every document indexed into RAG, with add/remove."""
+        page = QWidget(objectName="ragLibraryPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        header_row = QHBoxLayout()
+        header_row.addWidget(QLabel(self.t("RAG Knowledge Library"), objectName="ragLibraryHeader"))
+        header_row.addStretch()
+        self.rag_library_count_label = QLabel("", objectName="ragLibraryCount")
+        header_row.addWidget(self.rag_library_count_label)
+        layout.addLayout(header_row)
+
+        toolbar_row = QHBoxLayout()
+        self.rag_library_add_button = self.make_button("+ Add Documents", self.add_rag_documents)
+        toolbar_row.addWidget(self.rag_library_add_button)
+        self.rag_remove_button = self.make_button("Delete Selected", self.remove_selected_rag_document, "ragRemoveButton")
+        toolbar_row.addWidget(self.rag_remove_button)
+        toolbar_row.addStretch()
+        layout.addLayout(toolbar_row)
+
+        self.rag_library_list = QListWidget(objectName="ragLibraryList")
+        self.rag_library_list.setLayoutDirection(self.direction)
+        self.rag_library_list.itemSelectionChanged.connect(self.update_rag_remove_button)
+        layout.addWidget(self.rag_library_list, 1)
+
+        self.rag_library_empty_label = QLabel(
+            self.t("No documents added yet.\nClick \"+ Add Documents\" to start building your RAG knowledge base."),
+            objectName="ragLibraryEmpty",
+        )
+        self.rag_library_empty_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.rag_library_empty_label, 1)
+        return page
+
+    def show_rag_library(self):
+        self.android_designer.hide()
+        self.code_splitter.hide()
+        self.rag_library_page.show()
+        self.refresh_rag_library()
+        self.set_active_activity(self.activity_buttons[3])
+
+    def refresh_rag_library(self):
+        self.rag_library_list.clear()
+        documents = list_rag_documents()
+        self.rag_library_count_label.setText(self.t("{count} document(s)", count=len(documents)) if documents else "")
+        self.rag_library_list.setVisible(bool(documents))
+        self.rag_library_empty_label.setVisible(not documents)
+        for path in documents:
+            size_kb = max(1, path.stat().st_size // 1024)
+            item = QListWidgetItem(self.t("  ◇  {name}      {size} KB", name=rag_display_name(path), size=size_kb))
+            item.setData(Qt.UserRole, str(path))
+            self.rag_library_list.addItem(item)
+        self.update_rag_remove_button()
+
+    def update_rag_remove_button(self):
+        self.rag_remove_button.setEnabled(self.rag_library_list.currentItem() is not None)
+
+    def remove_selected_rag_document(self):
+        item = self.rag_library_list.currentItem()
+        if item is None:
+            return
+        path = Path(item.data(Qt.UserRole))
+        answer = QMessageBox.question(
+            self, self.t("Delete Document"),
+            self.t("Delete \"{name}\" from the RAG knowledge base?", name=rag_display_name(path)),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        remove_rag_document(path)
+        self.refresh_rag_library()
 
     def add_rag_documents(self):
         if getattr(self, "rag_worker", None) is not None and self.rag_worker.isRunning():
             return
         paths, _filter = QFileDialog.getOpenFileNames(
             self,
-            "إضافة مستندات إلى معرفة RAG",
+            self.t("Add Documents to RAG Knowledge Base"),
             "",
-            "المستندات المدعومة (*.txt *.md *.apy *.py *.json *.csv *.pdf *.docx)",
+            self.t("Supported Documents (*.txt *.md *.apy *.py *.json *.csv *.pdf *.docx)"),
         )
         if not paths:
             return
         self.main_splitter.widget(1).show()
         self.rag_button.setEnabled(False)
+        self.rag_library_add_button.setEnabled(False)
         self.rag_progress.setValue(0)
         self.rag_progress.setFormat("RAG 0%")
         self.rag_progress.show()
-        self.output.setPlainText("بدأ استخراج وفهرسة المستندات...")
+        self.output.setPlainText(self.t("Extracting and indexing documents..."))
         self.rag_worker = RAGImportWorker(paths, self)
         self.rag_worker.progress.connect(self.update_rag_progress)
         self.rag_worker.completed.connect(self.finish_rag_import)
@@ -1491,26 +1737,28 @@ class ArabicPyIDE(QMainWindow):
         self.rag_progress.setValue(value)
         self.rag_progress.setFormat(f"RAG {value}%")
         self.output.setPlainText(
-            f"جارٍ استخراج وفهرسة:\n{filename}\n\n"
-            f"التقدم: {value}%\nقد يستغرق OCR بعض الوقت في أول استخدام."
+            self.t("Extracting and indexing:\n{filename}\n\nProgress: {value}%\nOCR may take a while the first time it's used.",
+                   filename=filename, value=value)
         )
 
     def finish_rag_import(self, added, errors):
         self.rag_progress.setValue(100)
         self.rag_progress.setFormat("RAG 100%")
         self.rag_button.setEnabled(True)
-        message = f"تمت إضافة {len(added)} مستند إلى مكتبة RAG."
+        self.rag_library_add_button.setEnabled(True)
+        if added:
+            self.refresh_rag_library()
+        message = self.t("Added {count} document(s) to the RAG library.", count=len(added))
         if added:
             message += "\n\n" + "\n".join(f"✓ {name}" for name in added)
         if errors:
-            message += "\n\nتعذر إضافة:\n" + "\n".join(errors)
+            message += "\n\n" + self.t("Could not add:") + "\n" + "\n".join(errors)
         self.output.setPlainText(message)
         QTimer.singleShot(2500, self.rag_progress.hide)
         self.rag_worker = None
 
     def ask_local_ai(self, _checked=False):
-        self.toggle_ai_chat(show=True)
-        self.ai_chat_input.setFocus()
+        self.toggle_ai_chat()
 
     def save_ai_model(self, model):
         """Persist the Ollama model independently on each device."""
@@ -1573,6 +1821,31 @@ class ArabicPyIDE(QMainWindow):
         self.apply_ai_chat_theme()
         self.render_ai_messages()
 
+    def change_language(self):
+        """Let the user switch the IDE's language; applying it needs a restart."""
+        picker = LanguagePickerDialog(self, dark=self.ide_dark)
+        picker.chosen_language = self.language
+        if picker.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_language = picker.chosen_language
+        if new_language == self.language or new_language not in LANGUAGE_NAMES:
+            return
+        settings = QSettings("AlBaa", "AlBaaIDE")
+        settings.setValue("ui_language", new_language)
+        answer = QMessageBox.question(
+            self,
+            self.t("Restart Required"),
+            self.t("Al-Baa needs to restart to switch to {language}. Restart now?", language=LANGUAGE_NAMES[new_language]),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        if getattr(sys, "frozen", False):
+            QProcess.startDetached(sys.executable, [])
+        else:
+            QProcess.startDetached(sys.executable, sys.argv)
+        self.close()
+
     def toggle_ai_chat_theme(self, _checked=False):
         """Compatibility alias: themes now apply to the entire IDE."""
         self.toggle_ide_theme()
@@ -1580,23 +1853,42 @@ class ArabicPyIDE(QMainWindow):
     def apply_ai_chat_theme(self):
         if self.ai_chat_dark:
             panel, history, composer, text, border, muted = (
-                "#000000", "#000000", "#000000", "#f2f2f2", "#2f3336", "#8b98a5"
+                "#252526", "#1e1e1e", "#2d2d30", "#e0e0e0", "#333333", "#9d9d9d"
             )
-            self.theme_button.setText("☀ المظهر")
+            self.theme_button.setText(self.t("☀ Theme"))
         else:
             panel, history, composer, text, border, muted = (
-                "#eaf2f7", "#eaf2f7", "#ffffff", "#17212b", "#c8d4dc", "#667781"
+                "#f3f6f9", "#ffffff", "#ffffff", "#1f2937", "#d7dde5", "#667085"
             )
-            self.theme_button.setText("☾ المظهر")
+            self.theme_button.setText(self.t("☾ Theme"))
+        card = "#2d2d30" if self.ai_chat_dark else "#ffffff"
         self.ai_chat_panel.setStyleSheet(f"#aiChatPanel {{ background:{panel}; border-left:1px solid {border}; }}")
-        self.ai_chat_history.setStyleSheet(f"#aiChatHistory {{ background:{history}; border:none; }}")
+        self.ai_chat_history.setStyleSheet(
+            f"#aiChatHistory {{ background:{history}; border:1px solid {border}; border-radius:14px; }}"
+        )
         self.ai_chat_content.setStyleSheet(f"#aiChatContent {{ background:{history}; }}")
-        self.ai_composer.setStyleSheet(f"#aiComposer {{ background:{panel}; border:none; }}")
+        self.ai_composer.setStyleSheet(
+            f"#aiComposer {{ background:{card}; border:1px solid {border}; border-radius:18px; }}"
+        )
         self.ai_chat_header.setStyleSheet(
             f"#aiChatHeader {{ background:{panel}; border-bottom:1px solid {border}; border-radius:0; }}"
         )
         self.ai_chat_avatar.setStyleSheet(
-            "#aiChatAvatar { background:#1d9bf0; color:white; border-radius:7px; font-size:16px; font-weight:800; }"
+            "#aiChatAvatar { background:#007ACC; color:white; border-radius:7px; font-size:16px; font-weight:800; }"
+        )
+        self.ai_model_label.setStyleSheet(f"background:transparent; color:{muted}; border:none; font-size:11px;")
+        popup_hover = "#37373d" if self.ai_chat_dark else "#e8eef5"
+        self.ai_model_selector.setStyleSheet(
+            f"#aiModelSelector {{ background:{card}; color:{text}; border:1px solid {border}; "
+            "border-radius:10px; padding:5px 10px; font-size:12px; }"
+            f"#aiModelSelector:hover {{ border:1px solid #007ACC; }}"
+            f"#aiModelSelector:focus {{ border:1px solid #007ACC; outline:none; }}"
+            "#aiModelSelector::drop-down { border:none; width:22px; }"
+            f"#aiModelSelector::down-arrow {{ width:0; height:0; margin-right:8px; "
+            f"border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid {muted}; }}"
+            f"#aiModelSelector QAbstractItemView {{ background:{card}; color:{text}; "
+            f"border:1px solid {border}; border-radius:8px; padding:4px; outline:none; "
+            f"selection-background-color:{popup_hover}; selection-color:{text}; }}"
         )
         self.ai_chat_title.setStyleSheet(
             f"background:transparent; color:{text}; border:none; font-size:14px; font-weight:700;"
@@ -1605,8 +1897,15 @@ class ArabicPyIDE(QMainWindow):
             f"background:transparent; color:{muted}; border:none; font-size:10px;"
         )
         self.ai_chat_input.setStyleSheet(
-            f"#aiChatInput {{ background:{composer}; color:{text}; border:1px solid {border}; border-radius:18px; padding:9px 12px; }}"
-            "#aiChatInput:focus { border:1px solid #168bd2; }"
+            f"#aiChatInput {{ background:transparent; color:{text}; border:none; padding:2px 2px; }}"
+        )
+        attach_hover = "#37373d" if self.ai_chat_dark else "#e8eef5"
+        self.ai_attach_button.setStyleSheet(
+            f"#aiAttachButton {{ background:transparent; color:{muted}; border:1px solid {border}; "
+            "border-radius:13px; font-size:15px; font-weight:700; padding:0; outline:none; }"
+            f"#aiAttachButton:hover, #aiAttachButton:pressed {{ background:{attach_hover}; color:{text}; "
+            f"border:1px solid {border}; outline:none; }}"
+            f"#aiAttachButton:focus {{ border:1px solid {border}; outline:none; }}"
         )
         self.ai_thinking_label.setStyleSheet(f"color:{muted}; padding:2px 8px; font-size:11px;")
 
@@ -1633,39 +1932,68 @@ class ArabicPyIDE(QMainWindow):
 
     def render_ai_messages(self):
         while self.ai_chat_messages_layout.count() > 1:
-            item = self.ai_chat_messages_layout.takeAt(0)
+            item = self.ai_chat_messages_layout.takeAt(self.ai_chat_messages_layout.count() - 1)
             if item.widget() is not None:
                 item.widget().deleteLater()
         for sender, message, timestamp in self.ai_messages:
             self.render_ai_message(sender, message, timestamp)
-        QTimer.singleShot(0, lambda: self.ai_chat_history.verticalScrollBar().setValue(
-            self.ai_chat_history.verticalScrollBar().maximum()
-        ))
+        self.scroll_ai_chat_to_bottom()
+
+    def scroll_ai_chat_to_bottom(self):
+        # Deferred twice: showing/hiding ai_thinking_label resizes the scroll
+        # viewport on the next layout pass, after a single singleShot(0) would
+        # already have fired and read a stale maximum() — leaving the latest
+        # bubble pushed out of view.
+        QTimer.singleShot(0, lambda: QTimer.singleShot(0, lambda: (
+            self.ai_chat_history.verticalScrollBar().setValue(
+                self.ai_chat_history.verticalScrollBar().maximum()
+            )
+        )))
+
+    def set_ai_thinking_text(self, text, animated=True):
+        """Set the busy-indicator's label, with or without the spinner."""
+        self.ai_thinking_base_text = text
+        self.ai_thinking_animated = animated
+        self.ai_thinking_label.setText(
+            text if not animated else f"{text} {self.ai_thinking_frames[self.ai_thinking_frame_index]}"
+        )
+
+    def animate_ai_thinking(self):
+        if not self.ai_thinking_animated or not self.ai_thinking_label.isVisible():
+            return
+        self.ai_thinking_frame_index = (self.ai_thinking_frame_index + 1) % len(self.ai_thinking_frames)
+        self.ai_thinking_label.setText(
+            f"{self.ai_thinking_base_text} {self.ai_thinking_frames[self.ai_thinking_frame_index]}"
+        )
 
     def render_ai_message(self, sender, message, timestamp):
+        # Copilot Chat-style layout: the assistant's reply is flowing text
+        # with a small avatar (no bubble/border), while the user's own turn
+        # sits in a subtly shaded box rather than a saturated chat bubble.
         is_user = sender == "user"
         if self.ai_chat_dark:
-            background = "#1d9bf0" if is_user else "#000000"
-            foreground = "#ffffff" if is_user else "#f2f2f2"
-            muted = "#d8efff" if is_user else "#8b98a5"
-            bubble_border = "none" if is_user else "1px solid #2f3336"
+            background = "#2d2d30" if is_user else "transparent"
+            foreground = "#e0e0e0"
+            muted = "#9d9d9d"
+            bubble_border = "1px solid #3c3c3c" if is_user else "none"
         else:
-            background = "#168bd2" if is_user else "#ffffff"
-            foreground = "#ffffff" if is_user else "#17212b"
-            muted = "#d9effc" if is_user else "#667781"
-            bubble_border = "none" if is_user else "1px solid #c8d4dc"
+            background = "#eef2f6" if is_user else "transparent"
+            foreground = "#1f2937"
+            muted = "#667085"
+            bubble_border = "1px solid #d7dde5" if is_user else "none"
         safe_message = html.escape(message).replace("\n", "<br>")
         row = QWidget()
         row.setStyleSheet("background:transparent;")
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(3, 0, 3, 0)
+        row_layout.setSpacing(8)
         bubble = QLabel(
             f'<span style="font-size:13px;">{safe_message}</span><br><br>'
             f'<span style="color:{muted}; font-size:9px;">{timestamp}</span>'
         )
         bubble.setTextFormat(Qt.RichText)
-        bubble.setLayoutDirection(Qt.RightToLeft)
-        bubble.setAlignment(Qt.AlignRight | Qt.AlignTop)
+        bubble.setLayoutDirection(self.direction)
+        bubble.setAlignment((Qt.AlignRight if self.rtl else Qt.AlignLeft) | Qt.AlignTop)
         bubble.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
         bubble.setWordWrap(True)
         metrics = bubble.fontMetrics()
@@ -1674,42 +2002,38 @@ class ArabicPyIDE(QMainWindow):
             natural_width = max(metrics.horizontalAdvance(longest_line), len(longest_line) * 7) + 28
             bubble_width = min(250, max(68, natural_width))
         else:
-            bubble_width = 275
+            bubble_width = 288
         bubble.setContentsMargins(12, 9, 12, 9)
         bubble.setStyleSheet(
             f"QLabel {{ background:{background}; color:{foreground}; border:{bubble_border}; "
-            "border-radius:14px; padding:0; }"
+            "border-radius:10px; padding:0; }"
         )
         bubble.setFixedWidth(bubble_width)
-        text_rect = metrics.boundingRect(
-            QRect(0, 0, max(20, bubble_width - 28), 10000),
-            Qt.TextWordWrap | Qt.AlignRight,
-            message,
-        )
-        # Some Windows Qt builds severely under-report shaped Arabic text
-        # width. Keep a character-based fallback so wrapped lines are never
-        # clipped even when QFontMetrics claims a paragraph fits on one line.
-        chars_per_line = min(28, max(4, (bubble_width - 28) // 7))
-        estimated_lines = sum(
-            max(1, (len(line) + chars_per_line - 1) // chars_per_line)
-            for line in (message.splitlines() or [""])
-        )
-        measured_height = text_rect.height() + metrics.height() + 22
-        estimated_height = estimated_lines * 19 + 44
-        bubble_height = max(measured_height, estimated_height)
+        # Ask the label itself for the height its actual rich-text content
+        # needs at this width — authoritative, unlike a plain-text
+        # QFontMetrics estimate which doesn't see the HTML markup and used to
+        # wildly overshoot on Windows, leaving a blank gap inside the bubble.
+        bubble_height = bubble.heightForWidth(bubble_width)
         bubble.setFixedHeight(max(44, bubble_height))
         bubble.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         if is_user:
             row_layout.addStretch(1)
             row_layout.addWidget(bubble, 0, Qt.AlignRight)
         else:
+            avatar = QLabel(self.t("B"))
+            avatar.setFixedSize(22, 22)
+            avatar.setAlignment(Qt.AlignCenter)
+            avatar.setStyleSheet(
+                "background:#007ACC; color:white; border-radius:11px; font-size:11px; font-weight:800;"
+            )
+            row_layout.addWidget(avatar, 0, Qt.AlignTop)
             row_layout.addWidget(bubble, 0, Qt.AlignLeft)
             row_layout.addStretch(1)
-        self.ai_chat_messages_layout.insertWidget(self.ai_chat_messages_layout.count() - 1, row)
+        self.ai_chat_messages_layout.addWidget(row)
 
     def send_ai_message(self):
         if self.ai_process is not None:
-            QMessageBox.information(self, "المساعد الذكي", "انتظر حتى ينتهي المساعد من الإجابة الحالية.")
+            QMessageBox.information(self, self.t("AI Assistant"), self.t("Wait until the assistant finishes its current answer."))
             return
         question = self.ai_chat_input.toPlainText().strip()
         if not question:
@@ -1720,7 +2044,8 @@ class ArabicPyIDE(QMainWindow):
         prompt = (
             f"{SYSTEM_PROMPT}\n\n"
             f"معرفة موثقة مسترجعة من قاعدة الباء:\n{rag_context(question)}\n\n"
-            f"كود الباء الحالي:\n{self.editor.toPlainText()}\n\n"
+            f"الكود المفتوح حالياً في المحرر (للسياق فقط — لا علاقة له بالسؤال إلا إذا "
+            f"كان السؤال عن الكود نفسه):\n{self.editor.toPlainText()}\n\n"
             f"سؤال المستخدم:\n{question}"
         )
         if use_remote:
@@ -1748,19 +2073,20 @@ class ArabicPyIDE(QMainWindow):
         if engine is None:
             self.append_ai_message(
                 "assistant",
-                "محرك الذكاء المضمّن غير موجود في هذه النسخة. أعد بناء الباء لتضمين llama.cpp.",
+                self.t("The embedded AI engine isn't present in this build. Rebuild Al-Baa with llama.cpp included."),
             )
             return
         profile = MODELS.get(model)
         if profile is None:
-            self.append_ai_message("assistant", "هذا النموذج غير مدعوم في المحرك المضمّن.")
+            self.append_ai_message("assistant", self.t("This model isn't supported by the embedded engine."))
             return
         settings = QSettings("AlBaa", "AlBaaIDE")
         consent_key = f"embedded_model_consent/{model}"
         if not settings.value(consent_key, False, type=bool):
             answer = QMessageBox.question(
-                self, "تنزيل نموذج الذكاء",
-                f"سيقوم الباء بتنزيل {profile.label_ar} بحجم يقارب {profile.download_gb:.1f} GB.\n\nهل تريد المتابعة؟",
+                self, self.t("Download AI Model"),
+                self.t("Al-Baa will download {label} (about {size:.1f} GB).\n\nContinue?",
+                       label=profile.label_ar, size=profile.download_gb),
                 QMessageBox.Yes | QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
@@ -1787,7 +2113,7 @@ class ArabicPyIDE(QMainWindow):
         try:
             self.ai_download_stream = open(partial, "ab" if offset else "wb")
         except OSError as error:
-            self.append_ai_message("assistant", f"تعذر إنشاء ملف النموذج: {error}")
+            self.append_ai_message("assistant", self.t("Could not create the model file: {error}", error=error))
             return
         self.pending_ai_engine = engine
         self.pending_ai_model = model
@@ -1817,11 +2143,12 @@ class ArabicPyIDE(QMainWindow):
         self.ai_download_progress.setRange(0, 100)
         self.ai_download_progress.setValue(min(99, int(offset * 100 / estimated_total)))
         self.ai_download_progress.show()
-        self.ai_download_pause_button.setText("إيقاف")
+        self.ai_download_pause_button.setText(self.t("Pause"))
         self.ai_download_pause_button.show()
         self.ai_send_button.setEnabled(False)
-        self.ai_thinking_label.setText("جارٍ تنزيل نموذج الذكاء…")
+        self.set_ai_thinking_text(self.t("Downloading AI model"))
         self.ai_thinking_label.show()
+        self.scroll_ai_chat_to_bottom()
 
     def validate_ai_download_resume(self):
         """Restart safely if the remote host ignored our Range request."""
@@ -1859,11 +2186,12 @@ class ArabicPyIDE(QMainWindow):
             total_gb = complete_total / (1024 ** 3)
             self.ai_download_progress.setValue(percent)
             self.ai_download_progress.setFormat(
-                f"تنزيل النموذج: {percent}% — {received_gb:.2f} / {total_gb:.2f} GB"
+                self.t("Downloading model: {percent}% — {received:.2f} / {total:.2f} GB",
+                       percent=percent, received=received_gb, total=total_gb)
             )
         else:
             self.ai_download_progress.setRange(0, 0)
-            self.ai_download_progress.setFormat("جارٍ تنزيل النموذج…")
+            self.ai_download_progress.setFormat(self.t("Downloading model…"))
 
     def finish_ai_model_download(self, partial, destination):
         reply = self.ai_download_reply
@@ -1873,7 +2201,7 @@ class ArabicPyIDE(QMainWindow):
         self.ai_download_stream = None
         self.ai_download_reply = None
         failed = reply is None or reply.error() != QNetworkReply.NetworkError.NoError
-        error_text = reply.errorString() if reply is not None else "خطأ غير معروف"
+        error_text = reply.errorString() if reply is not None else self.t("Unknown error")
         status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) if reply is not None else None
         if reply is not None:
             content_range = bytes(reply.rawHeader(b"Content-Range")).decode("ascii", errors="ignore")
@@ -1910,27 +2238,27 @@ class ArabicPyIDE(QMainWindow):
                 )
                 return
             self.ai_download_progress.setRange(0, 100)
-            self.ai_download_progress.setFormat("تم إيقاف التنزيل — اضغط متابعة")
-            self.ai_download_pause_button.setText("متابعة")
-            self.ai_thinking_label.setText("تنزيل النموذج متوقف مؤقتًا")
+            self.ai_download_progress.setFormat(self.t("Download paused — click Resume"))
+            self.ai_download_pause_button.setText(self.t("Resume"))
+            self.set_ai_thinking_text(self.t("Model download paused"), animated=False)
             self.ai_send_button.setEnabled(False)
             return
         if failed:
             self.ai_download_progress.hide()
             self.ai_thinking_label.hide()
             self.ai_send_button.setEnabled(False)
-            self.ai_download_pause_button.setText("متابعة")
-            self.append_ai_message("assistant", f"تعذر تنزيل النموذج: {error_text}")
+            self.ai_download_pause_button.setText(self.t("Resume"))
+            self.append_ai_message("assistant", self.t("Could not download the model: {error}", error=error_text))
             return
         try:
             os.replace(partial, destination)
         except OSError as error:
-            self.append_ai_message("assistant", f"تعذر حفظ النموذج: {error}")
+            self.append_ai_message("assistant", self.t("Could not save the model: {error}", error=error))
             self.ai_send_button.setEnabled(True)
             return
         self.ai_download_progress.setRange(0, 100)
         self.ai_download_progress.setValue(100)
-        self.ai_download_progress.setFormat("اكتمل تنزيل النموذج — 100%")
+        self.ai_download_progress.setFormat(self.t("Model download complete — 100%"))
         self.ai_download_pause_button.hide()
         self.ai_download_profile = None
         self.ai_download_destination = None
@@ -1948,8 +2276,9 @@ class ArabicPyIDE(QMainWindow):
             process.finished.connect(self.embedded_ai_stopped)
             process.start()
             self.embedded_ai_process = process
-        self.ai_thinking_label.setText("جارٍ تنزيل أو تحميل نموذج الذكاء…")
+        self.set_ai_thinking_text(self.t("Downloading or loading AI model"))
         self.ai_thinking_label.show()
+        self.scroll_ai_chat_to_bottom()
         self.ai_send_button.setEnabled(False)
         self.ai_engine_wait_attempts = 0
         QTimer.singleShot(500, self.wait_for_embedded_ai)
@@ -1964,7 +2293,7 @@ class ArabicPyIDE(QMainWindow):
             if self.embedded_ai_process is None or self.ai_engine_wait_attempts >= 3600:
                 self.ai_thinking_label.hide()
                 self.ai_send_button.setEnabled(True)
-                self.append_ai_message("assistant", "تعذر تشغيل محرك الذكاء المضمّن.")
+                self.append_ai_message("assistant", self.t("Could not start the embedded AI engine."))
                 return
             QTimer.singleShot(500, self.wait_for_embedded_ai)
             return
@@ -1972,7 +2301,7 @@ class ArabicPyIDE(QMainWindow):
         self.pending_ai_payload = None
         self.ai_download_progress.hide()
         self.ai_download_pause_button.hide()
-        self.ai_thinking_label.setText("مساعد الباء يكتب الآن…")
+        self.set_ai_thinking_text(self.t("Al-Baa Assistant is thinking"))
         self.start_ai_http_request(f"{EMBEDDED_BASE_URL}/v1/chat/completions", payload)
 
     def embedded_ai_stopped(self, _exit_code, _status):
@@ -1983,9 +2312,9 @@ class ArabicPyIDE(QMainWindow):
     def start_ai_http_request(self, endpoint, payload, extra_headers=None):
         """Send a request to either supported local AI runtime."""
         self.ai_thinking_label.show()
+        self.scroll_ai_chat_to_bottom()
         self.ai_button.setEnabled(False)
         self.ai_send_button.setEnabled(False)
-        self.ai_send_button.setText("…")
         self.ai_response_buffer.clear()
         process = QProcess(self)
         self.ai_process = process
@@ -2019,7 +2348,6 @@ class ArabicPyIDE(QMainWindow):
         self.ai_process = None
         self.ai_button.setEnabled(True)
         self.ai_send_button.setEnabled(True)
-        self.ai_send_button.setText("➤")
         self.ai_thinking_label.hide()
         raw = bytes(self.ai_response_buffer).decode("utf-8", errors="replace")
         try:
@@ -2036,14 +2364,14 @@ class ArabicPyIDE(QMainWindow):
             self.append_ai_message("assistant", answer)
         else:
             if self.ai_backend == "remote":
-                self.append_ai_message("assistant", "تعذر الاتصال بكمبيوتر AI البعيد. تأكد أنه يعمل وأن العنوان صحيح.")
+                self.append_ai_message("assistant", self.t("Could not connect to the remote AI computer. Make sure it's running and the address is correct."))
             else:
-                self.append_ai_message("assistant", f"تعذر تشغيل {self.ai_model}. تأكد أن النموذج مثبت أو أعد المحاولة.")
+                self.append_ai_message("assistant", self.t("Could not run {model}. Make sure the model is installed, or try again.", model=self.ai_model))
 
     def local_ai_error(self, _error):
         self.ai_thinking_label.hide()
         if self.ai_process is not None:
-            self.append_ai_message("assistant", "تعذر بدء الاتصال بمحرك الذكاء المحلي.")
+            self.append_ai_message("assistant", self.t("Could not start a connection to the local AI engine."))
 
     def ensure_ai_server(self):
         if os.name == "nt":
@@ -2057,21 +2385,24 @@ class ArabicPyIDE(QMainWindow):
             server.start()
         except OSError as error:
             QMessageBox.critical(
-                self, "تعذر تشغيل شبكة AI",
-                f"تعذر فتح المنفذ 8765 على هذا الجهاز:\n{error}",
+                self, self.t("Could Not Start AI Network"),
+                self.t("Could not open port 8765 on this device:\n{error}", error=error),
             )
             return False
         self.ai_server = server
-        self.ai_server_button.setText("إيقاف شبكة AI")
+        self.ai_server_button.setText(self.t("Stop AI Network"))
         self.main_splitter.widget(1).show()
         self.output.setPlainText(
-            "خادم الذكاء يعمل على هذا الكمبيوتر.\n\n"
-            f"العنوان: {server.address}\n"
-            f"رمز الوصول: {self.ai_server_token}\n\n"
-            "للاستخدام من العمل: ثبّت Tailscale على الجهازين، وسجّل الدخول بالحساب نفسه، "
-            "ثم استخدم اسم هذا الكمبيوتر أو عنوان Tailscale مع المنفذ 8765.\n"
-            "مثال: http://اسم-الكمبيوتر:8765\n\n"
-            "إذا ظهرت نافذة جدار حماية Windows فاسمح بالوصول للشبكات الخاصة فقط."
+            self.t(
+                "The AI server is running on this computer.\n\n"
+                "Address: {address}\n"
+                "Access token: {token}\n\n"
+                "To use it from work: install Tailscale on both devices, sign in with the same account, "
+                "then use this computer's name or Tailscale address with port 8765.\n"
+                "Example: http://computer-name:8765\n\n"
+                "If a Windows Firewall prompt appears, only allow access on private networks.",
+                address=server.address, token=self.ai_server_token,
+            )
         )
         return True
 
@@ -2084,7 +2415,7 @@ class ArabicPyIDE(QMainWindow):
 
     def ensure_background_ai_server(self):
         if self.background_ai_is_running():
-            self.ai_server_button.setText("إيقاف شبكة AI")
+            self.ai_server_button.setText(self.t("Stop AI Network"))
             return True
         app_data = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()), "AlBaa")
         roaming_data = os.path.join(os.environ.get("APPDATA", app_data), "AlBaa")
@@ -2099,7 +2430,7 @@ class ArabicPyIDE(QMainWindow):
             packaged_host = os.path.join(bundle_root, "AlBaaAIHost.exe")
             installed_host = os.path.join(app_data, "AlBaaAIHost.exe")
             if not os.path.isfile(packaged_host):
-                QMessageBox.critical(self, "خادم AI غير موجود", "ملف AlBaaAIHost.exe غير موجود داخل حزمة الباء.")
+                QMessageBox.critical(self, self.t("AI Server Not Found"), self.t("AlBaaAIHost.exe wasn't found inside the Al-Baa package."))
                 return False
             shutil.copy2(packaged_host, installed_host)
             program, arguments = installed_host, []
@@ -2117,23 +2448,26 @@ class ArabicPyIDE(QMainWindow):
         )
         startup.setValue("AlBaaAIHost", startup_command)
         if not QProcess.startDetached(program, arguments):
-            QMessageBox.critical(self, "تعذر تشغيل شبكة AI", "تعذر بدء خادم AI في الخلفية.")
+            QMessageBox.critical(self, self.t("Could Not Start AI Network"), self.t("Could not start the AI server in the background."))
             return False
         for _attempt in range(20):
             QApplication.processEvents()
             if self.background_ai_is_running():
-                self.ai_server_button.setText("إيقاف شبكة AI")
+                self.ai_server_button.setText(self.t("Stop AI Network"))
                 self.main_splitter.widget(1).show()
                 self.output.setPlainText(
-                    "خادم AI يعمل في الخلفية وسيبدأ تلقائيًا مع Windows.\n\n"
-                    f"العنوان المحلي: http://{local_ipv4()}:8765\n"
-                    f"رمز الوصول: {self.ai_server_token}\n\n"
-                    "يمكنك الآن إغلاق أو إعادة تشغيل الباء وسيبقى AI يعمل. "
-                    "أبقِ Ollama وTailscale والكمبيوتر قيد التشغيل."
+                    self.t(
+                        "The AI server is running in the background and will start automatically with Windows.\n\n"
+                        "Local address: http://{address}:8765\n"
+                        "Access token: {token}\n\n"
+                        "You can now close or restart Al-Baa and AI will keep running. "
+                        "Keep Ollama, Tailscale, and the computer powered on.",
+                        address=local_ipv4(), token=self.ai_server_token,
+                    )
                 )
                 return True
             time.sleep(0.1)
-        QMessageBox.critical(self, "تعذر تشغيل شبكة AI", "بدأ الخادم لكنه لم يستجب على المنفذ 8765.")
+        QMessageBox.critical(self, self.t("Could Not Start AI Network"), self.t("The server started but didn't respond on port 8765."))
         return False
 
     def stop_background_ai_server(self):
@@ -2152,14 +2486,14 @@ class ArabicPyIDE(QMainWindow):
             QSettings.Format.NativeFormat,
         )
         startup.remove("AlBaaAIHost")
-        self.ai_server_button.setText("شبكة AI")
-        self.output.setPlainText("تم إيقاف خادم AI في الخلفية وتعطيل تشغيله التلقائي.")
+        self.ai_server_button.setText(self.t("AI Network"))
+        self.output.setPlainText(self.t("The background AI server was stopped and its auto-start was disabled."))
 
     def configure_remote_ai(self):
         url, accepted = QInputDialog.getText(
             self,
-            "اتصال AI بعيد",
-            "عنوان كمبيوتر AI عبر Tailscale:\nمثال: http://my-desktop:8765\n\nاتركه فارغًا للعودة إلى AI المحلي:",
+            self.t("Remote AI Connection"),
+            self.t("AI computer address via Tailscale:\nExample: http://my-desktop:8765\n\nLeave empty to go back to local AI:"),
             text=self.remote_ai_url,
         )
         if not accepted:
@@ -2171,16 +2505,16 @@ class ArabicPyIDE(QMainWindow):
             settings = QSettings("AlBaa", "AlBaaIDE")
             settings.remove("remote_ai_url")
             settings.remove("remote_ai_token")
-            self.remote_ai_button.setText("AI بعيد")
-            QMessageBox.information(self, "AI محلي", "سيستخدم الباء نموذج Ollama الموجود على هذا الجهاز.")
+            self.remote_ai_button.setText(self.t("Remote AI"))
+            QMessageBox.information(self, self.t("Local AI"), self.t("Al-Baa will use the Ollama model installed on this device."))
             return
         if not re.match(r"^https?://[^\s/]+(?::\d+)?$", url):
-            QMessageBox.warning(self, "عنوان غير صالح", "اكتب عنوانًا مثل: http://my-desktop:8765")
+            QMessageBox.warning(self, self.t("Invalid Address"), self.t("Enter an address like: http://my-desktop:8765"))
             return
         token, accepted = QInputDialog.getText(
             self,
-            "رمز AI البعيد",
-            "الصق رمز الوصول الظاهر في كمبيوتر AI:",
+            self.t("Remote AI Token"),
+            self.t("Paste the access token shown on the AI computer:"),
             QLineEdit.EchoMode.Password,
             self.remote_ai_token,
         )
@@ -2191,11 +2525,11 @@ class ArabicPyIDE(QMainWindow):
         settings = QSettings("AlBaa", "AlBaaIDE")
         settings.setValue("remote_ai_url", self.remote_ai_url)
         settings.setValue("remote_ai_token", self.remote_ai_token)
-        self.remote_ai_button.setText("AI بعيد ✓")
+        self.remote_ai_button.setText(self.t("Remote AI ✓"))
         QMessageBox.information(
             self,
-            "تم حفظ الاتصال",
-            "سيستخدم مساعد الباء الآن نموذج AI الموجود على كمبيوترك البعيد.",
+            self.t("Connection Saved"),
+            self.t("The Al-Baa assistant will now use the AI model on your remote computer."),
         )
 
     def toggle_ai_server(self):
@@ -2204,22 +2538,22 @@ class ArabicPyIDE(QMainWindow):
                 self.stop_background_ai_server()
             elif self.ensure_background_ai_server():
                 QMessageBox.information(
-                    self, "شبكة AI تعمل دائمًا",
-                    "خادم AI يعمل في الخلفية وسيبقى يعمل عند إغلاق الباء، وسيبدأ تلقائيًا مع Windows.",
+                    self, self.t("AI Network Always On"),
+                    self.t("The AI server is running in the background and will keep running when Al-Baa closes, starting automatically with Windows."),
                 )
             return
         if self.ai_server is None:
             if self.ensure_ai_server():
                 QMessageBox.information(
-                    self, "شبكة AI جاهزة",
-                    f"العنوان: {self.ai_server.address}\n\n"
-                    "اترك الباء وOllama يعملان أثناء استخدام تطبيق الهاتف.",
+                    self, self.t("AI Network Ready"),
+                    self.t("Address: {address}\n\nKeep Al-Baa and Ollama running while using the mobile app.",
+                           address=self.ai_server.address),
                 )
             return
         self.ai_server.stop()
         self.ai_server = None
-        self.ai_server_button.setText("شبكة AI")
-        self.output.setPlainText("تم إيقاف خادم الذكاء المحلي.")
+        self.ai_server_button.setText(self.t("AI Network"))
+        self.output.setPlainText(self.t("The local AI server was stopped."))
 
     def ai_export_credentials(self):
         if not self.ensure_ai_server():
@@ -2243,17 +2577,30 @@ class ArabicPyIDE(QMainWindow):
         super().closeEvent(event)
 
     def new_android_file(self):
-        source = (
-            'اسم التطبيق هو الباء\n\n'
-            'في شريط السفلي ضع:\n'
-            '    الرئيسية\n'
-            '    البحث\n'
-            '    التنبيهات\n'
-            '    الرسائل\n\n'
-            'اطبع "ما هو اسمك"\n\n'
-            'الاسم = حقل "اكتب اسمك"\n\n'
-            'اطبع الاسم\n'
-        )
+        if self.rtl:
+            source = (
+                'اسم التطبيق هو الباء\n\n'
+                'في شريط السفلي ضع:\n'
+                '    الرئيسية\n'
+                '    البحث\n'
+                '    التنبيهات\n'
+                '    الرسائل\n\n'
+                'اطبع "ما هو اسمك"\n\n'
+                'الاسم = حقل "اكتب اسمك"\n\n'
+                'اطبع الاسم\n'
+            )
+        else:
+            source = (
+                'اسم التطبيق هو Al-Baa\n\n'
+                'في شريط السفلي ضع:\n'
+                '    Home\n'
+                '    Search\n'
+                '    Alerts\n'
+                '    Messages\n\n'
+                'اطبع "What is your name"\n\n'
+                'name = حقل "Type your name"\n\n'
+                'اطبع name\n'
+            )
         editor = self.add_editor_tab(source)
         editor.document().setModified(True)
         self.update_tab_title(True)
@@ -2273,15 +2620,15 @@ class ArabicPyIDE(QMainWindow):
             return
         if not self.android_designer.load_source(source):
             error = self.android_designer.last_error
-            message = format_error(error, source) if error else "تعذر قراءة كود التطبيق."
+            message = format_error(error, source) if error else self.t("Could not read the app code.")
             self.editor.show_error_line(getattr(error, "line", None))
             self.main_splitter.widget(1).show()
             self.main_splitter.setSizes([650, 190])
             self.output.setPlainText(message)
             QMessageBox.warning(
                 self,
-                "تعذر فتح التصميم",
-                f"أصلح الخطأ أولاً:\n\n{getattr(error, 'message', str(error))}",
+                self.t("Could Not Open Designer"),
+                self.t("Fix the error first:\n\n{message}", message=getattr(error, 'message', str(error))),
             )
             return
         self.editor.clear_error_line()
@@ -2290,18 +2637,18 @@ class ArabicPyIDE(QMainWindow):
         self.main_splitter.setSizes([1, 0])
         self.code_splitter.hide()
         self.android_designer.show()
-        self.designer_button.setText("الكود")
+        self.designer_button.setText(self.t("Code"))
 
     def hide_android_designer(self):
         if self.android_designer.preview_mode:
             self.android_designer.stop_preview()
-            self.run_button.setText("▶ تشغيل")
+            self.run_button.setText(self.t("▶ Run"))
         self.android_designer.hide()
         self.code_splitter.show()
         if self.output_was_visible_before_designer:
             self.main_splitter.widget(1).show()
             self.main_splitter.setSizes([650, 190])
-        self.designer_button.setText("تصميم")
+        self.designer_button.setText(self.t("Designer"))
 
     def apply_designer_source(self, source):
         if not is_android_source(self.editor.toPlainText()):
@@ -2318,12 +2665,12 @@ class ArabicPyIDE(QMainWindow):
         source = self.editor.toPlainText()
         if not is_android_source(source):
             self.output.setPlainText(
-                'هذا الملف ليس تطبيق Android. ابدأ بـ: تطبيق "اسم التطبيق"'
+                self.t('This file isn\'t an Android app. Start with: تطبيق "App Name"')
             )
             return False
 
         directory = QFileDialog.getExistingDirectory(
-            self, "اختر مجلد مشروع Android"
+            self, self.t("Choose an Android Project Folder")
         )
         if not directory:
             return False
@@ -2335,8 +2682,8 @@ class ArabicPyIDE(QMainWindow):
         if existing:
             answer = QMessageBox.question(
                 self,
-                "استبدال ملفات المشروع",
-                "سيتم استبدال main.py و buildozer.spec في المجلد المحدد. هل تريد المتابعة؟",
+                self.t("Replace Project Files"),
+                self.t("main.py and buildozer.spec in the selected folder will be replaced. Continue?"),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -2355,17 +2702,17 @@ class ArabicPyIDE(QMainWindow):
         self.android_project_path = directory
         self.main_splitter.widget(1).show()
         self.output.setPlainText(
-            f"تم تصدير مشروع Android إلى:\n{directory}\n\n"
-            "يمكنك رفعه إلى GitHub أو إنشاء APK عبر GitHub Actions."
+            self.t("Android project exported to:\n{directory}\n\nYou can push it to GitHub or build an APK via GitHub Actions.",
+                   directory=directory)
         )
         return True
 
     def export_cross_platform(self):
         source = self.editor.toPlainText()
         if not is_android_source(source):
-            QMessageBox.warning(self, "ليس تطبيقًا", "افتح أو أنشئ مشروع تطبيق من الباء أولًا.")
+            QMessageBox.warning(self, self.t("Not an App"), self.t("Open or create an Al-Baa app project first."))
             return False
-        output_directory = QFileDialog.getExistingDirectory(self, "اختر مكان حفظ تطبيق Windows")
+        output_directory = QFileDialog.getExistingDirectory(self, self.t("Choose Where to Save the Windows App"))
         if not output_directory:
             return False
         directory = tempfile.mkdtemp(prefix="albaa-app-build-")
@@ -2373,16 +2720,15 @@ class ArabicPyIDE(QMainWindow):
             export_tauri_project(source, directory)
         except Exception as error:
             self.output.setPlainText(format_error(error, source))
-            QMessageBox.critical(self, "تعذر التصدير", str(error))
+            QMessageBox.critical(self, self.t("Export Failed"), str(error))
             return False
         self.main_splitter.widget(1).show()
         self.github_project_path = directory
         self.cross_platform_output_directory = output_directory
         self.github_repo_name = None
         self.output.setPlainText(
-            "تم تجهيز تطبيقك للبناء.\n"
-            "سيتم الآن إنشاء تطبيق Windows الحقيقي عبر GitHub.\n\n"
-            f"مكان حفظ EXE: {output_directory}"
+            self.t("Your app is ready to build.\nA real Windows app will now be built via GitHub.\n\nEXE save location: {directory}",
+                   directory=output_directory)
         )
         QTimer.singleShot(0, lambda: self.start_github_upload(True, "cross"))
         return True
@@ -2425,7 +2771,8 @@ class ArabicPyIDE(QMainWindow):
             if line.startswith("x-oauth-scopes:")
         )
 
-    def set_github_busy(self, busy, label="عملية GitHub جارية"):
+    def set_github_busy(self, busy, label=None):
+        label = label or self.t("GitHub operation in progress")
         for button in (
             self.github_setup_button, self.github_upload_button,
             self.github_apk_button, self.github_ios_button,
@@ -2459,16 +2806,16 @@ class ArabicPyIDE(QMainWindow):
     def update_github_elapsed_time(self):
         minutes, seconds = divmod(self.github_elapsed_seconds, 60)
         phases = {
-            "install": "تثبيت GitHub",
-            "login": "تسجيل الدخول",
-            "scope": "صلاحية Actions",
-            "upload": "رفع المشروع",
-            "build_upload": "رفع المشروع",
-            "build": "بناء APK",
-            "build_all": "بناء EXE",
-            "build_all_upload": "تجهيز حزمة Windows",
-            "build_ios": "بناء iOS",
-            "build_ios_upload": "تجهيز تطبيق iOS",
+            "install": self.t("Installing GitHub"),
+            "login": self.t("Signing In"),
+            "scope": self.t("Actions Permission"),
+            "upload": self.t("Uploading Project"),
+            "build_upload": self.t("Uploading Project"),
+            "build": self.t("Building APK"),
+            "build_all": self.t("Building EXE"),
+            "build_all_upload": self.t("Preparing Windows Bundle"),
+            "build_ios": self.t("Building iOS"),
+            "build_ios_upload": self.t("Preparing iOS App"),
         }
         phase = phases.get(self.github_operation, "GitHub")
         remaining = ""
@@ -2476,15 +2823,15 @@ class ArabicPyIDE(QMainWindow):
             elapsed_minutes = self.github_elapsed_seconds // 60
             minimum_left = max(1, 10 - elapsed_minutes)
             maximum_left = max(minimum_left, 30 - elapsed_minutes)
-            remaining = f"  •  متبقي تقريبًا {minimum_left}–{maximum_left} د"
+            remaining = self.t("  •  ~{min}–{max} min remaining", min=minimum_left, max=maximum_left)
         self.github_status_label.setText(
             f"{phase}  •  {minutes:02d}:{seconds:02d}{remaining}"
         )
         tooltip = self.github_phase_label
         if self.github_operation in ("build", "build_all", "build_ios"):
-            tooltip += " — يستغرق عادةً 10–30 دقيقة"
+            tooltip += self.t(" — usually takes 10–30 minutes")
         elif self.github_operation in ("login", "scope"):
-            tooltip += " — أدخل الرمز الظاهر في المتصفح"
+            tooltip += self.t(" — enter the code shown in the browser")
         self.github_status_label.setToolTip(tooltip)
         self.github_elapsed_seconds += 1
 
@@ -2493,13 +2840,13 @@ class ArabicPyIDE(QMainWindow):
         if process is None:
             return
         answer = QMessageBox.question(
-            self, "إلغاء العملية", "هل تريد إلغاء عملية GitHub الحالية؟",
+            self, self.t("Cancel Operation"), self.t("Cancel the current GitHub operation?"),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self.github_cancel_requested = True
-        self.output.appendPlainText("\nجارٍ إلغاء عملية GitHub...")
+        self.output.appendPlainText("\n" + self.t("Cancelling GitHub operation..."))
         if self.github_operation in ("build", "build_all", "build_ios") and self.github_project_path:
             gh_path = (self.github_cli_path() or "gh").replace("'", "''")
             workflow = {
@@ -2526,16 +2873,16 @@ class ArabicPyIDE(QMainWindow):
 
     def setup_github(self):
         if self.github_process is not None:
-            QMessageBox.information(self, "GitHub", "توجد عملية GitHub جارية بالفعل.")
+            QMessageBox.information(self, "GitHub", self.t("A GitHub operation is already in progress."))
             return
         gh_path = self.github_cli_path()
         self.main_splitter.widget(1).show()
         if not gh_path:
-            self.output.setPlainText("جارٍ تثبيت GitHub CLI عبر Winget...\n")
+            self.output.setPlainText(self.t("Installing GitHub CLI via Winget...\n"))
             process = QProcess(self)
             self.github_process = process
             self.github_operation = "install"
-            self.set_github_busy(True, "جارٍ تثبيت GitHub CLI")
+            self.set_github_busy(True, self.t("Installing GitHub CLI"))
             process.setProgram("winget.exe")
             process.setArguments([
                 "install", "--id", "GitHub.cli", "-e", "--source", "winget",
@@ -2545,19 +2892,19 @@ class ArabicPyIDE(QMainWindow):
             process.start()
             return
         if self.github_is_authenticated() and self.github_has_workflow_scope():
-            message = "GitHub جاهز ومسجّل الدخول. يمكنك رفع التطبيق أو إنشاء APK."
+            message = self.t("GitHub is ready and signed in. You can push the app or build an APK.")
             self.output.setPlainText(message)
-            QMessageBox.information(self, "GitHub جاهز", message)
+            QMessageBox.information(self, self.t("GitHub Ready"), message)
             return
         if self.github_is_authenticated():
             self.output.setPlainText(
-                "الحساب متصل، لكن صلاحية workflow مطلوبة لبناء APK.\n"
-                "أدخل الرمز الجديد في GitHub للموافقة على صلاحية Actions.\n\n"
+                self.t("Account connected, but workflow permission is required to build an APK.\n"
+                       "Enter the new code on GitHub to approve Actions permission.\n\n")
             )
             process = QProcess(self)
             self.github_process = process
             self.github_operation = "scope"
-            self.set_github_busy(True, "إضافة صلاحية GitHub Actions")
+            self.set_github_busy(True, self.t("Adding GitHub Actions Permission"))
             QDesktopServices.openUrl(QUrl("https://github.com/login/device"))
             process.setProgram(gh_path)
             process.setArguments(["auth", "refresh", "-h", "github.com", "-s", "workflow"])
@@ -2565,13 +2912,13 @@ class ArabicPyIDE(QMainWindow):
             process.start()
             return
         self.output.setPlainText(
-            "سيعرض GitHub رمزًا ويفتح المتصفح لتسجيل الدخول بأمان.\n"
-            "أكمل تسجيل الدخول في المتصفح وانتظر رسالة النجاح.\n\n"
+            self.t("GitHub will show a code and open your browser to sign in securely.\n"
+                   "Complete the sign-in in your browser and wait for the success message.\n\n")
         )
         process = QProcess(self)
         self.github_process = process
         self.github_operation = "login"
-        self.set_github_busy(True, "في انتظار تسجيل الدخول إلى GitHub")
+        self.set_github_busy(True, self.t("Waiting to Sign In to GitHub"))
         QDesktopServices.openUrl(QUrl("https://github.com/login/device"))
         process.setProgram(gh_path)
         process.setArguments(["auth", "login", "--web", "--git-protocol", "https"])
@@ -2610,17 +2957,17 @@ class ArabicPyIDE(QMainWindow):
     def github_process_error(self, _error):
         if self.github_process is None:
             return
-        self.output.appendPlainText("\nتعذر بدء أداة GitHub.")
+        self.output.appendPlainText("\n" + self.t("Could not start the GitHub tool."))
 
     def prepare_github_project(self, project_type="android"):
         source = self.editor.toPlainText()
         if not is_android_source(source):
-            QMessageBox.warning(self, "ليس تطبيقًا", "افتح أو أنشئ تطبيقًا قبل الرفع إلى GitHub.")
+            QMessageBox.warning(self, self.t("Not an App"), self.t("Open or create an app before pushing to GitHub."))
             return None
         directory = self.github_project_path
         if not directory:
             directory = QFileDialog.getExistingDirectory(
-                self, "اختر مجلدًا محليًا لمشروع GitHub"
+                self, self.t("Choose a Local Folder for the GitHub Project")
             )
             if not directory:
                 return None
@@ -2635,7 +2982,7 @@ class ArabicPyIDE(QMainWindow):
                 export_android_project(source, directory, ai_url, ai_token)
         except Exception as error:
             self.output.setPlainText(format_error(error, source))
-            QMessageBox.critical(self, "تعذر تجهيز المشروع", str(error))
+            QMessageBox.critical(self, self.t("Could Not Prepare Project"), str(error))
             return None
         return directory
 
@@ -2650,18 +2997,18 @@ class ArabicPyIDE(QMainWindow):
 
     def start_github_upload(self, build_after=False, project_type="android"):
         if self.github_process is not None:
-            QMessageBox.information(self, "GitHub", "انتظر حتى تنتهي عملية GitHub الحالية.")
+            QMessageBox.information(self, "GitHub", self.t("Wait for the current GitHub operation to finish."))
             return
         if not self.github_is_authenticated():
             QMessageBox.warning(
-                self, "GitHub غير جاهز",
-                "اضغط «إعداد GitHub» وثبّت الأداة وسجّل الدخول أولًا."
+                self, self.t("GitHub Not Ready"),
+                self.t("Click «Setup GitHub» and install the tool and sign in first.")
             )
             return
         if not self.github_has_workflow_scope():
             QMessageBox.warning(
-                self, "صلاحية GitHub Actions مطلوبة",
-                "اضغط «إعداد GitHub» ووافق على صلاحية workflow قبل الرفع."
+                self, self.t("GitHub Actions Permission Required"),
+                self.t("Click «Setup GitHub» and approve workflow permission before pushing.")
             )
             return
         directory = self.prepare_github_project(project_type)
@@ -2675,13 +3022,13 @@ class ArabicPyIDE(QMainWindow):
         if not has_remote and not repo_name:
             default_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", os.path.basename(directory)).strip("-.") or "albaa-app"
             repo_name, accepted = QInputDialog.getText(
-                self, "اسم مستودع GitHub", "اكتب اسم المستودع الخاص:", text=default_name
+                self, self.t("GitHub Repository Name"), self.t("Enter the private repository name:"), text=default_name
             )
             repo_name = repo_name.strip()
             if not accepted:
                 return
             if not re.fullmatch(r"[A-Za-z0-9_.-]+", repo_name):
-                QMessageBox.warning(self, "اسم غير صالح", "استخدم حروفًا إنجليزية وأرقامًا و . _ - فقط.")
+                QMessageBox.warning(self, self.t("Invalid Name"), self.t("Use only English letters, numbers, and . _ -"))
                 return
             self.github_repo_name = repo_name
         gh_path = self.github_cli_path().replace("'", "''")
@@ -2718,11 +3065,11 @@ class ArabicPyIDE(QMainWindow):
         else:
             operation = "upload"
         message = (
-            "جارٍ تجهيز تطبيق Windows للبناء السحابي الخاص..."
+            self.t("Preparing the Windows app for private cloud build...")
             if project_type == "cross" and build_after
-            else "جارٍ تجهيز تطبيق iOS للبناء على macOS..."
+            else self.t("Preparing the iOS app for a macOS build...")
             if project_type == "ios" and build_after
-            else "جارٍ رفع التطبيق إلى GitHub..."
+            else self.t("Pushing the app to GitHub...")
         )
         self.start_github_command(command, operation, directory, message)
 
@@ -2783,20 +3130,20 @@ class ArabicPyIDE(QMainWindow):
             "$run=''; for ($i=0; $i -lt 20 -and !$run; $i++) { "
             "Start-Sleep -Seconds 3; "
             "$run=& $gh run list --workflow build-apk.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
-            "if (!$run) { Write-Error 'لم يظهر تشغيل GitHub Actions'; exit 1 }; "
+            "if (!$run) { Write-Error 'GitHub Actions run did not appear'; exit 1 }; "
             "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
             f"& $gh run download $run --name albaa-android-apk --dir '{escaped_download}'; exit $LASTEXITCODE"
         )
         self.start_github_command(
             command, "build", directory,
-            "بدأ إنشاء APK على GitHub. قد يستغرق البناء الأول عدة دقائق...",
+            self.t("Started building the APK on GitHub. The first build may take several minutes..."),
         )
 
     def start_github_cloud_build_all(self):
         directory = self.github_project_path
         gh_path = self.github_cli_path().replace("'", "''")
         output_root = getattr(self, "cross_platform_output_directory", directory)
-        download_path = os.path.join(output_root, "تطبيق-Windows")
+        download_path = os.path.join(output_root, "Windows-App")
         self.github_download_path = download_path
         escaped_download = download_path.replace("'", "''")
         command = (
@@ -2805,20 +3152,20 @@ class ArabicPyIDE(QMainWindow):
             "$run=''; for ($i=0; $i -lt 30 -and !$run; $i++) { "
             "Start-Sleep -Seconds 3; "
             "$run=& $gh run list --workflow build-windows.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
-            "if (!$run) { Write-Error 'لم يظهر تشغيل حزم المنصات'; exit 1 }; "
+            "if (!$run) { Write-Error 'The cross-platform bundle run did not appear'; exit 1 }; "
             "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
             f"& $gh run download $run --name albaa-windows-app --dir '{escaped_download}'; exit $LASTEXITCODE"
         )
         self.start_github_command(
             command, "build_all", directory,
-            "بدأ إنشاء Windows EXE وبقية حزم المنصات عبر GitHub...",
+            self.t("Started building the Windows EXE and other platform bundles via GitHub..."),
         )
 
     def start_github_cloud_build_ios(self):
         directory = self.github_project_path
         gh_path = self.github_cli_path().replace("'", "''")
         output_root = getattr(self, "cross_platform_output_directory", directory)
-        download_path = os.path.join(output_root, "تطبيق-iOS-Simulator")
+        download_path = os.path.join(output_root, "iOS-Simulator-App")
         self.github_download_path = download_path
         escaped_download = download_path.replace("'", "''")
         command = (
@@ -2827,13 +3174,13 @@ class ArabicPyIDE(QMainWindow):
             "$run=''; for ($i=0; $i -lt 30 -and !$run; $i++) { "
             "Start-Sleep -Seconds 3; "
             "$run=& $gh run list --workflow build-ios.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
-            "if (!$run) { Write-Error 'لم يظهر تشغيل بناء iOS'; exit 1 }; "
+            "if (!$run) { Write-Error 'The iOS build run did not appear'; exit 1 }; "
             "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
             f"& $gh run download $run --name albaa-ios-simulator --dir '{escaped_download}'; exit $LASTEXITCODE"
         )
         self.start_github_command(
             command, "build_ios", directory,
-            "بدأ إنشاء تطبيق iOS Simulator على GitHub macOS...",
+            self.t("Started building the iOS Simulator app on GitHub macOS..."),
         )
 
     def github_process_finished(self, exit_code, _status):
@@ -2848,8 +3195,8 @@ class ArabicPyIDE(QMainWindow):
         self.set_github_busy(False)
         if was_cancelled:
             self.github_cancel_requested = False
-            self.output.appendPlainText("\nتم إلغاء عملية GitHub.")
-            QMessageBox.information(self, "تم الإلغاء", "تم إلغاء عملية GitHub.")
+            self.output.appendPlainText("\n" + self.t("GitHub operation cancelled."))
+            QMessageBox.information(self, self.t("Cancelled"), self.t("The GitHub operation was cancelled."))
             return
         # Device-flow login can return a non-zero process code after the browser
         # has already authorized and stored a valid credential. Trust the real
@@ -2866,24 +3213,24 @@ class ArabicPyIDE(QMainWindow):
                 if line.strip()
             ]
             details = "\n".join(output_lines[-4:])
-            message = f"فشلت عملية GitHub برمز {exit_code}."
+            message = self.t("The GitHub operation failed with code {code}.", code=exit_code)
             if details:
-                message += f"\n\nآخر التفاصيل:\n{details}"
+                message += "\n\n" + self.t("Last details:\n{details}", details=details)
             self.output.appendPlainText("\n" + message)
-            QMessageBox.critical(self, "فشلت عملية GitHub", message)
+            QMessageBox.critical(self, self.t("GitHub Operation Failed"), message)
             return
         if operation == "install":
-            self.output.appendPlainText("\nتم تثبيت GitHub CLI. أكمل تسجيل الدخول الآن.")
+            self.output.appendPlainText("\n" + self.t("GitHub CLI installed. Complete sign-in now."))
             QTimer.singleShot(0, self.setup_github)
         elif operation == "login":
-            QMessageBox.information(self, "تم تسجيل الدخول", "تم ربط «الباء» بحساب GitHub بنجاح.")
+            QMessageBox.information(self, self.t("Signed In"), self.t("«Al-Baa» was successfully linked to your GitHub account."))
         elif operation == "scope":
             QMessageBox.information(
-                self, "اكتملت الصلاحيات",
-                "تمت إضافة صلاحية GitHub Actions. يمكنك الآن رفع التطبيق وإنشاء APK."
+                self, self.t("Permissions Complete"),
+                self.t("GitHub Actions permission was added. You can now push the app and build an APK.")
             )
         elif operation == "upload":
-            QMessageBox.information(self, "تم الرفع", "تم رفع التطبيق إلى مستودع GitHub خاص بنجاح.")
+            QMessageBox.information(self, self.t("Pushed"), self.t("The app was successfully pushed to a private GitHub repository."))
         elif operation == "build_upload":
             self.start_github_cloud_build()
         elif operation == "build_all_upload":
@@ -2896,11 +3243,11 @@ class ArabicPyIDE(QMainWindow):
                 for root, _dirs, files in os.walk(self.github_download_path):
                     apk_files.extend(os.path.join(root, name) for name in files if name.endswith(".apk"))
             if apk_files:
-                message = f"تم إنشاء وتنزيل APK بنجاح:\n{apk_files[0]}"
+                message = self.t("APK built and downloaded successfully:\n{path}", path=apk_files[0])
                 self.output.appendPlainText("\n" + message)
-                QMessageBox.information(self, "تم إنشاء APK", message)
+                QMessageBox.information(self, self.t("APK Built"), message)
             else:
-                QMessageBox.warning(self, "لم يُعثر على APK", "نجح GitHub لكن ملف APK غير موجود في مجلد التنزيل.")
+                QMessageBox.warning(self, self.t("APK Not Found"), self.t("GitHub succeeded but no APK file was found in the download folder."))
         elif operation == "build_all":
             packages = []
             if self.github_download_path and os.path.isdir(self.github_download_path):
@@ -2911,13 +3258,13 @@ class ArabicPyIDE(QMainWindow):
                     )
             if packages:
                 preferred = next((path for path in packages if path.lower().endswith(".exe")), packages[0])
-                message = f"تم إنشاء وتنزيل تطبيق Windows بنجاح:\n{preferred}"
+                message = self.t("Windows app built and downloaded successfully:\n{path}", path=preferred)
                 self.output.appendPlainText("\n" + message)
-                QMessageBox.information(self, "تم إنشاء EXE", message)
+                QMessageBox.information(self, self.t("EXE Built"), message)
             else:
                 QMessageBox.warning(
-                    self, "لم يُعثر على EXE",
-                    "انتهى البناء، لكن لم يُعثر على EXE أو MSI داخل ملف Windows الذي تم تنزيله.",
+                    self, self.t("EXE Not Found"),
+                    self.t("The build finished, but no EXE or MSI was found inside the downloaded Windows bundle."),
                 )
         elif operation == "build_ios":
             app_bundles = []
@@ -2929,34 +3276,34 @@ class ArabicPyIDE(QMainWindow):
                         if name.lower().endswith((".ipa", ".zip"))
                     )
             if app_bundles:
-                message = (
-                    "تم إنشاء وتنزيل تطبيق iOS Simulator بنجاح:\n"
-                    f"{app_bundles[0]}\n\n"
-                    "هذه النسخة للمحاكي. التثبيت على iPhone يحتاج شهادة Apple وتوقيع IPA."
+                message = self.t(
+                    "iOS Simulator app built and downloaded successfully:\n{path}\n\n"
+                    "This is the simulator build. Installing on an iPhone needs an Apple certificate and IPA signing.",
+                    path=app_bundles[0],
                 )
                 self.output.appendPlainText("\n" + message)
-                QMessageBox.information(self, "تم إنشاء iOS", message)
+                QMessageBox.information(self, self.t("iOS Built"), message)
             else:
                 QMessageBox.warning(
-                    self, "لم يُعثر على تطبيق iOS",
-                    "انتهى البناء، لكن لم يُعثر على حزمة .app داخل ملف iOS الذي تم تنزيله.",
+                    self, self.t("iOS App Not Found"),
+                    self.t("The build finished, but no .app bundle was found inside the downloaded iOS bundle."),
                 )
 
     def build_android_apk(self):
         if self.android_build_process is not None:
-            self.output.setPlainText("يجري الآن إنشاء APK. انتظر حتى تنتهي العملية.")
+            self.output.setPlainText(self.t("An APK build is already in progress. Wait for it to finish."))
             return
         if not self.apk_tools_are_ready():
             self.main_splitter.widget(1).show()
             self.output.setPlainText(
-                "أدوات APK غير مكتملة. اضغط أولًا على: تثبيت أدوات APK.\n"
-                "إذا ثبّت Windows نظام WSL للتو، أعد تشغيل الجهاز ثم اضغط زر التثبيت مرة أخرى."
+                self.t("APK tools aren't fully set up. First click: Install APK Tools.\n"
+                       "If you just installed WSL on Windows, restart the device and click Install again.")
             )
             QMessageBox.warning(
-                self, "أدوات APK غير جاهزة",
-                "لا يمكن إنشاء APK الآن.\n\n"
-                "اضغط «تثبيت أدوات APK» وأكمل جميع المراحل أولًا. "
-                "قد تحتاج إلى إعادة تشغيل Windows."
+                self, self.t("APK Tools Not Ready"),
+                self.t("Can't build an APK right now.\n\n"
+                       "Click «Install APK Tools» and complete every step first. "
+                       "You may need to restart Windows.")
             )
             return
         if not self.android_project_path and not self.export_android():
@@ -2964,15 +3311,15 @@ class ArabicPyIDE(QMainWindow):
 
         self.main_splitter.widget(1).show()
         self.output.setPlainText(
-            "بدء Buildozer داخل WSL2...\n"
-            "يجب تثبيت WSL2 و Buildozer ومتطلبات Android مسبقاً.\n\n"
+            self.t("Starting Buildozer inside WSL2...\n"
+                   "WSL2, Buildozer, and the Android requirements must already be installed.\n\n")
         )
         process = QProcess(self)
         self.android_build_process = process
         self.apk_button.setEnabled(False)
         self.apk_tools_button.setEnabled(False)
-        self.apk_button.setText("… جارٍ إنشاء APK")
-        self.apk_progress.setToolTip("جارٍ إنشاء APK")
+        self.apk_button.setText(self.t("… Building APK"))
+        self.apk_progress.setToolTip(self.t("Building APK (local)"))
         self.apk_progress.show()
         process.setProgram("wsl.exe")
         process.setArguments([
@@ -3008,14 +3355,14 @@ class ArabicPyIDE(QMainWindow):
     def install_apk_tools(self):
         """Install WSL first, then the official Ubuntu Buildozer dependencies."""
         if self.apk_install_process is not None:
-            self.output.setPlainText("يجري الآن تثبيت أدوات APK. انتظر حتى تنتهي العملية.")
+            self.output.setPlainText(self.t("APK tools are already being installed. Wait for it to finish."))
             return
         self.main_splitter.widget(1).show()
-        self.output.setPlainText("فحص WSL2 وUbuntu...\n")
+        self.output.setPlainText(self.t("Checking WSL2 and Ubuntu...\n"))
         self.apk_tools_button.setEnabled(False)
         self.apk_button.setEnabled(False)
-        self.apk_tools_button.setText("… جارٍ الفحص")
-        self.apk_progress.setToolTip("جارٍ فحص وتثبيت أدوات APK")
+        self.apk_tools_button.setText(self.t("… Checking"))
+        self.apk_progress.setToolTip(self.t("Checking and installing APK tools"))
         self.apk_progress.show()
         self.apk_install_stage = "check"
         process = QProcess(self)
@@ -3055,22 +3402,23 @@ class ArabicPyIDE(QMainWindow):
 
         if self.apk_install_stage == "wsl":
             if exit_code == 0:
-                message = (
-                    "انتهت مرحلة تثبيت WSL2 وUbuntu.\n\n"
-                    "أعد تشغيل Windows الآن، ثم افتح «الباء» واضغط "
-                    "«تثبيت أدوات APK» مرة أخرى لإكمال Buildozer."
+                message = self.t(
+                    "The WSL2 and Ubuntu installation step finished.\n\n"
+                    "Restart Windows now, then open «Al-Baa» and click "
+                    "«Install APK Tools» again to finish Buildozer."
                 )
                 self.output.appendPlainText("\n" + message)
-                QMessageBox.information(self, "انتهت المرحلة الأولى", message)
+                QMessageBox.information(self, self.t("First Stage Complete"), message)
             else:
-                message = (
-                    f"فشل تثبيت WSL2 برمز {exit_code}.\n\n"
-                    "إذا ظهر الخطأ 14098 (مخزن المكونات تالف)، يستطيع «الباء» "
-                    "تشغيل أدوات إصلاح Windows الرسمية الآن. هل تريد بدء الإصلاح؟"
+                message = self.t(
+                    "WSL2 installation failed with code {code}.\n\n"
+                    "If error 14098 appears (corrupt component store), «Al-Baa» "
+                    "can run the official Windows repair tools now. Start the repair?",
+                    code=exit_code,
                 )
                 self.output.appendPlainText("\n" + message)
                 answer = QMessageBox.question(
-                    self, "فشل تثبيت WSL2", message,
+                    self, self.t("WSL2 Installation Failed"), message,
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
                 )
                 if answer == QMessageBox.Yes:
@@ -3081,41 +3429,43 @@ class ArabicPyIDE(QMainWindow):
 
         if self.apk_install_stage == "repair":
             if exit_code == 0:
-                message = (
-                    "انتهى إصلاح مكوّنات Windows. أعد تشغيل الجهاز، ثم اضغط "
-                    "«تثبيت أدوات APK» مرة أخرى."
+                message = self.t(
+                    "Windows component repair finished. Restart the device, then click "
+                    "«Install APK Tools» again."
                 )
-                QMessageBox.information(self, "اكتمل إصلاح Windows", message)
+                QMessageBox.information(self, self.t("Windows Repair Complete"), message)
             else:
-                message = (
-                    f"لم يكتمل إصلاح Windows (الرمز {exit_code}). راجع النتيجة في نافذة PowerShell. "
-                    "قد تحتاج إلى Windows Update أو مصدر إصلاح Windows مطابق لإصدار جهازك."
+                message = self.t(
+                    "Windows repair didn't complete (code {code}). Check the result in the PowerShell window. "
+                    "You may need Windows Update or a Windows repair source matching your device's version.",
+                    code=exit_code,
                 )
-                QMessageBox.critical(self, "تعذر إصلاح Windows", message)
+                QMessageBox.critical(self, self.t("Could Not Repair Windows"), message)
             self.output.appendPlainText("\n" + message)
             self.reset_apk_install_button()
             return
 
         if exit_code == 0:
-            message = "اكتمل تثبيت أدوات APK بنجاح. يمكنك الآن الضغط على إنشاء APK."
+            message = self.t("APK tools installed successfully. You can now click Build APK.")
             self.output.appendPlainText("\n" + message)
-            QMessageBox.information(self, "اكتمل التثبيت", message)
+            QMessageBox.information(self, self.t("Installation Complete"), message)
         else:
-            message = (
-                f"فشل تثبيت أدوات APK برمز {exit_code}. راجع سجل المخرجات.\n\n"
-                "إذا كانت Ubuntu جديدة، افتحها مرة واحدة وأكمل إعدادها ثم حاول مجددًا."
+            message = self.t(
+                "APK tools installation failed with code {code}. Check the output log.\n\n"
+                "If Ubuntu is newly installed, open it once and finish its setup, then try again.",
+                code=exit_code,
             )
             self.output.appendPlainText("\n" + message)
-            QMessageBox.critical(self, "فشل تثبيت أدوات APK", message)
+            QMessageBox.critical(self, self.t("APK Tools Installation Failed"), message)
         self.reset_apk_install_button()
 
     def start_wsl_install(self):
         """Run the elevated Windows installer while keeping its lifecycle visible."""
         self.apk_install_stage = "wsl"
-        self.apk_tools_button.setText("… جارٍ تثبيت WSL2")
+        self.apk_tools_button.setText(self.t("… Installing WSL2"))
         self.output.setPlainText(
-            "سيطلب Windows صلاحية المسؤول لتثبيت WSL2 وUbuntu.\n"
-            "وافق على النافذة وانتظر حتى تنتهي. لا تغلق «الباء».\n\n"
+            self.t("Windows will ask for administrator permission to install WSL2 and Ubuntu.\n"
+                   "Approve the prompt and wait until it finishes. Don't close «Al-Baa».\n\n")
         )
         elevated_script = (
             "wsl.exe --install --web-download -d Ubuntu; "
@@ -3145,10 +3495,10 @@ class ArabicPyIDE(QMainWindow):
     def start_buildozer_install(self):
         self.apk_install_stage = "tools"
         self.output.setPlainText(
-            "بدء تثبيت Java وBuildozer ومتطلبات Android داخل WSL2...\n"
-            "قد يستغرق ذلك عدة دقائق حسب سرعة الإنترنت.\n\n"
+            self.t("Starting to install Java, Buildozer, and Android requirements inside WSL2...\n"
+                   "This may take several minutes depending on your internet speed.\n\n")
         )
-        self.apk_tools_button.setText("… جارٍ التثبيت")
+        self.apk_tools_button.setText(self.t("… Installing"))
         packages = (
             "git zip unzip openjdk-17-jdk python3-pip python3-venv "
             "autoconf libtool pkg-config zlib1g-dev libncurses-dev "
@@ -3174,12 +3524,12 @@ class ArabicPyIDE(QMainWindow):
     def start_windows_component_repair(self):
         """Run Microsoft DISM then SFC after explicit user confirmation."""
         self.apk_install_stage = "repair"
-        self.apk_tools_button.setText("… جارٍ إصلاح Windows")
-        self.apk_progress.setToolTip("جارٍ إصلاح مكوّنات Windows")
+        self.apk_tools_button.setText(self.t("… Repairing Windows"))
+        self.apk_progress.setToolTip(self.t("Repairing Windows components"))
         self.apk_progress.show()
         self.output.setPlainText(
-            "بدء إصلاح مخزن مكوّنات Windows عبر DISM ثم SFC...\n"
-            "قد تستغرق العملية وقتًا طويلًا. لا تغلق نافذة PowerShell.\n\n"
+            self.t("Starting to repair the Windows component store via DISM then SFC...\n"
+                   "This can take a long time. Don't close the PowerShell window.\n\n")
         )
         repair_script = (
             "DISM.exe /Online /Cleanup-Image /RestoreHealth; "
@@ -3212,7 +3562,7 @@ class ArabicPyIDE(QMainWindow):
         self.apk_install_stage = None
         self.apk_tools_button.setEnabled(True)
         self.apk_button.setEnabled(True)
-        self.apk_tools_button.setText("↓ تثبيت أدوات APK")
+        self.apk_tools_button.setText(self.t("↓ Install APK Tools"))
         self.apk_progress.hide()
 
     def read_android_build_output(self):
@@ -3226,34 +3576,34 @@ class ArabicPyIDE(QMainWindow):
     def android_build_error(self, _error):
         if self.android_build_process is not None:
             self.output.appendPlainText(
-                "\nتعذر بدء WSL2/Buildozer. تأكد من تثبيتهما وإضافتهما إلى PATH داخل WSL."
+                "\n" + self.t("Could not start WSL2/Buildozer. Make sure they're installed and on PATH inside WSL.")
             )
             self.android_build_process.deleteLater()
             self.android_build_process = None
         self.apk_button.setEnabled(True)
         self.apk_tools_button.setEnabled(True)
-        self.apk_button.setText("▣ إنشاء APK")
+        self.apk_button.setText("▣ Build APK")
         self.apk_progress.hide()
         QMessageBox.critical(
-            self, "تعذر إنشاء APK",
-            "تعذر تشغيل WSL2 أو Buildozer. اضغط «تثبيت أدوات APK» ثم حاول مجددًا."
+            self, self.t("Could Not Build APK"),
+            self.t("Could not run WSL2 or Buildozer. Click «Install APK Tools» and try again.")
         )
 
     def android_build_finished(self, exit_code, _status):
         if exit_code == 0:
-            message = "تم إنشاء APK بنجاح. ستجده داخل مجلد bin في المشروع."
+            message = self.t("APK built successfully. You'll find it inside the project's bin folder.")
             self.output.appendPlainText("\n" + message)
-            QMessageBox.information(self, "تم إنشاء APK", message)
+            QMessageBox.information(self, self.t("APK Built"), message)
         else:
-            message = f"فشل إنشاء APK برمز خروج {exit_code}. راجع سجل Buildozer في المخرجات."
+            message = self.t("APK build failed with exit code {code}. Check the Buildozer log in the output.", code=exit_code)
             self.output.appendPlainText("\n" + message)
-            QMessageBox.critical(self, "فشل إنشاء APK", message)
+            QMessageBox.critical(self, self.t("APK Build Failed"), message)
         if self.android_build_process is not None:
             self.android_build_process.deleteLater()
             self.android_build_process = None
         self.apk_button.setEnabled(True)
         self.apk_tools_button.setEnabled(True)
-        self.apk_button.setText("▣ إنشاء APK")
+        self.apk_button.setText("▣ Build APK")
         self.apk_progress.hide()
 
     def new_file(self):
@@ -3265,11 +3615,49 @@ class ArabicPyIDE(QMainWindow):
         self.update_tab_title()
         self.editor.setFocus()
 
+    def new_flutter_file(self):
+        """Start a Flutter/Dart tab -- syntax-highlighted, not runnable yet (build support is on the way)."""
+        template = (
+            "import 'package:flutter/material.dart';\n\n"
+            "void main() {\n"
+            "  runApp(const MyApp());\n"
+            "}\n\n"
+            "class MyApp extends StatelessWidget {\n"
+            "  const MyApp({super.key});\n\n"
+            "  @override\n"
+            "  Widget build(BuildContext context) {\n"
+            "    return MaterialApp(\n"
+            "      home: Scaffold(\n"
+            "        appBar: AppBar(title: const Text('Al-Baa Flutter App')),\n"
+            "        body: const Center(child: Text('Hello, Flutter!')),\n"
+            "      ),\n"
+            "    );\n"
+            "  }\n"
+            "}\n"
+        )
+        editor = self.add_editor_tab(template, code_language="flutter")
+        editor.document().setModified(True)
+        self.update_tab_title(True)
+        editor.setFocus()
+
+    def choose_new_file_language(self):
+        """Entry point for adding more languages later -- currently Al-Baa and Flutter."""
+        menu = QMenu(self)
+        menu.setLayoutDirection(self.direction)
+        menu.addAction(self.t("Al-Baa (.apy)"), self.new_file)
+        menu.addAction(self.t("Flutter (.dart)"), self.new_flutter_file)
+        menu.exec(self.new_language_button.mapToGlobal(
+            self.new_language_button.rect().bottomLeft()
+        ))
+
     def open_project_file(self, item):
         self.load_file(item.data(Qt.UserRole))
 
     def open_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "فتح ملف", "", "ملفات الباء (*.apy);;Python (*.py);;All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.t("Open File"), "",
+            self.t("Al-Baa Files (*.apy);;Flutter Files (*.dart);;Python (*.py);;All Files (*)"),
+        )
         if path:
             self.load_file(path)
 
@@ -3280,8 +3668,9 @@ class ArabicPyIDE(QMainWindow):
                 self.tab_widget.setCurrentIndex(index)
                 return
         try:
+            code_language = "flutter" if path.lower().endswith(".dart") else "albaa"
             with open(path, "r", encoding="utf-8") as file:
-                self.add_editor_tab(file.read(), path)
+                self.add_editor_tab(file.read(), path, code_language=code_language)
             self.remember_project_file(path)
             return
             with open(path, "r", encoding="utf-8") as file:
@@ -3290,13 +3679,16 @@ class ArabicPyIDE(QMainWindow):
             self.editor.document().setModified(False)
             self.update_tab_title()
         except OSError as error:
-            self.output.setPlainText(f"تعذر فتح الملف:\n{error}")
+            self.output.setPlainText(self.t("Could not open the file:\n{error}", error=error))
 
     def save_file(self):
         editor = self.editor
         if not getattr(editor, "file_path", None):
-            suggested_name = getattr(editor, "display_name", "غير محفوظ.apy")
-            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", suggested_name, "ملفات الباء (*.apy)")
+            is_flutter = getattr(editor, "code_language", "albaa") == "flutter"
+            default_name = self.t("main.dart") if is_flutter else self.t("Untitled.apy")
+            suggested_name = getattr(editor, "display_name", default_name)
+            save_filter = self.t("Flutter Files (*.dart)") if is_flutter else self.t("Al-Baa Files (*.apy)")
+            path, _ = QFileDialog.getSaveFileName(self, self.t("Save File"), suggested_name, save_filter)
             if not path:
                 return
             editor.file_path = path
@@ -3310,13 +3702,13 @@ class ArabicPyIDE(QMainWindow):
             self.current_file = editor.file_path
             self.update_tab_title(False)
             self.remember_project_file(editor.file_path)
-            self.autosave_status_label.setText("تم الحفظ")
+            self.autosave_status_label.setText(self.t("Saved"))
             return
         except OSError as error:
-            self.output.setPlainText(f"تعذر حفظ الملف:\n{error}")
+            self.output.setPlainText(self.t("Could not save the file:\n{error}", error=error))
             return
         if not self.current_file:
-            path, _ = QFileDialog.getSaveFileName(self, "حفظ ملف", "", "ملفات الباء (*.apy)")
+            path, _ = QFileDialog.getSaveFileName(self, self.t("Save File"), "", self.t("Al-Baa Files (*.apy)"))
             if not path:
                 return
             self.current_file = path
@@ -3327,7 +3719,7 @@ class ArabicPyIDE(QMainWindow):
             self.update_tab_title()
             self.refresh_file_list()
         except OSError as error:
-            self.output.setPlainText(f"تعذر حفظ الملف:\n{error}")
+            self.output.setPlainText(self.t("Could not save the file:\n{error}", error=error))
 
     def find_text(self):
         self.find_bar.show()
@@ -3345,19 +3737,26 @@ class ArabicPyIDE(QMainWindow):
     def find_next(self):
         text = self.find_input.text()
         if not text:
-            self.find_status.setText("اكتب كلمة للبحث")
+            self.find_status.setText(self.t("Type a word to search"))
             return
         found = self.editor.document().find(text, self.editor.textCursor())
         if found.isNull():
             found = self.editor.document().find(text)
         if found.isNull():
-            self.find_status.setText("لا توجد نتائج")
+            self.find_status.setText(self.t("No results"))
             return
         self.editor.setTextCursor(found)
         self.editor.ensureCursorVisible()
-        self.find_status.setText("تم العثور")
+        self.find_status.setText(self.t("Found"))
 
     def run_code(self):
+        if getattr(self.editor, "code_language", "albaa") != "albaa":
+            self.main_splitter.widget(1).show()
+            self.output.setPlainText(
+                self.t("Running Flutter/Dart files isn't supported yet -- it's on the way. "
+                       "For now, this tab is for writing and syntax-highlighting Dart code.")
+            )
+            return
         source = self.editor.toPlainText()
         if is_android_source(source):
             try:
@@ -3366,14 +3765,14 @@ class ArabicPyIDE(QMainWindow):
                 if self.android_designer.isVisible():
                     if self.android_designer.preview_mode:
                         self.android_designer.stop_preview()
-                        self.run_button.setText("▶ تشغيل")
+                        self.run_button.setText(self.t("▶ Run"))
                     else:
                         self.android_designer.load_source(source)
                         self.android_designer.start_preview()
-                        self.run_button.setText("■ إيقاف المعاينة")
+                        self.run_button.setText(self.t("■ Stop Preview"))
                     return
                 self.output.setPlainText(
-                    "تم التحقق من التطبيق بنجاح. استخدم قائمتي ملف وتشغيل للتصدير أو إنشاء APK."
+                    self.t("App verified successfully. Use the File and Run menus to export or build an APK.")
                 )
             except Exception as error:
                 self.editor.show_error_line(getattr(error, "line", None))
@@ -3391,7 +3790,7 @@ class ArabicPyIDE(QMainWindow):
                 })
             result = output.getvalue()
             self.editor.clear_error_line()
-            self.output.setPlainText(result if result else "تم التنفيذ بنجاح — لا توجد مخرجات.")
+            self.output.setPlainText(result if result else self.t("Ran successfully — no output."))
         except Exception as error:
             line = getattr(error, "line", None)
             if line is None:

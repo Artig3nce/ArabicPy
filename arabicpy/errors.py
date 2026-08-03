@@ -12,22 +12,22 @@ class ArabicPyError(Exception):
 
 
 def format_error(error, source):
-    """Render a compact Arabic diagnostic for the IDE and command line."""
+    """Render a compact diagnostic for the IDE and command line."""
     if not isinstance(error, ArabicPyError):
         if isinstance(error, NameError):
             match = re.search(r"name '([^']+)' is not defined", str(error))
-            name = match.group(1) if match else "غير معروف"
+            name = match.group(1) if match else "unknown"
             hint = ""
             if name == "اطب":
-                hint = "\nهل تقصد: اطبع(...) ؟"
-            return f"خطأ أثناء التشغيل:\nالاسم غير معرّف: {name}{hint}"
+                hint = "\nDid you mean: اطبع(...) ?"
+            return f"Runtime error:\nName not defined: {name}{hint}"
         if isinstance(error, ZeroDivisionError):
-            return "خطأ أثناء التشغيل:\nلا يمكن القسمة على صفر."
+            return "Runtime error:\nCannot divide by zero."
         if isinstance(error, TypeError):
-            return f"خطأ أثناء التشغيل:\nاستخدام غير صحيح للقيمة أو العملية: {error}"
-        return f"خطأ أثناء التشغيل:\nحدث خطأ غير متوقع: {error}"
+            return f"Runtime error:\nIncorrect use of a value or operation: {error}"
+        return f"Runtime error:\nAn unexpected error occurred: {error}"
 
-    header = "خطأ في الباء"
+    header = "Al-Baa Error"
     if error.line is None:
         return f"{header}: {error.message}"
 
@@ -35,4 +35,4 @@ def format_error(error, source):
     code_line = lines[error.line - 1] if error.line <= len(lines) else ""
     column = max(1, error.column or 1)
     pointer = " " * (column - 1) + "^"
-    return f"{header} في السطر {error.line}، العمود {column}:\n{code_line}\n{pointer}\n{error.message}"
+    return f"{header} on line {error.line}, column {column}:\n{code_line}\n{pointer}\n{error.message}"

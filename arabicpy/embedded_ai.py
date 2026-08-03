@@ -21,13 +21,13 @@ class EmbeddedModel:
 
 MODELS = {
     "qwen3:1.7b": EmbeddedModel(
-        "qwen3:1.7b", "اللابتوب — خفيف", "Qwen/Qwen3-1.7B-GGUF:Q8_0",
+        "qwen3:1.7b", "Laptop — Light", "Qwen/Qwen3-1.7B-GGUF:Q8_0",
         "Qwen3-1.7B-Q8_0.gguf",
         "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=true",
         2.2,
     ),
     "qwen3:8b": EmbeddedModel(
-        "qwen3:8b", "الكمبيوتر — أقوى", "Qwen/Qwen3-8B-GGUF:Q4_K_M",
+        "qwen3:8b", "Desktop — Stronger", "Qwen/Qwen3-8B-GGUF:Q4_K_M",
         "Qwen3-8B-Q4_K_M.gguf",
         "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf?download=true",
         5.1,
