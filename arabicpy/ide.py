@@ -19,11 +19,11 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QPointF, QProcess, QSettings, QThread, QTimer, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QPointF, QProcess, QRectF, QSettings, QThread, QTimer, QRect, QSize, Qt, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtGui import (
-    QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPainter, QPen, QPolygonF, QTextBlockFormat, QTextCharFormat, QTextCursor,
-    QTextFormat,
+    QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QTextBlockFormat,
+    QTextCharFormat, QTextCursor, QTextFormat,
 )
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
@@ -40,7 +40,7 @@ from .parser import Parser
 from .android import export_android_project, generate_kivy, is_android_source
 from .android_designer import AndroidDesigner
 from .tauri_export import export_tauri_project
-from .ai import DEFAULT_MODEL, SYSTEM_PROMPT, reply as albaa_ai_reply
+from .ai import DEFAULT_MODEL, system_prompt_for, reply as albaa_ai_reply
 from .ai_server import AlBaaAIServer, local_ipv4
 from .embedded_ai import EMBEDDED_BASE_URL, MODELS, llama_server_path, model_path, server_arguments
 from .errors import format_error
@@ -230,6 +230,123 @@ class SettingsIconButton(QPushButton):
         painter.drawEllipse(QPointF(center_x, center_y), 3.2, 3.2)
 
 
+class LanguageCard(QFrame):
+    """A big, VS-Code-Extensions-style clickable row for picking a new file's language."""
+
+    clicked = Signal()
+
+    def __init__(self, icon_widget, title, description, parent=None):
+        super().__init__(parent)
+        self.setObjectName("languageCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(12)
+
+        layout.addWidget(icon_widget)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        title_label = QLabel(title, objectName="languageCardTitle")
+        description_label = QLabel(description, objectName="languageCardDescription")
+        description_label.setWordWrap(True)
+        text_layout.addWidget(title_label)
+        text_layout.addWidget(description_label)
+        layout.addLayout(text_layout, 1)
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+    @staticmethod
+    def letter_icon(color, letter, size=36):
+        """A colored rounded-square badge showing a single letter (used for Al-Baa's ب)."""
+        icon = QLabel(letter)
+        icon.setFixedSize(size, size)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet(
+            f"background:{color}; color:white; border-radius:8px; font-weight:800; font-size:15px;"
+        )
+        return icon
+
+
+class FlutterIconLabel(QLabel):
+    """A small painted mark evoking Flutter's blue folded-ribbon logo."""
+
+    def __init__(self, size=36, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.setStyleSheet("background:#FFFFFF; border-radius:8px;")
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        side = min(self.width(), self.height())
+        ribbon = QPolygonF([
+            QPointF(0.30 * side, 0.08 * side), QPointF(0.62 * side, 0.08 * side),
+            QPointF(0.30 * side, 0.40 * side), QPointF(0.62 * side, 0.72 * side),
+            QPointF(0.30 * side, 0.92 * side), QPointF(0.14 * side, 0.76 * side),
+            QPointF(0.38 * side, 0.52 * side), QPointF(0.14 * side, 0.28 * side),
+        ])
+        painter.setBrush(QColor("#02569B"))
+        painter.drawPolygon(ribbon)
+        fold = QPolygonF([
+            QPointF(0.30 * side, 0.92 * side), QPointF(0.62 * side, 0.72 * side),
+            QPointF(0.46 * side, 0.56 * side),
+        ])
+        painter.setBrush(QColor("#40C4FF"))
+        painter.drawPolygon(fold)
+
+
+class PythonIconLabel(QLabel):
+    """A small painted mark evoking Python's two-tone interlocking-snake logo."""
+
+    def __init__(self, size=36, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.setStyleSheet("background:#FFFFFF; border-radius:8px;")
+
+    @staticmethod
+    def _snake(side, head_rect, tail_rect, radius):
+        head = QPainterPath()
+        head.addRoundedRect(head_rect, radius, radius)
+        tail = QPainterPath()
+        tail.addRoundedRect(tail_rect, radius * 0.75, radius * 0.75)
+        return head.united(tail)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        side = min(self.width(), self.height())
+
+        blue = self._snake(
+            side,
+            QRectF(0.12 * side, 0.08 * side, 0.44 * side, 0.44 * side),
+            QRectF(0.40 * side, 0.34 * side, 0.38 * side, 0.20 * side),
+            0.09 * side,
+        )
+        painter.setBrush(QColor("#3776AB"))
+        painter.drawPath(blue)
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.drawEllipse(QPointF(0.26 * side, 0.22 * side), 0.045 * side, 0.045 * side)
+
+        yellow = self._snake(
+            side,
+            QRectF(0.44 * side, 0.48 * side, 0.44 * side, 0.44 * side),
+            QRectF(0.22 * side, 0.46 * side, 0.38 * side, 0.20 * side),
+            0.09 * side,
+        )
+        painter.setBrush(QColor("#FFD43B"))
+        painter.drawPath(yellow)
+        painter.setBrush(QColor("#2b2b2b"))
+        painter.drawEllipse(QPointF(0.74 * side, 0.78 * side), 0.045 * side, 0.045 * side)
+
+
 class CodeEditor(QPlainTextEdit):
     """Editor with a compact gutter, current-line cue, and Arabic-friendly defaults."""
 
@@ -391,6 +508,35 @@ class FindInput(QLineEdit):
         super().keyPressEvent(event)
 
 
+class TerminalInput(QLineEdit):
+    """A shell-style command entry with Up/Down history navigation."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.history = []
+        self.history_index = -1
+
+    def add_to_history(self, command):
+        if command.strip() and (not self.history or self.history[-1] != command):
+            self.history.append(command)
+        self.history_index = len(self.history)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Up and self.history:
+            self.history_index = max(0, self.history_index - 1)
+            self.setText(self.history[self.history_index])
+            return
+        if event.key() == Qt.Key_Down:
+            if self.history_index < len(self.history) - 1:
+                self.history_index += 1
+                self.setText(self.history[self.history_index])
+            else:
+                self.history_index = len(self.history)
+                self.clear()
+            return
+        super().keyPressEvent(event)
+
+
 class WindowControlButton(QPushButton):
     """Font-independent Windows-style minimize, maximize and close button."""
 
@@ -435,7 +581,7 @@ class TitleBar(QWidget):
         layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(7)
 
-        logo = QLabel(parent.t("B"))
+        logo = QLabel("ب")
         logo.setObjectName("titleLogo")
         logo.setAlignment(Qt.AlignCenter)
         logo.setFixedSize(30, 26)
@@ -558,6 +704,15 @@ class ArabicPyIDE(QMainWindow):
         bundle_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__)))
         self.setWindowIcon(QIcon(os.path.join(bundle_root, "assets", "albaa.ico")))
         self.resize(1400, 900)
+        # Qt auto-grows the window to satisfy new minimum-size demands from
+        # child widgets (e.g. the build-progress bar appearing) -- that's
+        # normally fine, but on a frameless window it can push the window
+        # past the actual monitor edge. Capping maximumSize to the screen's
+        # available geometry lets the toolbar still lay out its buttons
+        # normally while making sure that growth can never go off-screen.
+        active_screen = self.screen() or QApplication.primaryScreen()
+        if active_screen is not None:
+            self.setMaximumSize(active_screen.availableGeometry().size())
         self.native_dialog_theme_filter = NativeDialogThemeFilter(self)
         QApplication.instance().installEventFilter(self.native_dialog_theme_filter)
         self.setStyleSheet(self.stylesheet(self.ide_dark))
@@ -614,6 +769,11 @@ class ArabicPyIDE(QMainWindow):
         #menuItem { background: transparent; border: none; padding: 4px 10px; color: #d4d4d4; }
         #menuItem:hover, #toolButton:hover { background: #37373d; }
         #toolButton { background: transparent; border: none; border-radius: 3px; padding: 6px 10px; color: #d4d4d4; }
+        QMenu { background: #252526; color: #cccccc; border: 1px solid #454545; border-radius: 6px; padding: 4px; }
+        QMenu::item { background: transparent; padding: 7px 28px 7px 14px; border-radius: 4px; margin: 1px 2px; }
+        QMenu::item:selected { background: #094771; color: #ffffff; }
+        QMenu::item:disabled { color: #6f6f6f; }
+        QMenu::separator { height: 1px; background: #454545; margin: 4px 10px; }
         #runButton { background: #16825d; color: white; border: none; border-radius: 3px; padding: 6px 14px; font-weight: 600; }
         #runButton:hover { background: #1a9b70; }
         #aiButton { background: #007ACC; color: white; border: none; border-radius: 3px; padding: 6px 12px; font-weight: 600; }
@@ -644,6 +804,11 @@ class ArabicPyIDE(QMainWindow):
         #sideBar { background: #252526; } #panelTitle { color: #bbbbbb; font-size: 11px; font-weight: 600; padding: 12px 14px 5px; }
         #fileList { background: #252526; border: none; outline: none; color: #cccccc; padding: 2px 6px; }
         #fileList::item { padding: 6px 8px; border-radius: 3px; } #fileList::item:selected { background: #37373d; color: white; }
+        #newFilePanel { background: #252526; }
+        #languageCard { background: transparent; border: none; border-bottom: 1px solid #333333; }
+        #languageCard:hover { background: #2a2d2e; }
+        #languageCardTitle { color: #ffffff; font-weight: 600; font-size: 13px; background: transparent; }
+        #languageCardDescription { color: #9d9d9d; font-size: 11px; background: transparent; }
         #tabBar { background: #252526; border-bottom: 1px solid #1e1e1e; } #activeTab { background: #1e1e1e; color: #ffffff; border-top: 1px solid #007acc; padding: 10px 16px; }
         #pythonTabSpacer { background: #1e1e1e; border-bottom: 1px solid #1e1e1e; }
         #codeEditor { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Segoe UI'; font-size: 15px; }
@@ -653,8 +818,16 @@ class ArabicPyIDE(QMainWindow):
         #findInput:focus { border-color: #007acc; }
         #findStatus { background: transparent; color: #aaaaaa; padding: 0 5px; }
         #pythonPreview { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Segoe UI'; font-size: 15px; }
-        #outputHeader { background: #252526; border-top: 1px solid #333333; } #outputTitle { background: transparent; border: none; color: #cccccc; font-weight: 600; padding: 7px 12px; }
+        #outputHeader { background: #252526; border-top: 1px solid #333333; }
+        #outputTabButton { background: transparent; border: none; border-bottom: 2px solid transparent; color: #9d9d9d; font-weight: 600; font-size: 11px; padding: 7px 12px; }
+        #outputTabButton:hover { color: #ffffff; }
+        #outputTabButton:checked { color: #ffffff; border-bottom: 2px solid #007acc; }
         #output { background: #1e1e1e; color: #e0e0e0; border: none; font-family: 'Tahoma'; font-size: 14px; padding: 9px; }
+        #terminalPanel { background: #1e1e1e; }
+        #terminalOutput { background: #1e1e1e; color: #d4d4d4; border: none; padding: 9px; }
+        #terminalInputRow { background: #1e1e1e; }
+        #terminalPrompt { color: #4ec9b0; font-weight: 700; font-family: 'Consolas'; }
+        #terminalInput { background: transparent; color: #ffffff; border: none; padding: 4px 0; }
         #statusBar { background: #007acc; color: white; } #statusLabel { background: transparent; color: white; padding: 3px 10px; font-size: 12px; }
         #androidDesigner { background: #181818; }
         #designerPanel { background: #252526; border: none; }
@@ -708,6 +881,11 @@ class ArabicPyIDE(QMainWindow):
         #settingsButton:hover { background:#dde5ee; color:#000000; }
         #sideBar, #fileList { background:#f3f6f9; color:#263445; }
         #panelTitle { color:#526173; } #fileList::item:selected { background:#dce8f5; color:#111827; }
+        #newFilePanel { background:#f3f6f9; }
+        #languageCard { border-bottom:1px solid #d7dde5; }
+        #languageCard:hover { background:#e8eef5; }
+        #languageCardTitle { color:#111827; }
+        #languageCardDescription { color:#667085; }
         #tabBar, QTabWidget QTabBar { background:#edf1f5; border-bottom:1px solid #d7dde5; }
         #activeTab, QTabWidget QTabBar::tab:selected { background:#ffffff; color:#111827; border-top-color:#007acc; }
         QTabWidget QTabBar::tab { background:#e9eef3; color:#526173; }
@@ -715,17 +893,22 @@ class ArabicPyIDE(QMainWindow):
         #pythonTabSpacer, #codeEditor, #pythonPreview, #output { background:#ffffff; color:#1f2937; }
         #codeEditor, #pythonPreview { selection-background-color:#b9dcf5; }
         #codePaneTitle, #outputHeader { background:#f3f6f9; color:#334155; border-color:#d7dde5; }
+        #outputTabButton { color:#667085; }
+        #outputTabButton:hover { color:#111827; }
+        #outputTabButton:checked { color:#111827; }
         #findBar { background:#f3f6f9; border-bottom:1px solid #d7dde5; }
         #findInput { background:#ffffff; color:#111827; border:1px solid #aeb8c4; selection-background-color:#007acc; selection-color:#ffffff; }
         #findStatus { color:#667085; }
-        #outputTitle { background:transparent; border:none; color:#334155; } QSplitter::handle { background:#d7dde5; }
+        QSplitter::handle { background:#d7dde5; }
         #androidDesigner, #designerCanvas { background:#e8edf2; }
         #designerPanel { background:#f3f6f9; } #designerTitle { color:#111827; }
         #designerTool { background:#ffffff; color:#27364a; border-color:#cbd5e1; }
         #designerTool:hover { background:#e8f2fb; border-color:#007acc; }
         #tabCloseButton { color:#526173; }
-        QMenu { background:#ffffff; color:#1f2937; border:1px solid #d7dde5; }
+        QMenu { background:#ffffff; color:#1f2937; border:1px solid #d7dde5; border-radius:6px; padding:4px; }
+        QMenu::item { padding:7px 28px 7px 14px; border-radius:4px; margin:1px 2px; }
         QMenu::item:selected { background:#dceeff; color:#111827; }
+        QMenu::separator { height:1px; background:#e5e9ef; margin:4px 10px; }
         #ragLibraryPage { background:#ffffff; }
         #ragLibraryHeader { color:#111827; }
         #ragLibraryCount { color:#667085; }
@@ -769,6 +952,7 @@ class ArabicPyIDE(QMainWindow):
         menu_layout.setContentsMargins(8, 1, 8, 1)
         menu_layout.addWidget(self.make_menu_button("File", [
             ("New File", self.new_file), ("New Flutter File", self.new_flutter_file),
+            ("New Python File", self.new_python_file),
             ("Open File...", self.open_file),
             ("Save", self.save_file), ("Refresh Explorer", self.refresh_file_list),
             ("New Android Project", self.new_android_file),
@@ -790,10 +974,6 @@ class ArabicPyIDE(QMainWindow):
         ]))
         menu_layout.addWidget(self.make_menu_button("Run", [
             ("Run Program", self.run_code), ("Clear Output", self.clear_output),
-            ("Setup GitHub", self.setup_github),
-            ("Push App to GitHub", self.upload_to_github),
-            ("Build APK via GitHub", self.build_apk_with_github),
-            ("Build iOS App via GitHub", self.build_ios_with_github),
         ]))
         menu_layout.addWidget(self.make_menu_button("Help", [
             ("About Al-Baa", self.show_about),
@@ -850,31 +1030,9 @@ class ArabicPyIDE(QMainWindow):
         self.apk_progress.setTextVisible(False)
         self.apk_progress.hide()
         command_layout.addWidget(self.apk_progress)
-        self.github_status_label = QLabel("")
-        self.github_status_label.setFixedWidth(260)
-        self.github_status_label.setAlignment(Qt.AlignCenter)
-        self.github_status_label.setStyleSheet(
-            "color: #D8DEE9; background: #2A2D2E; border-radius: 4px; padding: 3px 8px;"
-        )
-        self.github_status_label.hide()
-        command_layout.addWidget(self.github_status_label)
-        self.github_cancel_button = self.make_button("Cancel", self.cancel_github_operation)
-        self.github_cancel_button.setFixedWidth(58)
-        self.github_cancel_button.hide()
-        command_layout.addWidget(self.github_cancel_button)
         self.theme_button = self.make_button("☀ Theme", self.toggle_ide_theme, "themeButton")
         self.theme_button.setToolTip(self.t("Toggle Al-Baa's overall theme"))
         command_layout.addWidget(self.theme_button)
-        self.github_setup_button = self.make_button("Setup GitHub", self.setup_github)
-        command_layout.addWidget(self.github_setup_button)
-        self.github_upload_button = self.make_button("↑ Push to GitHub", self.upload_to_github)
-        command_layout.addWidget(self.github_upload_button)
-        self.github_apk_button = self.make_button("▣ Build APK", self.build_apk_with_github)
-        self.github_apk_button.setToolTip(self.t("Build an APK in the cloud via GitHub Actions"))
-        command_layout.addWidget(self.github_apk_button)
-        self.github_ios_button = self.make_button("▣ Build iOS", self.build_ios_with_github)
-        self.github_ios_button.setToolTip(self.t("Build an iOS Simulator app in the cloud on macOS via GitHub Actions"))
-        command_layout.addWidget(self.github_ios_button)
         self.package_button = self.make_button("▣ Cross-Platform Bundle", self.export_cross_platform)
         self.package_button.setToolTip(self.t("Generate a project for Browser, Windows, Linux, macOS, Android, and iOS"))
         command_layout.addWidget(self.package_button)
@@ -905,6 +1063,7 @@ class ArabicPyIDE(QMainWindow):
             activity_layout.addWidget(button)
         self.new_language_button = QPushButton("⊕", objectName="activityButton")
         self.new_language_button.setToolTip(self.t("New File (choose language)"))
+        self.new_language_button.setCheckable(True)
         self.new_language_button.clicked.connect(self.choose_new_file_language)
         activity_layout.addWidget(self.new_language_button)
         activity_layout.addStretch()
@@ -921,13 +1080,17 @@ class ArabicPyIDE(QMainWindow):
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
-        sidebar_layout.addWidget(QLabel(self.t("EXPLORER"), objectName="panelTitle"))
-        project = QLabel(self.t("⌄  My Projects"), objectName="panelTitle")
-        sidebar_layout.addWidget(project)
+        self.explorer_title_label = QLabel(self.t("EXPLORER"), objectName="panelTitle")
+        sidebar_layout.addWidget(self.explorer_title_label)
+        self.explorer_project_label = QLabel(self.t("⌄  My Projects"), objectName="panelTitle")
+        sidebar_layout.addWidget(self.explorer_project_label)
         self.file_list = QListWidget(objectName="fileList")
         self.file_list.setLayoutDirection(self.direction)
         self.file_list.itemDoubleClicked.connect(self.open_project_file)
         sidebar_layout.addWidget(self.file_list)
+        self.new_file_panel = self.build_new_file_panel()
+        sidebar_layout.addWidget(self.new_file_panel)
+        self.new_file_panel.hide()
         editor_splitter.addWidget(sidebar)
 
         editor_panel = QWidget()
@@ -1070,8 +1233,16 @@ class ArabicPyIDE(QMainWindow):
         header = QWidget(objectName="outputHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setDirection(self.box_direction)
-        header_layout.setContentsMargins(8, 0, 0, 0)
-        header_layout.addWidget(QLabel(self.t("OUTPUT"), objectName="outputTitle"))
+        header_layout.setContentsMargins(4, 0, 0, 0)
+        self.output_tab_button = QPushButton(self.t("OUTPUT"), objectName="outputTabButton")
+        self.output_tab_button.setCheckable(True)
+        self.output_tab_button.setChecked(True)
+        self.output_tab_button.clicked.connect(self.show_output_tab)
+        header_layout.addWidget(self.output_tab_button)
+        self.terminal_tab_button = QPushButton(self.t("TERMINAL"), objectName="outputTabButton")
+        self.terminal_tab_button.setCheckable(True)
+        self.terminal_tab_button.clicked.connect(self.show_terminal_tab)
+        header_layout.addWidget(self.terminal_tab_button)
         header_layout.addStretch()
         clear = self.make_button("Clear", self.clear_output)
         header_layout.addWidget(clear)
@@ -1084,6 +1255,9 @@ class ArabicPyIDE(QMainWindow):
         self.output.setReadOnly(True)
         self.output.setPlainText(self.t("Ready to run."))
         output_layout.addWidget(self.output)
+        self.terminal_panel = self.build_terminal_panel()
+        output_layout.addWidget(self.terminal_panel)
+        self.terminal_panel.hide()
         main_splitter.addWidget(output_panel)
         main_splitter.setSizes([650, 190])
         workspace.addWidget(main_splitter)
@@ -1223,14 +1397,8 @@ class ArabicPyIDE(QMainWindow):
         self.android_build_process = None
         self.apk_install_process = None
         self.apk_install_stage = None
-        self.github_process = None
-        self.github_project_path = None
-        self.github_operation = None
-        self.github_repo_name = None
-        self.github_download_path = None
-        self.github_elapsed_seconds = 0
-        self.github_phase_label = ""
-        self.github_cancel_requested = False
+        self.python_run_process = None
+        self.terminal_process = None
         self.ai_process = None
         self.embedded_ai_process = None
         self.pending_ai_payload = None
@@ -1246,8 +1414,6 @@ class ArabicPyIDE(QMainWindow):
         self.ai_backend = "ollama"
         self.ai_engine_wait_attempts = 0
         self.ai_response_buffer = bytearray()
-        self.github_elapsed_timer = QTimer(self)
-        self.github_elapsed_timer.timeout.connect(self.update_github_elapsed_time)
         self.updating_from_designer = False
         self.refresh_file_list()
 
@@ -1310,12 +1476,17 @@ class ArabicPyIDE(QMainWindow):
     def add_editor_tab(self, content="", path=None, code_language="albaa"):
         editor = CodeEditor()
         editor.code_language = code_language
-        # Dart/Flutter source is Latin-script, so it stays LTR regardless of
-        # the active UI language -- same reasoning as the Python preview pane.
-        editor.set_text_direction(Qt.LeftToRight if code_language == "flutter" else self.direction)
+        # Dart/Flutter and Python source are Latin-script, so they stay LTR
+        # regardless of the active UI language -- same reasoning as the
+        # Python preview pane.
+        editor.set_text_direction(
+            self.direction if code_language == "albaa" else Qt.LeftToRight
+        )
         editor.set_theme(self.ide_dark)
         editor.file_path = path
-        default_name = self.t("main.dart") if code_language == "flutter" else self.t("Untitled.apy")
+        default_name = {
+            "flutter": self.t("main.dart"), "python": self.t("main.py"),
+        }.get(code_language, self.t("Untitled.apy"))
         editor.display_name = os.path.basename(path) if path else default_name
         highlighter_cls = DartHighlighter if code_language == "flutter" else ArabicPyHighlighter
         editor.highlighter = highlighter_cls(editor.document())
@@ -1454,7 +1625,13 @@ class ArabicPyIDE(QMainWindow):
         if not hasattr(self, "python_preview") or not hasattr(self, "editor"):
             return
 
-        if getattr(self.editor, "code_language", "albaa") != "albaa":
+        code_language = getattr(self.editor, "code_language", "albaa")
+        if code_language == "python":
+            self.set_python_preview_text(
+                self.t("# This tab is already Python -- there's nothing to generate.\n# Click ▶ Run to run it.")
+            )
+            return
+        if code_language != "albaa":
             self.set_python_preview_text(
                 self.t("# Python preview isn't available for Flutter/Dart files.")
             )
@@ -1584,7 +1761,114 @@ class ArabicPyIDE(QMainWindow):
         )
 
     def clear_output(self):
-        self.output.clear()
+        if self.terminal_panel.isVisible():
+            self.terminal_output.clear()
+        else:
+            self.output.clear()
+
+    def show_output_tab(self):
+        self.output_tab_button.setChecked(True)
+        self.terminal_tab_button.setChecked(False)
+        self.terminal_panel.hide()
+        self.output.show()
+
+    def show_terminal_tab(self):
+        self.output_tab_button.setChecked(False)
+        self.terminal_tab_button.setChecked(True)
+        self.output.hide()
+        self.terminal_panel.show()
+        self.ensure_terminal_process()
+        self.terminal_input.setFocus()
+
+    def build_terminal_panel(self):
+        """A real interactive shell (persistent PowerShell process), not just a log."""
+        panel = QWidget(objectName="terminalPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.terminal_output = QPlainTextEdit(objectName="terminalOutput")
+        self.terminal_output.setLayoutDirection(Qt.LeftToRight)
+        self.terminal_output.setReadOnly(True)
+        self.terminal_output.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.terminal_output.setFont(QFont("Consolas", 11))
+        layout.addWidget(self.terminal_output, 1)
+        input_row = QWidget(objectName="terminalInputRow")
+        input_layout = QHBoxLayout(input_row)
+        input_layout.setContentsMargins(8, 4, 8, 6)
+        input_layout.setSpacing(6)
+        input_layout.addWidget(QLabel("PS>", objectName="terminalPrompt"))
+        self.terminal_input = TerminalInput()
+        self.terminal_input.setObjectName("terminalInput")
+        self.terminal_input.setLayoutDirection(Qt.LeftToRight)
+        self.terminal_input.setFont(QFont("Consolas", 11))
+        self.terminal_input.returnPressed.connect(self.send_terminal_command)
+        input_layout.addWidget(self.terminal_input)
+        layout.addWidget(input_row)
+        return panel
+
+    def ensure_terminal_process(self):
+        if self.terminal_process is not None:
+            return
+        process = QProcess(self)
+        self.terminal_process = process
+        process.setProgram("powershell.exe")
+        process.setArguments(["-NoLogo", "-NoProfile"])
+        source_path = getattr(self.editor, "file_path", None)
+        working_directory = os.path.dirname(source_path) if source_path else os.getcwd()
+        process.setWorkingDirectory(working_directory)
+        process.readyReadStandardOutput.connect(self.read_terminal_stdout)
+        process.readyReadStandardError.connect(self.read_terminal_stderr)
+        process.finished.connect(self.terminal_process_finished)
+        process.start()
+
+    def append_terminal_text(self, text, color):
+        cursor = self.terminal_output.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        char_format = QTextCharFormat()
+        char_format.setForeground(QColor(color))
+        cursor.setCharFormat(char_format)
+        cursor.insertText(text)
+        self.terminal_output.setTextCursor(cursor)
+        self.terminal_output.ensureCursorVisible()
+
+    def read_terminal_stdout(self):
+        process = self.terminal_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput())
+        if data:
+            self.append_terminal_text(data.decode("utf-8", errors="replace"), "#d4d4d4")
+
+    def read_terminal_stderr(self):
+        process = self.terminal_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardError())
+        if data:
+            self.append_terminal_text(data.decode("utf-8", errors="replace"), "#f14c4c")
+
+    def terminal_process_finished(self, _exit_code, _status):
+        self.append_terminal_text(
+            "\n" + self.t("[Terminal session ended. Type a command to start a new one.]") + "\n",
+            "#9d9d9d",
+        )
+        process = self.terminal_process
+        self.terminal_process = None
+        if process is not None:
+            process.deleteLater()
+
+    def send_terminal_command(self):
+        command = self.terminal_input.text()
+        self.terminal_input.add_to_history(command)
+        self.terminal_input.clear()
+        self.ensure_terminal_process()
+        if self.terminal_process is None:
+            return
+        self.append_terminal_text("PS> " + command + "\n", "#4ec9b0")
+        self.terminal_process.write((command + "\r\n").encode("utf-8"))
+
+    def toggle_sidebar(self):
+        self.sidebar.setVisible(not self.sidebar.isVisible())
 
     def toggle_sidebar(self):
         self.sidebar.setVisible(not self.sidebar.isVisible())
@@ -1615,18 +1899,21 @@ class ArabicPyIDE(QMainWindow):
 
     def show_explorer(self):
         self.restore_editor_view()
+        self.restore_sidebar_explorer_content()
         self.sidebar.show()
         self.refresh_file_list()
         self.set_active_activity(self.activity_buttons[0])
 
     def show_run_panel(self):
         self.restore_editor_view()
+        self.restore_sidebar_explorer_content()
         self.main_splitter.widget(1).show()
         self.output.setPlainText(self.t("Run panel ready. Click ▶ Run to run the current program."))
         self.set_active_activity(self.activity_buttons[2])
 
     def show_about(self):
         self.restore_editor_view()
+        self.restore_sidebar_explorer_content()
         self.main_splitter.widget(1).show()
         self.output.setPlainText(self.t("Al-Baa\n\nAn Arabic programming language with an editor for writing and running programs.\nUse File > Open or the Open button to get started."))
 
@@ -1635,6 +1922,65 @@ class ArabicPyIDE(QMainWindow):
         if self.rag_library_page.isVisible():
             self.rag_library_page.hide()
             self.code_splitter.show()
+
+    def restore_sidebar_explorer_content(self):
+        """Leave the new-file language panel (if open) and bring the file list back."""
+        if self.new_file_panel.isVisible():
+            self.new_file_panel.hide()
+            self.explorer_title_label.show()
+            self.explorer_project_label.show()
+            self.file_list.show()
+        self.new_language_button.setChecked(False)
+
+    def build_new_file_panel(self):
+        """A big, VS-Code-Extensions-style language picker shown in place of the file list."""
+        panel = QWidget(objectName="newFilePanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        title = QLabel(self.t("NEW FILE — CHOOSE A LANGUAGE"), objectName="panelTitle")
+        layout.addWidget(title)
+        languages = [
+            (
+                LanguageCard.letter_icon("#007ACC", "ب"), self.t("Al-Baa (.apy)"),
+                self.t("The Arabic-keyword language this IDE is built for."),
+                self.new_file,
+            ),
+            (
+                FlutterIconLabel(), self.t("Flutter (.dart)"),
+                self.t("Write and highlight Dart/Flutter code. Running and building are on the way."),
+                self.new_flutter_file,
+            ),
+            (
+                PythonIconLabel(), self.t("Python (.py)"),
+                self.t("Plain Python code, syntax-highlighted and runnable with ▶ Run."),
+                self.new_python_file,
+            ),
+        ]
+        for icon_widget, name, description, handler in languages:
+            card = LanguageCard(icon_widget, name, description)
+            card.clicked.connect(lambda _checked=False, action=handler: self.pick_new_file_language(action))
+            layout.addWidget(card)
+        layout.addStretch()
+        return panel
+
+    def choose_new_file_language(self):
+        """Show the language picker as a big sidebar panel instead of a small popup."""
+        if self.new_file_panel.isVisible():
+            self.show_explorer()
+            return
+        self.restore_editor_view()
+        self.explorer_title_label.hide()
+        self.explorer_project_label.hide()
+        self.file_list.hide()
+        self.new_file_panel.show()
+        self.sidebar.show()
+        self.set_active_activity(None)
+        self.new_language_button.setChecked(True)
+
+    def pick_new_file_language(self, handler):
+        handler()
+        self.show_explorer()
 
     def build_rag_library_page(self):
         """A dedicated page listing every document indexed into RAG, with add/remove."""
@@ -1672,6 +2018,7 @@ class ArabicPyIDE(QMainWindow):
         return page
 
     def show_rag_library(self):
+        self.restore_sidebar_explorer_content()
         self.android_designer.hide()
         self.code_splitter.hide()
         self.rag_library_page.show()
@@ -2020,7 +2367,7 @@ class ArabicPyIDE(QMainWindow):
             row_layout.addStretch(1)
             row_layout.addWidget(bubble, 0, Qt.AlignRight)
         else:
-            avatar = QLabel(self.t("B"))
+            avatar = QLabel("ب")
             avatar.setFixedSize(22, 22)
             avatar.setAlignment(Qt.AlignCenter)
             avatar.setStyleSheet(
@@ -2041,13 +2388,22 @@ class ArabicPyIDE(QMainWindow):
         self.ai_chat_input.clear()
         self.append_ai_message("user", question)
         use_remote = bool(self.remote_ai_url and self.remote_ai_token)
-        prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
-            f"معرفة موثقة مسترجعة من قاعدة الباء:\n{rag_context(question)}\n\n"
-            f"الكود المفتوح حالياً في المحرر (للسياق فقط — لا علاقة له بالسؤال إلا إذا "
-            f"كان السؤال عن الكود نفسه):\n{self.editor.toPlainText()}\n\n"
-            f"سؤال المستخدم:\n{question}"
-        )
+        if self.language == "ar":
+            prompt = (
+                f"{system_prompt_for(self.language)}\n\n"
+                f"معرفة موثقة مسترجعة من قاعدة الباء:\n{rag_context(question)}\n\n"
+                f"الكود المفتوح حالياً في المحرر (للسياق فقط — لا علاقة له بالسؤال إلا إذا "
+                f"كان السؤال عن الكود نفسه):\n{self.editor.toPlainText()}\n\n"
+                f"سؤال المستخدم:\n{question}"
+            )
+        else:
+            prompt = (
+                f"{system_prompt_for(self.language)}\n\n"
+                f"Documented knowledge retrieved from the Al-Baa knowledge base:\n{rag_context(question)}\n\n"
+                f"Code currently open in the editor (context only — unrelated to the "
+                f"question unless it's actually about this code):\n{self.editor.toPlainText()}\n\n"
+                f"User's question:\n{question}"
+            )
         if use_remote:
             self.ai_backend = "remote"
             self.start_ai_http_request(
@@ -2574,7 +2930,41 @@ class ArabicPyIDE(QMainWindow):
         if self.ai_download_stream is not None:
             self.ai_download_stream.close()
             self.ai_download_stream = None
+        if self.terminal_process is not None:
+            self.terminal_process.kill()
+            self.terminal_process.waitForFinished(2000)
+            self.terminal_process = None
         super().closeEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.WindowStateChange or not self.isMaximized():
+            return
+        # A frameless window on Windows can be re-maximized (e.g. after a
+        # native dialog like a folder picker returns focus) to a geometry a
+        # few pixels wider/taller than the real screen, since there's no
+        # native frame for Windows to size against -- that's the "window
+        # becomes wider" bug. Force it back to the true available area.
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None and self.geometry() != screen.availableGeometry():
+            self.setGeometry(screen.availableGeometry())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Catch-all: whatever caused this resize (toolbar content growing,
+        # a build-progress bar appearing, OS maximize quirks on a frameless
+        # window...), the window must never end up bigger than the actual
+        # screen. setMaximumSize should already prevent this, but that
+        # constraint isn't always honored by every code path that can grow
+        # a window, so also correct after the fact.
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        if self.width() > available.width() or self.height() > available.height():
+            clamped_width = min(self.width(), available.width())
+            clamped_height = min(self.height(), available.height())
+            QTimer.singleShot(0, lambda: self.resize(clamped_width, clamped_height))
 
     def new_android_file(self):
         if self.rtl:
@@ -2702,7 +3092,7 @@ class ArabicPyIDE(QMainWindow):
         self.android_project_path = directory
         self.main_splitter.widget(1).show()
         self.output.setPlainText(
-            self.t("Android project exported to:\n{directory}\n\nYou can push it to GitHub or build an APK via GitHub Actions.",
+            self.t("Android project exported to:\n{directory}\n\nClick «Build APK» to build it locally (needs WSL2 + Buildozer -- see Install APK Tools).",
                    directory=directory)
         )
         return True
@@ -2712,582 +3102,27 @@ class ArabicPyIDE(QMainWindow):
         if not is_android_source(source):
             QMessageBox.warning(self, self.t("Not an App"), self.t("Open or create an Al-Baa app project first."))
             return False
-        output_directory = QFileDialog.getExistingDirectory(self, self.t("Choose Where to Save the Windows App"))
+        output_directory = QFileDialog.getExistingDirectory(self, self.t("Choose Where to Save the Cross-Platform Project"))
         if not output_directory:
             return False
-        directory = tempfile.mkdtemp(prefix="albaa-app-build-")
         try:
-            export_tauri_project(source, directory)
+            export_tauri_project(source, output_directory)
         except Exception as error:
             self.output.setPlainText(format_error(error, source))
             QMessageBox.critical(self, self.t("Export Failed"), str(error))
             return False
         self.main_splitter.widget(1).show()
-        self.github_project_path = directory
-        self.cross_platform_output_directory = output_directory
-        self.github_repo_name = None
         self.output.setPlainText(
-            self.t("Your app is ready to build.\nA real Windows app will now be built via GitHub.\n\nEXE save location: {directory}",
+            self.t("Cross-platform project exported to:\n{directory}\n\n"
+                   "This includes project files for Browser, Windows, Linux, macOS, Android, and iOS. "
+                   "Building a real app for each platform needs that platform's own toolchain.",
                    directory=output_directory)
         )
-        QTimer.singleShot(0, lambda: self.start_github_upload(True, "cross"))
+        QMessageBox.information(
+            self, self.t("Export Complete"),
+            self.t("Cross-platform project exported to:\n{directory}", directory=output_directory),
+        )
         return True
-
-    def github_cli_path(self):
-        """Locate GitHub CLI, including a fresh Winget installation."""
-        found = shutil.which("gh")
-        if found:
-            return found
-        candidates = [
-            os.path.join(os.environ.get("ProgramFiles", ""), "GitHub CLI", "gh.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "GitHub CLI", "gh.exe"),
-        ]
-        return next((path for path in candidates if path and os.path.isfile(path)), None)
-
-    def github_is_authenticated(self):
-        gh_path = self.github_cli_path()
-        if not gh_path:
-            return False
-        check = QProcess(self)
-        check.setProgram(gh_path)
-        check.setArguments(["auth", "status"])
-        check.start()
-        return check.waitForStarted(2500) and check.waitForFinished(8000) and check.exitCode() == 0
-
-    def github_has_workflow_scope(self):
-        """Return whether the active token may create Actions workflows."""
-        gh_path = self.github_cli_path()
-        if not gh_path:
-            return False
-        check = QProcess(self)
-        check.setProgram(gh_path)
-        check.setArguments(["api", "-i", "user"])
-        check.start()
-        if not check.waitForStarted(2500) or not check.waitForFinished(8000):
-            return False
-        headers = bytes(check.readAllStandardOutput()).decode("utf-8", errors="replace").lower()
-        return any(
-            "workflow" in line for line in headers.splitlines()
-            if line.startswith("x-oauth-scopes:")
-        )
-
-    def set_github_busy(self, busy, label=None):
-        label = label or self.t("GitHub operation in progress")
-        for button in (
-            self.github_setup_button, self.github_upload_button,
-            self.github_apk_button, self.github_ios_button,
-        ):
-            button.setEnabled(not busy)
-        if busy:
-            self.github_cancel_requested = False
-            self.github_elapsed_seconds = 0
-            self.github_phase_label = label
-            self.update_github_elapsed_time()
-            self.github_status_label.show()
-            self.github_cancel_button.show()
-            self.github_elapsed_timer.start(1000)
-            if self.github_operation in ("upload", "build_upload", "build_all_upload", "build_ios_upload", "build", "build_all", "build_ios"):
-                self.apk_progress.setRange(0, 100)
-                self.apk_progress.setValue(
-                    10 if self.github_operation in ("upload", "build_upload", "build_all_upload", "build_ios_upload") else 20
-                )
-                self.apk_progress.setTextVisible(True)
-            else:
-                self.apk_progress.setRange(0, 0)
-                self.apk_progress.setTextVisible(False)
-            self.apk_progress.setToolTip(label)
-            self.apk_progress.show()
-        else:
-            self.github_elapsed_timer.stop()
-            self.github_status_label.hide()
-            self.github_cancel_button.hide()
-            self.apk_progress.hide()
-
-    def update_github_elapsed_time(self):
-        minutes, seconds = divmod(self.github_elapsed_seconds, 60)
-        phases = {
-            "install": self.t("Installing GitHub"),
-            "login": self.t("Signing In"),
-            "scope": self.t("Actions Permission"),
-            "upload": self.t("Uploading Project"),
-            "build_upload": self.t("Uploading Project"),
-            "build": self.t("Building APK"),
-            "build_all": self.t("Building EXE"),
-            "build_all_upload": self.t("Preparing Windows Bundle"),
-            "build_ios": self.t("Building iOS"),
-            "build_ios_upload": self.t("Preparing iOS App"),
-        }
-        phase = phases.get(self.github_operation, "GitHub")
-        remaining = ""
-        if self.github_operation in ("build", "build_all", "build_ios"):
-            elapsed_minutes = self.github_elapsed_seconds // 60
-            minimum_left = max(1, 10 - elapsed_minutes)
-            maximum_left = max(minimum_left, 30 - elapsed_minutes)
-            remaining = self.t("  •  ~{min}–{max} min remaining", min=minimum_left, max=maximum_left)
-        self.github_status_label.setText(
-            f"{phase}  •  {minutes:02d}:{seconds:02d}{remaining}"
-        )
-        tooltip = self.github_phase_label
-        if self.github_operation in ("build", "build_all", "build_ios"):
-            tooltip += self.t(" — usually takes 10–30 minutes")
-        elif self.github_operation in ("login", "scope"):
-            tooltip += self.t(" — enter the code shown in the browser")
-        self.github_status_label.setToolTip(tooltip)
-        self.github_elapsed_seconds += 1
-
-    def cancel_github_operation(self):
-        process = self.github_process
-        if process is None:
-            return
-        answer = QMessageBox.question(
-            self, self.t("Cancel Operation"), self.t("Cancel the current GitHub operation?"),
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if answer != QMessageBox.Yes:
-            return
-        self.github_cancel_requested = True
-        self.output.appendPlainText("\n" + self.t("Cancelling GitHub operation..."))
-        if self.github_operation in ("build", "build_all", "build_ios") and self.github_project_path:
-            gh_path = (self.github_cli_path() or "gh").replace("'", "''")
-            workflow = {
-                "build": "build-apk.yml",
-                "build_all": "build-windows.yml",
-                "build_ios": "build-ios.yml",
-            }.get(self.github_operation, "build-apk.yml")
-            cancel_command = (
-                f"$gh='{gh_path}'; "
-                f"$run=& $gh run list --workflow {workflow} --event workflow_dispatch "
-                "--limit 1 --json databaseId --jq '.[0].databaseId'; "
-                "if ($run) { & $gh run cancel $run }"
-            )
-            QProcess.startDetached(
-                "powershell.exe", ["-NoProfile", "-Command", cancel_command],
-                self.github_project_path,
-            )
-        process.terminate()
-        QTimer.singleShot(
-            3000,
-            lambda: process.kill()
-            if process.state() != QProcess.ProcessState.NotRunning else None,
-        )
-
-    def setup_github(self):
-        if self.github_process is not None:
-            QMessageBox.information(self, "GitHub", self.t("A GitHub operation is already in progress."))
-            return
-        gh_path = self.github_cli_path()
-        self.main_splitter.widget(1).show()
-        if not gh_path:
-            self.output.setPlainText(self.t("Installing GitHub CLI via Winget...\n"))
-            process = QProcess(self)
-            self.github_process = process
-            self.github_operation = "install"
-            self.set_github_busy(True, self.t("Installing GitHub CLI"))
-            process.setProgram("winget.exe")
-            process.setArguments([
-                "install", "--id", "GitHub.cli", "-e", "--source", "winget",
-                "--accept-package-agreements", "--accept-source-agreements",
-            ])
-            self.connect_github_process(process)
-            process.start()
-            return
-        if self.github_is_authenticated() and self.github_has_workflow_scope():
-            message = self.t("GitHub is ready and signed in. You can push the app or build an APK.")
-            self.output.setPlainText(message)
-            QMessageBox.information(self, self.t("GitHub Ready"), message)
-            return
-        if self.github_is_authenticated():
-            self.output.setPlainText(
-                self.t("Account connected, but workflow permission is required to build an APK.\n"
-                       "Enter the new code on GitHub to approve Actions permission.\n\n")
-            )
-            process = QProcess(self)
-            self.github_process = process
-            self.github_operation = "scope"
-            self.set_github_busy(True, self.t("Adding GitHub Actions Permission"))
-            QDesktopServices.openUrl(QUrl("https://github.com/login/device"))
-            process.setProgram(gh_path)
-            process.setArguments(["auth", "refresh", "-h", "github.com", "-s", "workflow"])
-            self.connect_github_process(process)
-            process.start()
-            return
-        self.output.setPlainText(
-            self.t("GitHub will show a code and open your browser to sign in securely.\n"
-                   "Complete the sign-in in your browser and wait for the success message.\n\n")
-        )
-        process = QProcess(self)
-        self.github_process = process
-        self.github_operation = "login"
-        self.set_github_busy(True, self.t("Waiting to Sign In to GitHub"))
-        QDesktopServices.openUrl(QUrl("https://github.com/login/device"))
-        process.setProgram(gh_path)
-        process.setArguments(["auth", "login", "--web", "--git-protocol", "https"])
-        self.connect_github_process(process)
-        process.start()
-
-    def connect_github_process(self, process):
-        process.readyReadStandardOutput.connect(self.read_github_output)
-        process.readyReadStandardError.connect(self.read_github_output)
-        process.errorOccurred.connect(self.github_process_error)
-        process.finished.connect(self.github_process_finished)
-
-    def read_github_output(self):
-        process = self.github_process
-        if process is None:
-            return
-        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
-        if data:
-            decoded = data.decode("utf-8", errors="replace").rstrip()
-            self.output.appendPlainText(decoded)
-            if self.github_operation in ("build", "build_all"):
-                lowered = decoded.lower()
-                stages = (
-                    (("queued", "waiting"), 25),
-                    (("checkout project", "checkout"), 30),
-                    (("set up python", "setup python"), 38),
-                    (("install buildozer", "install buildozer requirements"), 48),
-                    (("build apk", "buildozer android"), 62),
-                    (("upload apk", "upload artifact"), 90),
-                    (("completed", "success"), 98),
-                )
-                for markers, value in stages:
-                    if any(marker in lowered for marker in markers):
-                        self.apk_progress.setValue(max(self.apk_progress.value(), value))
-
-    def github_process_error(self, _error):
-        if self.github_process is None:
-            return
-        self.output.appendPlainText("\n" + self.t("Could not start the GitHub tool."))
-
-    def prepare_github_project(self, project_type="android"):
-        source = self.editor.toPlainText()
-        if not is_android_source(source):
-            QMessageBox.warning(self, self.t("Not an App"), self.t("Open or create an app before pushing to GitHub."))
-            return None
-        directory = self.github_project_path
-        if not directory:
-            directory = QFileDialog.getExistingDirectory(
-                self, self.t("Choose a Local Folder for the GitHub Project")
-            )
-            if not directory:
-                return None
-            self.github_project_path = directory
-        try:
-            if project_type in ("cross", "ios"):
-                export_tauri_project(source, directory)
-            else:
-                ai_url, ai_token = self.ai_export_credentials()
-                if not ai_url:
-                    return False
-                export_android_project(source, directory, ai_url, ai_token)
-        except Exception as error:
-            self.output.setPlainText(format_error(error, source))
-            QMessageBox.critical(self, self.t("Could Not Prepare Project"), str(error))
-            return None
-        return directory
-
-    def upload_to_github(self):
-        self.start_github_upload(build_after=False)
-
-    def build_apk_with_github(self):
-        self.start_github_upload(build_after=True)
-
-    def build_ios_with_github(self):
-        self.start_github_upload(build_after=True, project_type="ios")
-
-    def start_github_upload(self, build_after=False, project_type="android"):
-        if self.github_process is not None:
-            QMessageBox.information(self, "GitHub", self.t("Wait for the current GitHub operation to finish."))
-            return
-        if not self.github_is_authenticated():
-            QMessageBox.warning(
-                self, self.t("GitHub Not Ready"),
-                self.t("Click «Setup GitHub» and install the tool and sign in first.")
-            )
-            return
-        if not self.github_has_workflow_scope():
-            QMessageBox.warning(
-                self, self.t("GitHub Actions Permission Required"),
-                self.t("Click «Setup GitHub» and approve workflow permission before pushing.")
-            )
-            return
-        directory = self.prepare_github_project(project_type)
-        if not directory:
-            return
-        has_remote = self.git_has_origin(directory)
-        repo_name = self.github_repo_name
-        if project_type == "cross" and not has_remote and not repo_name:
-            repo_name = "albaa-private-builds"
-            self.github_repo_name = repo_name
-        if not has_remote and not repo_name:
-            default_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", os.path.basename(directory)).strip("-.") or "albaa-app"
-            repo_name, accepted = QInputDialog.getText(
-                self, self.t("GitHub Repository Name"), self.t("Enter the private repository name:"), text=default_name
-            )
-            repo_name = repo_name.strip()
-            if not accepted:
-                return
-            if not re.fullmatch(r"[A-Za-z0-9_.-]+", repo_name):
-                QMessageBox.warning(self, self.t("Invalid Name"), self.t("Use only English letters, numbers, and . _ -"))
-                return
-            self.github_repo_name = repo_name
-        gh_path = self.github_cli_path().replace("'", "''")
-        repo_arg = (repo_name or "albaa-app").replace("'", "''")
-        force_option = " --force" if project_type == "cross" else ""
-        if has_remote:
-            remote_command = f"git push -u origin HEAD{force_option}; exit $LASTEXITCODE"
-        else:
-            remote_command = (
-                "git remote remove origin 2>$null; "
-                f"$fullRepo=$login + '/{repo_arg}'; "
-                "$existing=& $gh repo view $fullRepo --json name --jq .name 2>$null; "
-                "if ($LASTEXITCODE -eq 0) { "
-                "git remote add origin ('https://github.com/' + $fullRepo + '.git'); "
-                f"git push -u origin HEAD{force_option} "
-                f"}} else {{ & $gh repo create '{repo_arg}' --private --source=. --remote=origin --push }}; "
-                "exit $LASTEXITCODE"
-            )
-        command = (
-            f"$gh='{gh_path}'; "
-            "$login=& $gh api user --jq .login; if ($LASTEXITCODE -ne 0) { exit 1 }; "
-            "if (!(Test-Path '.git')) { git init -b main }; "
-            "git config user.name $login; git config user.email ($login + '@users.noreply.github.com'); "
-            "git config core.autocrlf true; "
-            "git add .; git diff --cached --quiet; "
-            "if ($LASTEXITCODE -ne 0) { git commit -m 'Update from AlBaa' }; "
-            + remote_command
-        )
-        if build_after:
-            operation = {
-                "cross": "build_all_upload",
-                "ios": "build_ios_upload",
-            }.get(project_type, "build_upload")
-        else:
-            operation = "upload"
-        message = (
-            self.t("Preparing the Windows app for private cloud build...")
-            if project_type == "cross" and build_after
-            else self.t("Preparing the iOS app for a macOS build...")
-            if project_type == "ios" and build_after
-            else self.t("Pushing the app to GitHub...")
-        )
-        self.start_github_command(command, operation, directory, message)
-
-    def git_has_origin(self, directory):
-        check = QProcess(self)
-        check.setWorkingDirectory(directory)
-        check.setProgram("git.exe")
-        check.setArguments(["remote", "get-url", "origin"])
-        check.start()
-        if not check.waitForStarted(2500) or not check.waitForFinished(5000) or check.exitCode() != 0:
-            return False
-        origin = bytes(check.readAllStandardOutput()).decode("utf-8", errors="replace").strip().lower()
-        valid_url = (
-            origin.startswith("https://github.com/")
-            or origin.startswith("git@github.com:")
-            or origin.startswith("ssh://git@github.com/")
-        )
-        if not valid_url:
-            return False
-        gh_path = self.github_cli_path()
-        if not gh_path:
-            return False
-        verify = QProcess(self)
-        verify.setWorkingDirectory(directory)
-        verify.setProgram(gh_path)
-        verify.setArguments(["repo", "view", origin, "--json", "name"])
-        verify.start()
-        return (
-            verify.waitForStarted(2500)
-            and verify.waitForFinished(8000)
-            and verify.exitCode() == 0
-        )
-
-    def start_github_command(self, command, operation, directory, message):
-        self.main_splitter.widget(1).show()
-        self.output.setPlainText(message + "\n\n")
-        self.github_operation = operation
-        self.set_github_busy(True, message)
-        process = QProcess(self)
-        self.github_process = process
-        process.setWorkingDirectory(directory)
-        process.setProgram("powershell.exe")
-        process.setArguments(["-NoProfile", "-Command", command])
-        self.connect_github_process(process)
-        process.start()
-
-    def start_github_cloud_build(self):
-        directory = self.github_project_path
-        gh_path = self.github_cli_path().replace("'", "''")
-        download_path = os.path.join(
-            directory, "apk-output", datetime.now().strftime("%Y%m%d-%H%M%S")
-        )
-        self.github_download_path = download_path
-        escaped_download = download_path.replace("'", "''")
-        command = (
-            f"$gh='{gh_path}'; & $gh workflow run build-apk.yml; "
-            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
-            "$run=''; for ($i=0; $i -lt 20 -and !$run; $i++) { "
-            "Start-Sleep -Seconds 3; "
-            "$run=& $gh run list --workflow build-apk.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
-            "if (!$run) { Write-Error 'GitHub Actions run did not appear'; exit 1 }; "
-            "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
-            f"& $gh run download $run --name albaa-android-apk --dir '{escaped_download}'; exit $LASTEXITCODE"
-        )
-        self.start_github_command(
-            command, "build", directory,
-            self.t("Started building the APK on GitHub. The first build may take several minutes..."),
-        )
-
-    def start_github_cloud_build_all(self):
-        directory = self.github_project_path
-        gh_path = self.github_cli_path().replace("'", "''")
-        output_root = getattr(self, "cross_platform_output_directory", directory)
-        download_path = os.path.join(output_root, "Windows-App")
-        self.github_download_path = download_path
-        escaped_download = download_path.replace("'", "''")
-        command = (
-            f"$gh='{gh_path}'; & $gh workflow run build-windows.yml; "
-            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
-            "$run=''; for ($i=0; $i -lt 30 -and !$run; $i++) { "
-            "Start-Sleep -Seconds 3; "
-            "$run=& $gh run list --workflow build-windows.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
-            "if (!$run) { Write-Error 'The cross-platform bundle run did not appear'; exit 1 }; "
-            "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
-            f"& $gh run download $run --name albaa-windows-app --dir '{escaped_download}'; exit $LASTEXITCODE"
-        )
-        self.start_github_command(
-            command, "build_all", directory,
-            self.t("Started building the Windows EXE and other platform bundles via GitHub..."),
-        )
-
-    def start_github_cloud_build_ios(self):
-        directory = self.github_project_path
-        gh_path = self.github_cli_path().replace("'", "''")
-        output_root = getattr(self, "cross_platform_output_directory", directory)
-        download_path = os.path.join(output_root, "iOS-Simulator-App")
-        self.github_download_path = download_path
-        escaped_download = download_path.replace("'", "''")
-        command = (
-            f"$gh='{gh_path}'; & $gh workflow run build-ios.yml; "
-            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
-            "$run=''; for ($i=0; $i -lt 30 -and !$run; $i++) { "
-            "Start-Sleep -Seconds 3; "
-            "$run=& $gh run list --workflow build-ios.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId' }; "
-            "if (!$run) { Write-Error 'The iOS build run did not appear'; exit 1 }; "
-            "& $gh run watch $run --compact --exit-status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
-            f"& $gh run download $run --name albaa-ios-simulator --dir '{escaped_download}'; exit $LASTEXITCODE"
-        )
-        self.start_github_command(
-            command, "build_ios", directory,
-            self.t("Started building the iOS Simulator app on GitHub macOS..."),
-        )
-
-    def github_process_finished(self, exit_code, _status):
-        operation = self.github_operation
-        was_cancelled = self.github_cancel_requested
-        process = self.github_process
-        if process is not None:
-            self.read_github_output()
-            process.deleteLater()
-        self.github_process = None
-        self.github_operation = None
-        self.set_github_busy(False)
-        if was_cancelled:
-            self.github_cancel_requested = False
-            self.output.appendPlainText("\n" + self.t("GitHub operation cancelled."))
-            QMessageBox.information(self, self.t("Cancelled"), self.t("The GitHub operation was cancelled."))
-            return
-        # Device-flow login can return a non-zero process code after the browser
-        # has already authorized and stored a valid credential. Trust the real
-        # authenticated state rather than that stale process result.
-        if operation == "login" and self.github_is_authenticated():
-            exit_code = 0
-        if operation == "scope" and self.github_has_workflow_scope():
-            exit_code = 0
-        if exit_code != 0:
-            self.main_splitter.widget(1).show()
-            self.main_splitter.setSizes([650, 190])
-            output_lines = [
-                line.strip() for line in self.output.toPlainText().splitlines()
-                if line.strip()
-            ]
-            details = "\n".join(output_lines[-4:])
-            message = self.t("The GitHub operation failed with code {code}.", code=exit_code)
-            if details:
-                message += "\n\n" + self.t("Last details:\n{details}", details=details)
-            self.output.appendPlainText("\n" + message)
-            QMessageBox.critical(self, self.t("GitHub Operation Failed"), message)
-            return
-        if operation == "install":
-            self.output.appendPlainText("\n" + self.t("GitHub CLI installed. Complete sign-in now."))
-            QTimer.singleShot(0, self.setup_github)
-        elif operation == "login":
-            QMessageBox.information(self, self.t("Signed In"), self.t("«Al-Baa» was successfully linked to your GitHub account."))
-        elif operation == "scope":
-            QMessageBox.information(
-                self, self.t("Permissions Complete"),
-                self.t("GitHub Actions permission was added. You can now push the app and build an APK.")
-            )
-        elif operation == "upload":
-            QMessageBox.information(self, self.t("Pushed"), self.t("The app was successfully pushed to a private GitHub repository."))
-        elif operation == "build_upload":
-            self.start_github_cloud_build()
-        elif operation == "build_all_upload":
-            self.start_github_cloud_build_all()
-        elif operation == "build_ios_upload":
-            self.start_github_cloud_build_ios()
-        elif operation == "build":
-            apk_files = []
-            if self.github_download_path and os.path.isdir(self.github_download_path):
-                for root, _dirs, files in os.walk(self.github_download_path):
-                    apk_files.extend(os.path.join(root, name) for name in files if name.endswith(".apk"))
-            if apk_files:
-                message = self.t("APK built and downloaded successfully:\n{path}", path=apk_files[0])
-                self.output.appendPlainText("\n" + message)
-                QMessageBox.information(self, self.t("APK Built"), message)
-            else:
-                QMessageBox.warning(self, self.t("APK Not Found"), self.t("GitHub succeeded but no APK file was found in the download folder."))
-        elif operation == "build_all":
-            packages = []
-            if self.github_download_path and os.path.isdir(self.github_download_path):
-                for root, _dirs, files in os.walk(self.github_download_path):
-                    packages.extend(
-                        os.path.join(root, name) for name in files
-                        if name.lower().endswith((".exe", ".msi"))
-                    )
-            if packages:
-                preferred = next((path for path in packages if path.lower().endswith(".exe")), packages[0])
-                message = self.t("Windows app built and downloaded successfully:\n{path}", path=preferred)
-                self.output.appendPlainText("\n" + message)
-                QMessageBox.information(self, self.t("EXE Built"), message)
-            else:
-                QMessageBox.warning(
-                    self, self.t("EXE Not Found"),
-                    self.t("The build finished, but no EXE or MSI was found inside the downloaded Windows bundle."),
-                )
-        elif operation == "build_ios":
-            app_bundles = []
-            if self.github_download_path and os.path.isdir(self.github_download_path):
-                for root, dirs, files in os.walk(self.github_download_path):
-                    app_bundles.extend(os.path.join(root, name) for name in dirs if name.endswith(".app"))
-                    app_bundles.extend(
-                        os.path.join(root, name) for name in files
-                        if name.lower().endswith((".ipa", ".zip"))
-                    )
-            if app_bundles:
-                message = self.t(
-                    "iOS Simulator app built and downloaded successfully:\n{path}\n\n"
-                    "This is the simulator build. Installing on an iPhone needs an Apple certificate and IPA signing.",
-                    path=app_bundles[0],
-                )
-                self.output.appendPlainText("\n" + message)
-                QMessageBox.information(self, self.t("iOS Built"), message)
-            else:
-                QMessageBox.warning(
-                    self, self.t("iOS App Not Found"),
-                    self.t("The build finished, but no .app bundle was found inside the downloaded iOS bundle."),
-                )
 
     def build_android_apk(self):
         if self.android_build_process is not None:
@@ -3640,15 +3475,18 @@ class ArabicPyIDE(QMainWindow):
         self.update_tab_title(True)
         editor.setFocus()
 
-    def choose_new_file_language(self):
-        """Entry point for adding more languages later -- currently Al-Baa and Flutter."""
-        menu = QMenu(self)
-        menu.setLayoutDirection(self.direction)
-        menu.addAction(self.t("Al-Baa (.apy)"), self.new_file)
-        menu.addAction(self.t("Flutter (.dart)"), self.new_flutter_file)
-        menu.exec(self.new_language_button.mapToGlobal(
-            self.new_language_button.rect().bottomLeft()
-        ))
+    def new_python_file(self):
+        """Start a plain Python tab -- syntax-highlighted and runnable via ▶ Run."""
+        template = (
+            "def main():\n"
+            "    print('Hello from Python!')\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    main()\n"
+        )
+        editor = self.add_editor_tab(template, code_language="python")
+        editor.document().setModified(True)
+        self.update_tab_title(True)
+        editor.setFocus()
 
     def open_project_file(self, item):
         self.load_file(item.data(Qt.UserRole))
@@ -3668,7 +3506,13 @@ class ArabicPyIDE(QMainWindow):
                 self.tab_widget.setCurrentIndex(index)
                 return
         try:
-            code_language = "flutter" if path.lower().endswith(".dart") else "albaa"
+            lowered_path = path.lower()
+            if lowered_path.endswith(".dart"):
+                code_language = "flutter"
+            elif lowered_path.endswith(".py"):
+                code_language = "python"
+            else:
+                code_language = "albaa"
             with open(path, "r", encoding="utf-8") as file:
                 self.add_editor_tab(file.read(), path, code_language=code_language)
             self.remember_project_file(path)
@@ -3684,10 +3528,12 @@ class ArabicPyIDE(QMainWindow):
     def save_file(self):
         editor = self.editor
         if not getattr(editor, "file_path", None):
-            is_flutter = getattr(editor, "code_language", "albaa") == "flutter"
-            default_name = self.t("main.dart") if is_flutter else self.t("Untitled.apy")
+            code_language = getattr(editor, "code_language", "albaa")
+            default_name, save_filter = {
+                "flutter": (self.t("main.dart"), self.t("Flutter Files (*.dart)")),
+                "python": (self.t("main.py"), self.t("Python Files (*.py)")),
+            }.get(code_language, (self.t("Untitled.apy"), self.t("Al-Baa Files (*.apy)")))
             suggested_name = getattr(editor, "display_name", default_name)
-            save_filter = self.t("Flutter Files (*.dart)") if is_flutter else self.t("Al-Baa Files (*.apy)")
             path, _ = QFileDialog.getSaveFileName(self, self.t("Save File"), suggested_name, save_filter)
             if not path:
                 return
@@ -3722,6 +3568,7 @@ class ArabicPyIDE(QMainWindow):
             self.output.setPlainText(self.t("Could not save the file:\n{error}", error=error))
 
     def find_text(self):
+        self.restore_sidebar_explorer_content()
         self.find_bar.show()
         selected = self.editor.textCursor().selectedText()
         if selected:
@@ -3750,12 +3597,16 @@ class ArabicPyIDE(QMainWindow):
         self.find_status.setText(self.t("Found"))
 
     def run_code(self):
-        if getattr(self.editor, "code_language", "albaa") != "albaa":
+        code_language = getattr(self.editor, "code_language", "albaa")
+        if code_language == "flutter":
             self.main_splitter.widget(1).show()
             self.output.setPlainText(
                 self.t("Running Flutter/Dart files isn't supported yet -- it's on the way. "
                        "For now, this tab is for writing and syntax-highlighting Dart code.")
             )
+            return
+        if code_language == "python":
+            self.run_python_file(self.editor.toPlainText())
             return
         source = self.editor.toPlainText()
         if is_android_source(source):
@@ -3801,6 +3652,52 @@ class ArabicPyIDE(QMainWindow):
                     traceback = traceback.tb_next
             self.editor.show_error_line(line)
             self.output.setPlainText(format_error(error, source))
+
+    def run_python_file(self, source):
+        """Run a plain Python tab with the same interpreter this IDE runs on."""
+        if self.python_run_process is not None:
+            QMessageBox.information(self, self.t("Run"), self.t("Wait for the current Python program to finish."))
+            return
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText(self.t("Running...") + "\n\n")
+        path = getattr(self.editor, "file_path", None)
+        if path and not self.editor.document().isModified():
+            run_path = path
+        else:
+            run_path = os.path.join(tempfile.gettempdir(), "albaa_python_run.py")
+            with open(run_path, "w", encoding="utf-8") as run_file:
+                run_file.write(source)
+        process = QProcess(self)
+        self.python_run_process = process
+        process.setWorkingDirectory(os.path.dirname(path) if path else tempfile.gettempdir())
+        process.setProgram(sys.executable)
+        process.setArguments([run_path])
+        process.readyReadStandardOutput.connect(self.read_python_run_output)
+        process.readyReadStandardError.connect(self.read_python_run_output)
+        process.errorOccurred.connect(self.python_run_error)
+        process.finished.connect(self.python_run_finished)
+        process.start()
+
+    def read_python_run_output(self):
+        process = self.python_run_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
+        if data:
+            self.output.appendPlainText(data.decode("utf-8", errors="replace").rstrip("\n"))
+
+    def python_run_error(self, _error):
+        if self.python_run_process is None:
+            return
+        self.output.appendPlainText("\n" + self.t("Could not start Python."))
+
+    def python_run_finished(self, exit_code, _status):
+        process = self.python_run_process
+        if process is not None:
+            self.read_python_run_output()
+            process.deleteLater()
+        self.python_run_process = None
+        self.output.appendPlainText("\n" + self.t("Finished (exit code {code}).", code=exit_code))
 
 
 if __name__ == "__main__":

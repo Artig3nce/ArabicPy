@@ -1,14 +1,18 @@
 """Editable Qt mobile canvas for ArabicPy Android source files."""
 
+import json
 import re
+import urllib.error
+import urllib.request
 
-from PySide6.QtCore import QEvent, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QColorDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
+from .ai import DEFAULT_MODEL, system_prompt_for
 from .android import AndroidEvent, AndroidProgram, AndroidWidget, parse_android
 from .i18n import TRANSLATIONS
 
@@ -18,6 +22,49 @@ def _t(text, language, **kwargs):
     if language == "ar":
         text = TRANSLATIONS.get(text, text)
     return text.format(**kwargs) if kwargs else text
+
+
+class ChatPreviewWorker(QThread):
+    """Asks the same local Ollama instance the IDE uses, off the UI thread."""
+
+    replied = Signal(str)
+
+    def __init__(self, question, language, parent=None):
+        super().__init__(parent)
+        self.question = question
+        self.language = language
+
+    def run(self):
+        label = "سؤال المستخدم" if self.language == "ar" else "User's question"
+        payload = json.dumps({
+            "model": DEFAULT_MODEL,
+            "prompt": f"{system_prompt_for(self.language)}\n\n{label}:\n{self.question}",
+            "stream": False,
+            "think": False,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            text = result.get("response", "").strip() or _t(
+                "The model returned no answer.", self.language
+            )
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                text = _t(
+                    "Model {model} isn't installed. Install it with: ollama pull {model}",
+                    self.language, model=DEFAULT_MODEL,
+                )
+            else:
+                text = _t("Couldn't run the local model: HTTP {code}", self.language, code=error.code)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            text = _t("Couldn't connect to Ollama. Start Ollama and try again.", self.language)
+        self.replied.emit(text)
 
 
 COLOR_THEMES = {
@@ -36,10 +83,11 @@ class DesignerItem(QFrame):
     selected = Signal(str)
     activated = Signal(str)
 
-    def __init__(self, widget_model, parent=None, language="en"):
+    def __init__(self, widget_model, parent=None, language="en", screen_background="#FFFFFF"):
         super().__init__(parent)
         self.widget_model = widget_model
         self.language = language
+        self.screen_background = screen_background
         self.preview_mode = False
         self.setObjectName("designerItem")
         layout = QVBoxLayout(self)
@@ -52,6 +100,7 @@ class DesignerItem(QFrame):
             control = QPushButton(widget_model.text)
         elif widget_model.kind == "دردشة":
             control = self._build_chat_preview()
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         else:
             control = QLineEdit()
             control.setPlaceholderText(widget_model.text)
@@ -87,31 +136,128 @@ class DesignerItem(QFrame):
             self.password_status.setText(_t("Use {min}+ characters with digits and symbols", self.language, min=minimum))
             self.password_status.setStyleSheet("color: #EF4444;")
 
+    def _resolve_chat_colors(self):
+        """Derive bubble/container colors from the widget's theme colors (set by App Templates)."""
+        accent = QColor(self.widget_model.text_color or "#007ACC")
+        container = QColor(self.widget_model.background_color or self.screen_background or "#FFFFFF")
+        bubble = container.lighter(140) if container.lightness() < 128 else container.darker(108)
+        # The input bar is always the opposite tone of the container so typed
+        # text stays legible no matter how dark or light the chosen theme is.
+        input_bg = QColor("#FFFFFF") if container.lightness() < 128 else QColor("#202124")
+        input_text = QColor("#202124") if container.lightness() < 128 else QColor("#FFFFFF")
+        return {
+            "container": container.name(),
+            "accent": accent.name(),
+            "accent_text": "#FFFFFF" if accent.lightness() < 128 else "#202124",
+            "bubble": bubble.name(),
+            "bubble_text": "#FFFFFF" if bubble.lightness() < 128 else "#202124",
+            "input_bg": input_bg.name(),
+            "input_text": input_text.name(),
+        }
+
     def _build_chat_preview(self):
-        """A static mockup of the scrolling AI chat the real app will generate."""
+        """The AI chat widget: a static mockup while editing, a live chat during Run/Preview."""
+        self.chat_colors = self._resolve_chat_colors()
+        container = self.chat_colors["container"]
+
         box = QWidget()
-        box.setFixedHeight(170)
+        box.setMinimumHeight(170)
+        box.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        box.setStyleSheet(f"background:{container}; border-radius:8px;")
         layout = QVBoxLayout(box)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
-        user_bubble = QLabel(_t("Sample question", self.language))
-        user_bubble.setAlignment(Qt.AlignRight)
-        user_bubble.setStyleSheet(
-            "background:#007ACC; color:white; border-radius:8px; padding:6px 10px;"
+
+        self.chat_log_scroll = QScrollArea()
+        self.chat_log_scroll.setWidgetResizable(True)
+        self.chat_log_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.chat_log_scroll.setStyleSheet(f"background:{container}; border:none;")
+        self.chat_log_scroll.viewport().setStyleSheet(f"background:{container};")
+        log_host = QWidget()
+        log_host.setStyleSheet(f"background:{container};")
+        self.chat_log_layout = QVBoxLayout(log_host)
+        self.chat_log_layout.setContentsMargins(0, 0, 0, 0)
+        self.chat_log_layout.setSpacing(6)
+        self.chat_log_layout.addStretch(1)
+        self.chat_log_scroll.setWidget(log_host)
+        layout.addWidget(self.chat_log_scroll, 1)
+
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText(_t("Type a message...", self.language))
+        self.chat_input.setEnabled(False)
+        self.chat_input.setStyleSheet(
+            f"background:{self.chat_colors['input_bg']}; color:{self.chat_colors['input_text']}; "
+            f"border:1px solid {self.chat_colors['accent']}; border-radius:6px; padding:6px 10px;"
         )
-        ai_bubble = QLabel(_t("Sample AI answer", self.language))
-        ai_bubble.setAlignment(Qt.AlignLeft)
-        ai_bubble.setStyleSheet(
-            "background:#2d2d30; color:#e0e0e0; border-radius:8px; padding:6px 10px;"
-        )
-        layout.addWidget(user_bubble)
-        layout.addWidget(ai_bubble)
-        layout.addStretch(1)
-        input_row = QLineEdit()
-        input_row.setPlaceholderText(_t("Type a message...", self.language))
-        input_row.setEnabled(False)
-        layout.addWidget(input_row)
+        self.chat_input.returnPressed.connect(self._send_chat_preview_message)
+        layout.addWidget(self.chat_input)
+
+        self._add_chat_bubble(_t("Sample question", self.language), is_user=True)
+        self._add_chat_bubble(_t("Sample AI answer", self.language), is_user=False)
         return box
+
+    def _add_chat_bubble(self, text, is_user):
+        colors = getattr(self, "chat_colors", None) or self._resolve_chat_colors()
+        background = colors["accent"] if is_user else colors["bubble"]
+        foreground = colors["accent_text"] if is_user else colors["bubble_text"]
+        bubble = QLabel(text)
+        bubble.setWordWrap(True)
+        bubble.setAlignment(Qt.AlignRight if is_user else Qt.AlignLeft)
+        bubble.setStyleSheet(
+            f"background:{background}; color:{foreground}; border-radius:8px; padding:6px 10px; border:none;"
+        )
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        if is_user:
+            row.addStretch(1)
+            row.addWidget(bubble, 0, Qt.AlignRight)
+        else:
+            row.addWidget(bubble, 0, Qt.AlignLeft)
+            row.addStretch(1)
+        self.chat_log_layout.insertLayout(self.chat_log_layout.count() - 1, row)
+
+    def _send_chat_preview_message(self):
+        if not self.preview_mode:
+            return
+        question = self.chat_input.text().strip()
+        if not question:
+            return
+        self.chat_input.clear()
+        self.chat_input.setEnabled(False)
+        self.chat_input.setPlaceholderText(_t("Thinking...", self.language))
+        self._add_chat_bubble(question, is_user=True)
+        worker = ChatPreviewWorker(question, self.language, self)
+        self._chat_worker = worker
+        worker.replied.connect(self._on_chat_preview_reply)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_chat_preview_reply(self, text):
+        self._add_chat_bubble(text, is_user=False)
+        self.chat_input.setEnabled(True)
+        self.chat_input.setPlaceholderText(_t("Type a message...", self.language))
+        self.chat_input.setFocus()
+
+    def _reset_chat_preview(self, live):
+        while self.chat_log_layout.count() > 1:
+            item = self.chat_log_layout.takeAt(0)
+            child_layout = item.layout()
+            if child_layout is not None:
+                while child_layout.count():
+                    child_item = child_layout.takeAt(0)
+                    widget = child_item.widget()
+                    if widget is not None:
+                        widget.deleteLater()
+        self.chat_input.setEnabled(live)
+        self.chat_input.clear()
+        self.chat_input.setPlaceholderText(_t("Type a message...", self.language))
+        if live:
+            self._add_chat_bubble(
+                _t("Ask me anything -- I'm your local AI.", self.language), is_user=False
+            )
+        else:
+            self._add_chat_bubble(_t("Sample question", self.language), is_user=True)
+            self._add_chat_bubble(_t("Sample AI answer", self.language), is_user=False)
 
     def apply_colors(self):
         text_color = self.widget_model.text_color or (
@@ -152,6 +298,8 @@ class DesignerItem(QFrame):
     def set_preview_mode(self, enabled):
         self.preview_mode = enabled
         self.set_selected(False)
+        if self.widget_model.kind == "دردشة":
+            self._reset_chat_preview(live=enabled)
 
 
 class AndroidDesigner(QWidget):
@@ -247,9 +395,7 @@ class AndroidDesigner(QWidget):
         self.phone_title.setAlignment(Qt.AlignCenter)
         phone_layout.addWidget(self.phone_title)
         self.canvas_layout = QVBoxLayout()
-        self.canvas_layout.setAlignment(Qt.AlignTop)
-        phone_layout.addLayout(self.canvas_layout)
-        phone_layout.addStretch()
+        phone_layout.addLayout(self.canvas_layout, 1)
         self.bottom_navigation = QFrame(objectName="phoneNavigation")
         self.bottom_navigation_layout = QHBoxLayout(self.bottom_navigation)
         self.bottom_navigation_layout.setContentsMargins(4, 4, 4, 4)
@@ -408,6 +554,9 @@ class AndroidDesigner(QWidget):
             item for item in self.item_widgets.values()
             if item.widget_model.page == page_name
         ]
+        page_has_chat = any(item.widget_model.kind == "دردشة" for item in page_items)
+        if page_has_chat:
+            page_items = [item for item in page_items if item.widget_model.kind == "دردشة"]
         for item in self.item_widgets.values():
             item.setVisible(item in page_items)
         self.page_placeholder.setText(self.t("Page {name}", name=page_name))
@@ -502,6 +651,12 @@ class AndroidDesigner(QWidget):
             if widget.kind == "زر":
                 widget.text_color = theme["button_text"]
                 widget.background_color = theme["button"]
+            elif widget.kind == "دردشة":
+                # Chat bubbles use text_color as the "my message" accent and
+                # background_color as the AI-message surface, matching the
+                # theme's button/surface colors respectively.
+                widget.text_color = theme["button"]
+                widget.background_color = theme["surface"]
             else:
                 widget.text_color = theme["text"]
                 widget.background_color = theme["surface"]
@@ -640,12 +795,22 @@ class AndroidDesigner(QWidget):
         self.phone_title.setText(self.program.title)
         self.refresh_phone_color()
         self.app_title_edit.setText(self.program.title)
+        has_chat = any(widget.kind == "دردشة" for widget in self.program.widgets)
+        # A chat widget takes over its whole page like a real messaging screen --
+        # its page-mates stay defined (so nothing is deleted) but are hidden so
+        # the chat fills the entire screen instead of sharing it.
+        chat_pages = {widget.page for widget in self.program.widgets if widget.kind == "دردشة"}
+        screen_background = self.program.background_color or "#FFFFFF"
         for widget in self.program.widgets:
-            item = DesignerItem(widget, language=self.language)
+            item = DesignerItem(widget, language=self.language, screen_background=screen_background)
             item.selected.connect(self.select_widget)
             item.activated.connect(self.run_preview_event)
-            self.canvas_layout.addWidget(item)
+            self.canvas_layout.addWidget(item, 1 if widget.kind == "دردشة" else 0)
             self.item_widgets[widget.name] = item
+            if widget.kind != "دردشة" and widget.page in chat_pages:
+                item.hide()
+        if not has_chat:
+            self.canvas_layout.addStretch(1)
         for widget in self.program.widgets:
             if widget.bind_to and widget.bind_to in self.item_widgets:
                 source_control = self.item_widgets[widget.bind_to].control

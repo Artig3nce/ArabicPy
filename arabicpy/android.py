@@ -533,6 +533,15 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
     program = parse_android(source)
     has_ai = bool(ai_server_url and ai_token)
     has_chat_widgets = any(widget.kind == "دردشة" for widget in program.widgets)
+    chat_widget = next((widget for widget in program.widgets if widget.kind == "دردشة"), None)
+    chat_accent = (chat_widget.text_color if chat_widget else None) or "#007ACC"
+    screen_hex = program.background_color or "#FFFFFF"
+    chat_surface_default = darken_hex(screen_hex, 0.06) if not is_dark_hex(screen_hex) else lighten_hex(screen_hex, 0.12)
+    chat_surface = (chat_widget.background_color if chat_widget else None) or chat_surface_default
+    chat_accent_rgba = hex_to_rgba(chat_accent)
+    chat_accent_text_rgba = [1, 1, 1, 1] if is_dark_hex(chat_accent) else [0.06, 0.09, 0.16, 1]
+    chat_surface_rgba = hex_to_rgba(chat_surface)
+    chat_surface_text_rgba = [1, 1, 1, 1] if is_dark_hex(chat_surface) else [0.06, 0.09, 0.16, 1]
     has_page_navigation = any(
         target == "__page__"
         for event in program.events
@@ -625,7 +634,7 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
             lines.append(f"        self.{name}_input = TextInput(hint_text='اكتب رسالتك...', multiline=False, size_hint_y=None, height=48)")
             lines.append(
                 f"        self.{name}_send = Button(text='إرسال', size_hint_y=None, height=48, size_hint_x=None, "
-                f"width=90, background_normal='', background_down='', background_color={hex_to_rgba('#007ACC')!r})"
+                f"width=90, background_normal='', background_down='', background_color={chat_accent_rgba!r})"
             )
             lines.append(f"        self.{name}_row = BoxLayout(size_hint_y=None, height=48, spacing=8)")
             lines.append(f"        self.{name}_row.add_widget(self.{name}_input)")
@@ -788,8 +797,8 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
             "    def _add_chat_bubble(self, log, text, is_user):",
             "        bubble = ColoredLabel(",
             "            text=text, size_hint_y=None, halign='right' if is_user else 'left', valign='top',",
-            "            color=[1, 1, 1, 1] if is_user else [0.92, 0.92, 0.93, 1],",
-            f"            background_color={hex_to_rgba('#007ACC')!r} if is_user else [0.16, 0.16, 0.18, 1],",
+            f"            color={chat_accent_text_rgba!r} if is_user else {chat_surface_text_rgba!r},",
+            f"            background_color={chat_accent_rgba!r} if is_user else {chat_surface_rgba!r},",
             "        )",
             "        bubble.padding = (12, 8)",
             "        bubble.bind(width=lambda w, value: setattr(w, 'text_size', (value - 24, None)))",
@@ -852,6 +861,19 @@ def is_dark_hex(color):
     return (red * 299 + green * 587 + blue * 114) / 1000 < 128
 
 
+def lighten_hex(color, amount=0.3):
+    color = color.lstrip("#")
+    red, green, blue = (int(color[index:index + 2], 16) for index in (0, 2, 4))
+    red, green, blue = (round(channel + (255 - channel) * amount) for channel in (red, green, blue))
+    return f"#{red:02X}{green:02X}{blue:02X}"
+
+
+def darken_hex(color, amount=0.12):
+    color = color.lstrip("#")
+    red, green, blue = (round(int(color[index:index + 2], 16) * (1 - amount)) for index in (0, 2, 4))
+    return f"#{red:02X}{green:02X}{blue:02X}"
+
+
 def buildozer_spec(title, ai_enabled=False):
     safe_title = title.replace("\n", " ").strip() or "تطبيق الباء"
     return f"""[app]
@@ -893,6 +915,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: albaa-pip-${{ runner.os }}
 
       - name: Install Buildozer requirements
         run: |

@@ -17,6 +17,29 @@ SYSTEM_PROMPT = (
     "إذا لم تعرف صيغة من لغة الباء، صرّح بذلك ولا تخترع أمراً غير موجود."
 )
 
+SYSTEM_PROMPT_AR = SYSTEM_PROMPT + (
+    " تحدث بالعربية افتراضياً. لكن إذا كتب المستخدم سؤاله بالإنجليزية، أو طلب صراحة "
+    "أن تجيبه بالإنجليزية، فأجب بالإنجليزية بدلاً من ذلك."
+)
+
+SYSTEM_PROMPT_EN = (
+    "You are the Al-Baa Assistant, a helpful AI that speaks clearly. "
+    "Your primary job is helping the user write, explain, and fix code in the "
+    "Arabic-keyword Al-Baa programming language, but you also answer any other "
+    "question the user asks, including questions about documents they uploaded to "
+    "the RAG knowledge base. Always answer the user's actual question first; don't "
+    "ignore it and pivot to talking about attached code unless they actually asked "
+    "about the code. If you don't know a piece of Al-Baa syntax, say so instead of "
+    "inventing a command that doesn't exist. "
+    "Reply in English by default. However, if the user writes their question in "
+    "Arabic, or explicitly asks you to answer in Arabic, reply in Arabic instead."
+)
+
+
+def system_prompt_for(language):
+    """Return the AI system prompt matching the IDE's active UI language."""
+    return SYSTEM_PROMPT_AR if language == "ar" else SYSTEM_PROMPT_EN
+
 
 def reply(question, model=DEFAULT_MODEL, timeout=300):
     """Return a local Ollama response for the Arabic `اسأل(...)` command."""

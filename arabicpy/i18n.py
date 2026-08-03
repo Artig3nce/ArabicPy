@@ -11,7 +11,6 @@ LANGUAGE_NAMES = {"en": "English", "ar": "العربية"}
 
 TRANSLATIONS = {
     # -- Title bar --
-    "B": "ب",
     "Arabic Programming Language": "لغة البرمجة العربية",
 
     # -- Menu bar --
@@ -88,6 +87,9 @@ TRANSLATIONS = {
 
     # -- Output panel / status bar --
     "OUTPUT": "المخرجات",
+    "TERMINAL": "الطرفية",
+    "[Terminal session ended. Type a command to start a new one.]":
+        "[انتهت جلسة الطرفية. اكتب أمراً لبدء جلسة جديدة.]",
     "Ready to run.": "جاهز للتشغيل.",
     "Autosave enabled": "الحفظ التلقائي مفعّل",
     "Line 1, Column 1": "السطر 1، العمود 1",
@@ -489,8 +491,12 @@ TRANSLATIONS = {
     "New Flutter File": "ملف Flutter جديد",
     "main.dart": "main.dart",
     "New File (choose language)": "ملف جديد (اختر اللغة)",
+    "NEW FILE — CHOOSE A LANGUAGE": "ملف جديد — اختر اللغة",
     "Al-Baa (.apy)": "الباء (.apy)",
     "Flutter (.dart)": "Flutter (.dart)",
+    "The Arabic-keyword language this IDE is built for.": "لغة البرمجة بالكلمات المفتاحية العربية التي بُنيت لها هذه البيئة.",
+    "Write and highlight Dart/Flutter code. Running and building are on the way.":
+        "اكتب كود Dart/Flutter مع تلوين الصياغة. التشغيل والبناء قادمان قريباً.",
     "# Python preview isn't available for Flutter/Dart files.":
         "# معاينة Python غير متاحة لملفات Flutter/Dart.",
     "# No Python code has been generated yet.": "# لم يتم إنشاء كود Python بعد.",
@@ -504,9 +510,31 @@ TRANSLATIONS = {
         "ملفات الباء (*.apy);;ملفات Flutter (*.dart);;Python (*.py);;All Files (*)",
     "Flutter Files (*.dart)": "ملفات Flutter (*.dart)",
 
+    # -- Multi-language support (Python, first slice) --
+    "New Python File": "ملف Python جديد",
+    "main.py": "main.py",
+    "Python (.py)": "Python (.py)",
+    "Plain Python code, syntax-highlighted and runnable with ▶ Run.":
+        "كود Python عادي، مع تلوين الصياغة وقابل للتشغيل بزر ▶ تشغيل.",
+    "Python Files (*.py)": "ملفات Python (*.py)",
+    "Running...": "قيد التشغيل...",
+    "Finished (exit code {code}).": "انتهى (رمز الخروج {code}).",
+    "Could not start Python.": "تعذر تشغيل Python.",
+    "Wait for the current Python program to finish.": "انتظر حتى ينتهي برنامج Python الحالي.",
+    "# This tab is already Python -- there's nothing to generate.\n# Click ▶ Run to run it.":
+        "# هذا اللسان بلغة Python بالفعل -- لا يوجد ما يُنشأ.\n# اضغط ▶ تشغيل لتشغيله.",
+
     # -- Android Designer: AI chat widget --
     "+ AI Chat": "+ محادثة ذكاء",
     "Sample question": "سؤال تجريبي",
     "Sample AI answer": "رد تجريبي من الذكاء",
     "Type a message...": "اكتب رسالة...",
+    "Thinking...": "يفكّر...",
+    "Ask me anything -- I'm your local AI.": "اسألني أي شيء -- أنا الذكاء الاصطناعي المحلي الخاص بك.",
+    "The model returned no answer.": "لم يُرجع النموذج إجابة.",
+    "Model {model} isn't installed. Install it with: ollama pull {model}": (
+        "النموذج {model} غير مثبت. ثبّته بالأمر: ollama pull {model}"
+    ),
+    "Couldn't run the local model: HTTP {code}": "تعذر تشغيل النموذج المحلي: HTTP {code}",
+    "Couldn't connect to Ollama. Start Ollama and try again.": "تعذر الاتصال بـ Ollama. شغّل Ollama ثم حاول مجدداً.",
 }
