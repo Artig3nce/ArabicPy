@@ -286,10 +286,11 @@ def build_stylesheet(mode, glass_effects=True):
     QMenu::item:disabled {{ color: {p.text_dim}; }}
     QMenu::separator {{ height: 1px; background: {p.border}; margin: 4px 10px; }}
 
-    #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: 50%; padding: 0; font-weight: 600; font-size: 14px; min-width: 28px; min-height: 28px; }}
+    #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: 8px; padding: 0; font-weight: 600; font-size: 14px; min-width: 30px; min-height: 30px; max-width: 30px; max-height: 30px; }}
     #runButton:hover {{ background: {p.success_hover}; }}
-    #aiButton {{ background: {p.accent}; color: {p.text_on_accent}; border: none; border-radius: 50%; padding: 0; font-weight: 600; font-size: 14px; min-width: 28px; min-height: 28px; }}
+    #aiButton {{ background: {p.accent}; color: {p.text_on_accent}; border: none; border-radius: 50%; padding: 0; font-weight: 600; font-size: 14px; min-width: 30px; min-height: 30px; max-width: 30px; max-height: 30px; }}
     #aiButton:hover {{ background: {p.accent_hover}; }}
+    #aiButton:checked {{ background: {p.accent_pressed}; }}
     #aiButton:pressed {{ background: {p.accent_pressed}; }}
 
     #aiChatPanel {{ background: {ai_panel_bg}; border-left: 1px solid {p.border_glass}; }}
