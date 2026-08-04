@@ -122,10 +122,12 @@ TRANSLATIONS = {
     "Downloading model: %p%": "تنزيل النموذج: %p%",
     "Pause": "إيقاف",
     "Al-Baa Assistant is thinking": "مساعد الباء يفكر",
+    "{base} ({count} queued)": "{base} ({count} في الانتظار)",
     "Type your message...": "اكتب رسالتك هنا...",
     "Enter to send — Shift+Enter for a new line": "Enter للإرسال — Shift+Enter لسطر جديد",
     "Add a document to the RAG knowledge base": "إضافة مستند إلى معرفة RAG",
     "Send": "إرسال",
+    "Stop": "إيقاف",
     "☀ Theme": "☀ المظهر",
     "☾ Theme": "☾ المظهر",
 

@@ -23,7 +23,7 @@ from PySide6.QtCore import QEvent, QObject, QPointF, QProcess, QRectF, QSettings
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtGui import (
     QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QTextBlockFormat,
-    QTextCharFormat, QTextCursor, QTextFormat,
+    QTextCharFormat, QTextCursor, QTextDocument, QTextFormat,
 )
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from . import theme
 from .generator import Generator
 from .highlighter import ArabicPyHighlighter
 from .dart_highlighter import DartHighlighter
@@ -90,21 +91,19 @@ class NativeDialogThemeFilter(QObject):
 
     def style_dialog(self, dialog):
         apply_native_dark_title_bar(dialog, self.window.ide_dark)
-        if self.window.ide_dark:
-            normal, hover, pressed, text = "#007ACC", "#1594E8", "#005A9E", "#FFFFFF"
-        else:
-            normal, hover, pressed, text = "#007ACC", "#1594E8", "#005A9E", "#FFFFFF"
+        palette = theme.PALETTES.get(self.window.theme_mode, theme.PALETTES[theme.DARK])
+        theme.apply_elevation(dialog, palette, "lg", self.window.glass_effects)
         if not dialog.property("albaaDialogStyled"):
             dialog.setStyleSheet(
                 dialog.styleSheet()
                 + f"""
             QPushButton {{
-                background-color: {normal}; color: {text}; border: none;
+                background-color: {palette.accent}; color: {palette.text_on_accent}; border: none;
                 border-radius: 5px; padding: 7px 18px; min-width: 72px;
                 font-weight: 600;
             }}
-            QPushButton:hover {{ background-color: {hover}; }}
-            QPushButton:pressed {{ background-color: {pressed}; }}
+            QPushButton:hover {{ background-color: {palette.accent_hover}; }}
+            QPushButton:pressed {{ background-color: {palette.accent_pressed}; }}
             QPushButton:disabled {{ background-color: #4B5563; color: #CBD5E1; }}
             """
             )
@@ -137,13 +136,21 @@ class AIChatInput(QTextEdit):
 
 
 class SendIconButton(QPushButton):
-    """A crisp vector send arrow, unlike the ➤ glyph whose look depends on font fallback."""
+    """A crisp vector send arrow, unlike the ➤ glyph whose look depends on font fallback.
+    Swaps to a stop square (Copilot/ChatGPT-style) while a request is in flight."""
 
     def __init__(self, callback, parent=None):
         super().__init__(parent)
         self.setObjectName("aiSendButton")
         self.icon_color = QColor("#ffffff")
+        self.mode = "send"
         self.clicked.connect(callback)
+
+    def set_mode(self, mode):
+        """mode is "send" or "stop"."""
+        if self.mode != mode:
+            self.mode = mode
+            self.update()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -152,6 +159,12 @@ class SendIconButton(QPushButton):
         painter.setPen(Qt.NoPen)
         painter.setBrush(self.icon_color if self.isEnabled() else QColor(255, 255, 255, 110))
         center_x, center_y = self.width() / 2, self.height() / 2
+        if self.mode == "stop":
+            side = min(self.width(), self.height()) * 0.34
+            painter.drawRoundedRect(
+                QRectF(center_x - side / 2, center_y - side / 2, side, side), 2, 2
+            )
+            return
         size = min(self.width(), self.height()) * 0.26
         # A plain triangle instead of an arrow-with-stem: the stem shape had
         # most of its area low and narrow with a wide flared head up top,
@@ -362,7 +375,7 @@ class CodeEditor(QPlainTextEdit):
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.error_line = None
         self.current_line_color = "#2a2d2e"
-        self.gutter_background = "#1e1e1e"
+        self.gutter_background = theme.PALETTES[theme.DARK].surface
         self.gutter_current = "#c6c6c6"
         self.gutter_text = "#858585"
         self.blockCountChanged.connect(self.update_line_number_area_width)
@@ -455,7 +468,7 @@ class CodeEditor(QPlainTextEdit):
 
     def set_theme(self, dark):
         self.current_line_color = "#2a2d2e" if dark else "#e8f2fb"
-        self.gutter_background = "#1e1e1e" if dark else "#f3f6f9"
+        self.gutter_background = theme.PALETTES[theme.DARK if dark else theme.LIGHT].surface
         self.gutter_current = "#c6c6c6" if dark else "#1f2937"
         self.gutter_text = "#858585" if dark else "#64748b"
         self.highlight_current_line()
@@ -571,7 +584,7 @@ class WindowControlButton(QPushButton):
 
 
 class TitleBar(QWidget):
-    def __init__(self, parent):
+    def __init__(self, parent, menu_buttons=(), left_actions=(), right_actions=()):
         super().__init__(parent)
         self.parent = parent
         self.old_pos = None
@@ -584,18 +597,18 @@ class TitleBar(QWidget):
         logo = QLabel("ب")
         logo.setObjectName("titleLogo")
         logo.setAlignment(Qt.AlignCenter)
-        logo.setFixedSize(30, 26)
-        brand = QLabel("Al-Baa")
-        brand.setObjectName("brand")
-        separator = QLabel("|")
-        separator.setObjectName("titleSeparator")
-        document = QLabel(parent.t("Arabic Programming Language"))
-        document.setObjectName("titleDocument")
+        logo.setFixedSize(22, 20)
         layout.addWidget(logo)
-        layout.addWidget(brand)
-        layout.addWidget(separator)
-        layout.addWidget(document)
+        layout.addSpacing(10)
+        for button in menu_buttons:
+            layout.addWidget(button)
         layout.addStretch()
+        for widget in left_actions:
+            layout.addWidget(widget)
+        layout.addStretch()
+        for widget in right_actions:
+            layout.addWidget(widget)
+        layout.addSpacing(10)
         for control, action in (
             ("minimize", parent.showMinimized),
             ("maximize", parent.toggle_maximized),
@@ -682,7 +695,16 @@ class ArabicPyIDE(QMainWindow):
         self.remote_ai_url = str(settings.value("remote_ai_url", "") or "").rstrip("/")
         self.remote_ai_token = str(settings.value("remote_ai_token", "") or "")
         self.ai_model = str(settings.value("ai_model", DEFAULT_MODEL) or DEFAULT_MODEL).strip()
-        self.ide_dark = settings.value("ide_dark", settings.value("ai_chat_dark", True, type=bool), type=bool)
+        # theme_mode replaces the old ide_dark/ai_chat_dark booleans; migrate
+        # a prior install's dark/light choice into the new setting.
+        stored_mode = str(settings.value("ide_theme_mode", "") or "")
+        if stored_mode in theme.MODES:
+            self.theme_mode = stored_mode
+        else:
+            legacy_dark = settings.value("ide_dark", settings.value("ai_chat_dark", True, type=bool), type=bool)
+            self.theme_mode = theme.DARK if legacy_dark else theme.LIGHT
+        self.glass_effects = settings.value("ide_glass_effects", True, type=bool)
+        self.ide_dark = self.theme_mode != theme.LIGHT
         self.ai_chat_dark = self.ide_dark
         self.language = str(settings.value("ui_language", "") or "")
         if self.language not in LANGUAGE_NAMES:
@@ -715,8 +737,10 @@ class ArabicPyIDE(QMainWindow):
             self.setMaximumSize(active_screen.availableGeometry().size())
         self.native_dialog_theme_filter = NativeDialogThemeFilter(self)
         QApplication.instance().installEventFilter(self.native_dialog_theme_filter)
-        self.setStyleSheet(self.stylesheet(self.ide_dark))
+        self.setStyleSheet(self.stylesheet())
         self.setup_ui()
+        self.ai_messages = self.load_ai_history()
+        self.render_ai_messages()
         if os.name == "nt" and self.background_ai_is_running():
             self.ai_server_button.setText(self.t("Stop AI Network"))
         for editor in self.findChildren(CodeEditor):
@@ -724,6 +748,7 @@ class ArabicPyIDE(QMainWindow):
         for highlighter in self.findChildren(ArabicPyHighlighter):
             highlighter.set_theme(self.ide_dark)
         self.settings_button.set_dark_theme(self.ide_dark)
+        self.apply_elevation_effects()
 
     def show_fitted(self):
         """Open at a useful normal size while staying inside the desktop."""
@@ -755,171 +780,8 @@ class ArabicPyIDE(QMainWindow):
             text = TRANSLATIONS.get(text, text)
         return text.format(**kwargs) if kwargs else text
 
-    def stylesheet(self, dark=True):
-        base = """
-        QMainWindow, QWidget { background: #1e1e1e; color: #cccccc; font-family: 'Tahoma'; font-size: 13px; }
-        #titleBar { background: #181818; border-bottom: 1px solid #2b2b2b; }
-        #titleLogo { background: #007ACC; color: white; border-radius: 7px; font-weight: 800; font-size: 16px; }
-        #brand { color: #ffffff; font-weight: 600; font-size: 14px; }
-        #titleSeparator { color: #505050; padding: 0 2px; }
-        #titleDocument { color: #969696; }
-        #windowButton, #closeButton { border: none; border-radius: 0; background: transparent; color: #c8c8c8; font-size: 17px; }
-        #windowButton:hover { background: #333333; } #closeButton:hover { background: #c42b1c; color: white; }
-        #menuBar, #commandBar { background: #252526; border-bottom: 1px solid #333333; }
-        #menuItem { background: transparent; border: none; padding: 4px 10px; color: #d4d4d4; }
-        #menuItem:hover, #toolButton:hover, #themeButton:hover { background: #37373d; }
-        #toolButton, #themeButton { background: transparent; border: none; border-radius: 3px; padding: 6px 10px; color: #d4d4d4; }
-        QMenu { background: #252526; color: #cccccc; border: 1px solid #454545; border-radius: 6px; padding: 4px; }
-        QMenu::item { background: transparent; padding: 7px 28px 7px 14px; border-radius: 4px; margin: 1px 2px; }
-        QMenu::item:selected { background: #094771; color: #ffffff; }
-        QMenu::item:disabled { color: #6f6f6f; }
-        QMenu::separator { height: 1px; background: #454545; margin: 4px 10px; }
-        #runButton { background: #16825d; color: white; border: none; border-radius: 3px; padding: 6px 14px; font-weight: 600; }
-        #runButton:hover { background: #1a9b70; }
-        #aiButton { background: #007ACC; color: white; border: none; border-radius: 3px; padding: 6px 12px; font-weight: 600; }
-        #aiButton:hover { background: #1594E8; }
-        #aiChatPanel { background: #252526; border-left: 1px solid #333333; }
-        #aiChatHeader { background: #252526; border-bottom: 1px solid #333333; }
-        #aiChatAvatar { background: #007ACC; color: #ffffff; border-radius: 7px; font-size: 16px; font-weight: 800; }
-        #aiChatTitle { color: #ffffff; font-size: 14px; font-weight: 700; padding: 4px; }
-        #aiChatSubtitle { color: #9d9d9d; font-size: 10px; }
-        #aiChatHistory { background: #1e1e1e; border: 1px solid #333333; border-radius: 14px; color: #e0e0e0; padding: 5px; }
-        #aiComposer { background: #2d2d30; border: 1px solid #3c3c3c; border-radius: 18px; }
-        #aiChatInput { background: transparent; color: #e0e0e0; border: none; padding: 2px; }
-        #aiThinking { color: #9d9d9d; padding: 2px 8px; font-size: 11px; }
-        #aiAttachButton { background: transparent; color: #9d9d9d; border: 1px solid #3c3c3c; border-radius: 13px; font-size: 15px; font-weight: 700; padding: 0; outline: none; }
-        #aiAttachButton:hover, #aiAttachButton:pressed { background: #37373d; color: #ffffff; border: 1px solid #3c3c3c; outline: none; }
-        #aiAttachButton:focus { border: 1px solid #3c3c3c; outline: none; }
-        #aiSendButton { background: #007ACC; color: white; border: none; border-radius: 15px; font-size: 14px; font-weight: 700; outline: none; }
-        #aiSendButton:hover { background: #1594E8; }
-        #aiSendButton:pressed, #aiSendButton:focus { outline: none; }
-        #aiSendButton:disabled { background: #1c3a4d; }
-        #aiCloseButton { background: transparent; color: white; border: none; border-radius: 4px; font-size: 15px; padding: 5px 9px; }
-        #aiCloseButton:hover { background: rgba(255,255,255,35); }
-        #activityBar { background: #333333; min-width: 48px; max-width: 48px; }
-        #activityButton { background: transparent; color: #bdbdbd; border: none; border-radius: 0; font-size: 20px; padding: 11px; }
-        #activityButton:hover { background: #454545; color: white; } #activityButton:checked { border-left: 2px solid #007acc; color: white; }
-        #settingsButton { background:transparent; color:#ffffff; border:none; font-size:19px; padding:11px; }
-        #settingsButton:hover { background:#454545; }
-        #sideBar { background: #252526; } #panelTitle { color: #bbbbbb; font-size: 11px; font-weight: 600; padding: 12px 14px 5px; }
-        #fileList { background: #252526; border: none; outline: none; color: #cccccc; padding: 2px 6px; }
-        #fileList::item { padding: 6px 8px; border-radius: 3px; } #fileList::item:selected { background: #37373d; color: white; }
-        #newFilePanel { background: #252526; }
-        #languageCard { background: transparent; border: none; border-bottom: 1px solid #333333; }
-        #languageCard:hover { background: #2a2d2e; }
-        #languageCardTitle { color: #ffffff; font-weight: 600; font-size: 13px; background: transparent; }
-        #languageCardDescription { color: #9d9d9d; font-size: 11px; background: transparent; }
-        #tabBar { background: #252526; border-bottom: 1px solid #1e1e1e; } #activeTab { background: #1e1e1e; color: #ffffff; border-top: 1px solid #007acc; padding: 10px 16px; }
-        #pythonTabSpacer { background: #1e1e1e; border-bottom: 1px solid #1e1e1e; }
-        #codeEditor { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Segoe UI'; font-size: 15px; }
-        #codePaneTitle { background: #252526; color: #cccccc; border-bottom: 1px solid #333333; padding: 7px 12px; font-weight: 600; }
-        #findBar { background: #252526; border-bottom: 1px solid #333333; }
-        #findInput { background: #1e1e1e; color: #ffffff; border: 1px solid #555555; border-radius: 4px; padding: 5px 8px; selection-background-color: #007acc; }
-        #findInput:focus { border-color: #007acc; }
-        #findStatus { background: transparent; color: #aaaaaa; padding: 0 5px; }
-        #pythonPreview { background: #1e1e1e; color: #d4d4d4; border: none; selection-background-color: #264f78; font-family: 'Segoe UI'; font-size: 15px; }
-        #outputHeader { background: #252526; border-top: 1px solid #333333; }
-        #outputTabButton { background: transparent; border: none; border-bottom: 2px solid transparent; color: #9d9d9d; font-weight: 600; font-size: 11px; padding: 7px 12px; }
-        #outputTabButton:hover { color: #ffffff; }
-        #outputTabButton:checked { color: #ffffff; border-bottom: 2px solid #007acc; }
-        #output { background: #1e1e1e; color: #e0e0e0; border: none; font-family: 'Tahoma'; font-size: 14px; padding: 9px; }
-        #terminalPanel { background: #1e1e1e; }
-        #terminalOutput { background: #1e1e1e; color: #d4d4d4; border: none; padding: 9px; }
-        #terminalInputRow { background: #1e1e1e; }
-        #terminalPrompt { color: #4ec9b0; font-weight: 700; font-family: 'Consolas'; }
-        #terminalInput { background: transparent; color: #ffffff; border: none; padding: 4px 0; }
-        #statusBar { background: #007acc; color: white; } #statusLabel { background: transparent; color: white; padding: 3px 10px; font-size: 12px; }
-        #androidDesigner { background: #181818; }
-        #designerPanel { background: #252526; border: none; }
-        #designerTitle { color: #ffffff; font-weight: 600; padding: 8px; }
-        #designerTool { background: #333333; color: #eeeeee; border: 1px solid #444444; border-radius: 4px; padding: 8px; text-align: right; }
-        #designerTool:hover { background: #3f3f46; border-color: #007acc; }
-        #designerCanvas { background: #151515; border: none; }
-        #phoneFrame { background: #fafafa; border: 8px solid #333333; border-radius: 24px; }
-        #phoneTitle { background: #202124; color: white; padding: 10px; font-weight: 600; }
-        #phoneNavigation { background: #050505; border-top: 1px solid #2f3336; min-height: 48px; max-height: 48px; }
-        #phoneNavigationButton { background: transparent; color: #f2f2f2; border: none; padding: 6px 2px; font-size: 10px; }
-        #phoneNavigationButton:hover { background: #16181c; border-radius: 12px; }
-        #designerItem { background: transparent; border: 2px solid transparent; border-radius: 5px; }
-        #designerItem[selected="true"] { border-color: #007acc; background: #e8f2fb; }
-        #designerItem QLabel, #designerItem QLineEdit, #designerItem QPushButton { color: #202124; background: #ffffff; border: 1px solid #bdbdbd; border-radius: 4px; padding: 8px; }
-        #designerItem QPushButton { background: #1976d2; color: white; }
-        #designerDelete { background: #a1260d; color: white; border: none; border-radius: 4px; padding: 7px; }
-        QSplitter::handle { background: #333333; } QSplitter::handle:hover { background: #007acc; }
-        QTabWidget QTabBar { background: #252526; }
-        QTabWidget QTabBar::tab { background: #2d2d2d; color: #c8c8c8; border: none; border-top: 2px solid transparent; padding: 9px 18px; }
-        QTabWidget QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; border-top: 2px solid #007acc; }
-        QTabWidget QTabBar::tab:hover { background: #37373d; color: #ffffff; }
-        #tabCloseButton { background: transparent; color: #c8c8c8; border: none; border-radius: 3px; font-size: 16px; font-weight: 600; padding: 0; }
-        #tabCloseButton:hover { background: #c42b1c; color: #ffffff; }
-        #ragLibraryPage { background: #1e1e1e; }
-        #ragLibraryHeader { color: #ffffff; font-size: 15px; font-weight: 700; padding: 4px 2px; }
-        #ragLibraryCount { color: #9d9d9d; font-size: 12px; padding: 4px 2px; }
-        #ragLibraryList { background: #181818; border: 1px solid #333333; border-radius: 8px; outline: none; color: #e0e0e0; padding: 4px; }
-        #ragLibraryList::item { padding: 10px; border-radius: 6px; margin: 2px 0; }
-        #ragLibraryList::item:selected { background: #264f78; color: #ffffff; }
-        #ragLibraryList::item:hover { background: #2a2d2e; }
-        #ragLibraryEmpty { color: #9d9d9d; font-size: 13px; }
-        #ragRemoveButton { background: transparent; color: #f2b8b5; border: 1px solid #4d3330; border-radius: 4px; padding: 6px 12px; }
-        #ragRemoveButton:hover { background: #4d1f1a; color: #ffffff; border-color: #a1260d; }
-        #ragRemoveButton:disabled { color: #5c4a48; border-color: #333333; }
-        """
-        if dark:
-            return base
-        return base + """
-        QMainWindow, QWidget { background:#f5f7fa; color:#1f2937; }
-        #titleBar { background:#ffffff; border-bottom:1px solid #d7dde5; }
-        #brand { color:#111827; } #titleSeparator { color:#9ca3af; } #titleDocument { color:#667085; }
-        #windowButton { color:#374151; } #windowButton:hover { background:#e5e7eb; }
-        #closeButton { color:#111827; } #closeButton:hover { background:#c42b1c; color:#ffffff; }
-        #menuBar, #commandBar { background:#ffffff; border-bottom:1px solid #d7dde5; }
-        #menuItem, #toolButton, #themeButton { background:transparent; color:#27364a; }
-        #menuItem:hover, #toolButton:hover, #themeButton:hover { background:#e8eef5; }
-        #activityBar { background:#eef2f6; } #activityButton { color:#536273; }
-        #activityButton:hover { background:#dde5ee; color:#111827; }
-        #settingsButton { background:transparent; color:#000000; border:none; }
-        #settingsButton:hover { background:#dde5ee; color:#000000; }
-        #sideBar, #fileList { background:#f3f6f9; color:#263445; }
-        #panelTitle { color:#526173; } #fileList::item:selected { background:#dce8f5; color:#111827; }
-        #newFilePanel { background:#f3f6f9; }
-        #languageCard { border-bottom:1px solid #d7dde5; }
-        #languageCard:hover { background:#e8eef5; }
-        #languageCardTitle { color:#111827; }
-        #languageCardDescription { color:#667085; }
-        #tabBar, QTabWidget QTabBar { background:#edf1f5; border-bottom:1px solid #d7dde5; }
-        #activeTab, QTabWidget QTabBar::tab:selected { background:#ffffff; color:#111827; border-top-color:#007acc; }
-        QTabWidget QTabBar::tab { background:#e9eef3; color:#526173; }
-        QTabWidget QTabBar::tab:hover { background:#dce5ee; color:#111827; }
-        #pythonTabSpacer, #codeEditor, #pythonPreview, #output { background:#ffffff; color:#1f2937; }
-        #codeEditor, #pythonPreview { selection-background-color:#b9dcf5; }
-        #codePaneTitle, #outputHeader { background:#f3f6f9; color:#334155; border-color:#d7dde5; }
-        #outputTabButton { color:#667085; }
-        #outputTabButton:hover { color:#111827; }
-        #outputTabButton:checked { color:#111827; }
-        #findBar { background:#f3f6f9; border-bottom:1px solid #d7dde5; }
-        #findInput { background:#ffffff; color:#111827; border:1px solid #aeb8c4; selection-background-color:#007acc; selection-color:#ffffff; }
-        #findStatus { color:#667085; }
-        QSplitter::handle { background:#d7dde5; }
-        #androidDesigner, #designerCanvas { background:#e8edf2; }
-        #designerPanel { background:#f3f6f9; } #designerTitle { color:#111827; }
-        #designerTool { background:#ffffff; color:#27364a; border-color:#cbd5e1; }
-        #designerTool:hover { background:#e8f2fb; border-color:#007acc; }
-        #tabCloseButton { color:#526173; }
-        QMenu { background:#ffffff; color:#1f2937; border:1px solid #d7dde5; border-radius:6px; padding:4px; }
-        QMenu::item { padding:7px 28px 7px 14px; border-radius:4px; margin:1px 2px; }
-        QMenu::item:selected { background:#dceeff; color:#111827; }
-        QMenu::separator { height:1px; background:#e5e9ef; margin:4px 10px; }
-        #ragLibraryPage { background:#ffffff; }
-        #ragLibraryHeader { color:#111827; }
-        #ragLibraryCount { color:#667085; }
-        #ragLibraryList { background:#f8fafc; border:1px solid #d7dde5; color:#1f2937; }
-        #ragLibraryList::item:selected { background:#dce8f5; color:#111827; }
-        #ragLibraryList::item:hover { background:#eef2f6; }
-        #ragLibraryEmpty { color:#667085; }
-        #ragRemoveButton { color:#a1260d; border:1px solid #f0c6bd; }
-        #ragRemoveButton:hover { background:#fbe3df; color:#7c1d0a; border-color:#a1260d; }
-        #ragRemoveButton:disabled { color:#c9a9a3; border-color:#e5e7eb; }
-        """
+    def stylesheet(self):
+        return theme.build_stylesheet(self.theme_mode, self.glass_effects)
 
     def make_button(self, text, callback, name="toolButton"):
         button = QPushButton(self.t(text))
@@ -939,82 +801,95 @@ class ArabicPyIDE(QMainWindow):
         button.setMenu(menu)
         return button
 
+    def make_toolbar_menu(self, text):
+        """A toolbar dropdown button that groups several related actions behind one menu."""
+        button = QPushButton(self.t(text))
+        button.setObjectName("toolButton")
+        button.setLayoutDirection(self.direction)
+        menu = QMenu(button)
+        menu.setLayoutDirection(self.direction)
+        button.setMenu(menu)
+        return button, menu
+
+    def make_menu(self, text, actions):
+        """A standalone QMenu (no button of its own) meant to be embedded as a submenu."""
+        menu = QMenu(self.t(text))
+        menu.setLayoutDirection(self.direction)
+        for label, callback in actions:
+            menu.addAction(self.t(label), callback)
+        return menu
+
     def setup_ui(self):
-        root = QWidget()
+        root = QWidget(objectName="appCanvas")
         layout = QVBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(TitleBar(self))
 
-        menu_bar = QWidget(objectName="menuBar")
-        menu_layout = QHBoxLayout(menu_bar)
-        menu_layout.setDirection(self.box_direction)
-        menu_layout.setContentsMargins(8, 1, 8, 1)
-        menu_layout.addWidget(self.make_menu_button("File", [
-            ("New File", self.new_file), ("New Flutter File", self.new_flutter_file),
-            ("New Python File", self.new_python_file),
-            ("Open File...", self.open_file),
-            ("Save", self.save_file), ("Refresh Explorer", self.refresh_file_list),
-            ("New Android Project", self.new_android_file),
-            ("Export Cross-Platform Project...", self.export_cross_platform),
-        ]))
-        menu_layout.addWidget(self.make_menu_button("Edit", [
-            ("Undo", lambda: self.editor.undo()), ("Redo", lambda: self.editor.redo()),
-            ("Cut", lambda: self.editor.cut()), ("Copy", lambda: self.editor.copy()),
-            ("Paste", lambda: self.editor.paste()),
-        ]))
-        menu_layout.addWidget(self.make_menu_button("Select", [
-            ("Select All", lambda: self.editor.selectAll()),
-            ("Find...", self.find_text),
-        ]))
-        menu_layout.addWidget(self.make_menu_button("View", [
-            ("Toggle Explorer", self.toggle_sidebar),
-            ("Toggle Output", self.toggle_output),
-            ("Toggle Python Code", self.toggle_python_preview),
-        ]))
-        menu_layout.addWidget(self.make_menu_button("Run", [
-            ("Run Program", self.run_code), ("Clear Output", self.clear_output),
-        ]))
-        menu_layout.addWidget(self.make_menu_button("Android", [
+        view_button, view_menu = self.make_toolbar_menu("View")
+        view_button.setObjectName("menuItem")
+        view_menu.addAction(self.t("Toggle Explorer"), self.toggle_sidebar)
+        view_menu.addAction(self.t("Toggle Output"), self.toggle_output)
+        python_toggle_arrow = "◀" if self.rtl else "▶"
+        self.python_toggle_button = view_menu.addAction(f"{python_toggle_arrow} {self.t('Toggle Python Code')}", self.toggle_python_preview)
+        self.python_toggle_button.setToolTip(self.t("Show Python Code"))
+        view_menu.addSeparator()
+        self.theme_button = view_menu.addAction(self.t("☀ Theme"), self.cycle_theme)
+        self.theme_button.setToolTip(self.t("Toggle Al-Baa's theme: Dark or Light"))
+        self.effects_button = view_menu.addAction(self.t("◈ Effects: On"), self.toggle_glass_effects)
+        self.effects_button.setCheckable(True)
+        self.effects_button.setChecked(self.glass_effects)
+        self.effects_button.setText(self.t("◈ Effects: On") if self.glass_effects else self.t("◇ Effects: Off"))
+        self.effects_button.setToolTip(self.t("Toggle glass translucency and shadows (off = flat colors, better performance)"))
+
+        ai_menu = QMenu(self.t("AI"))
+        ai_menu.setLayoutDirection(self.direction)
+        self.ai_server_button = ai_menu.addAction(self.t("AI Network"), self.toggle_ai_server)
+        self.remote_ai_button = ai_menu.addAction(self.t("Remote AI"), self.configure_remote_ai)
+        self.remote_ai_button.setToolTip(self.t("Use an Al-Baa model running on another computer"))
+        if self.remote_ai_url:
+            self.remote_ai_button.setText(self.t("Remote AI ✓"))
+        self.rag_button = ai_menu.addAction(self.t("RAG Documents"), self.add_rag_documents)
+        ai_menu.addSeparator()
+        ai_menu.addAction(self.t("Clear Chat History"), self.clear_ai_history)
+
+        build_menu = QMenu(self.t("Build"))
+        build_menu.setLayoutDirection(self.direction)
+        self.package_button = build_menu.addAction(self.t("▣ Cross-Platform Bundle"), self.export_cross_platform)
+        self.package_button.setToolTip(self.t("Generate a project for Browser, Windows, Linux, macOS, Android, and iOS"))
+        self.apk_tools_button = build_menu.addAction(self.t("↓ Install APK Tools"), self.install_apk_tools)
+        self.apk_tools_button.setToolTip(self.t("Install the local Android APK build requirements"))
+        self.apk_button = build_menu.addAction(self.t("▣ Build APK"), self.build_android_apk)
+        self.apk_button.setToolTip(self.t("Export the Android project and build a debug APK"))
+
+        android_menu = self.make_menu("Android", [
             ("New Android Project", self.new_android_file),
             ("Export Android Project...", self.export_android),
             ("Install APK Tools", self.install_apk_tools),
             ("Build APK", self.build_android_apk),
-        ]))
-        menu_layout.addWidget(self.make_menu_button("Help", [
+        ])
+        help_menu = self.make_menu("Help", [
             ("About Al-Baa", self.show_about),
-        ]))
-        menu_layout.addStretch()
-        layout.addWidget(menu_bar)
+        ])
+        overflow_button, overflow_menu = self.make_toolbar_menu("…")
+        overflow_button.setObjectName("menuItem")
+        overflow_button.setToolTip(self.t("Android, AI, Build, Help"))
+        overflow_menu.addMenu(android_menu)
+        overflow_menu.addMenu(ai_menu)
+        overflow_menu.addMenu(build_menu)
+        overflow_menu.addMenu(help_menu)
 
-        command_bar = QWidget(objectName="commandBar")
-        command_layout = QHBoxLayout(command_bar)
-        command_layout.setDirection(self.box_direction)
-        command_layout.setContentsMargins(10, 4, 10, 4)
-        command_layout.setSpacing(4)
-        command_layout.addWidget(self.make_button("＋ New", self.new_file))
-        command_layout.addWidget(self.make_button("Open", self.open_file))
-        command_layout.addWidget(self.make_button("Save", self.save_file))
-        self.undo_button = self.make_button("↶ Undo", lambda: self.editor.undo())
+        edit_button, edit_menu = self.make_toolbar_menu("Edit")
+        edit_button.setObjectName("menuItem")
+        self.undo_button = edit_menu.addAction(self.t("Undo"), lambda: self.editor.undo())
         self.undo_button.setToolTip(self.t("Undo (Ctrl+Z)"))
         self.undo_button.setEnabled(False)
-        command_layout.addWidget(self.undo_button)
-        self.redo_button = self.make_button("↷ Redo", lambda: self.editor.redo())
+        self.redo_button = edit_menu.addAction(self.t("Redo"), lambda: self.editor.redo())
         self.redo_button.setToolTip(self.t("Redo (Ctrl+Y or Ctrl+Shift+Z)"))
         self.redo_button.setEnabled(False)
-        command_layout.addWidget(self.redo_button)
-        command_layout.addWidget(self.make_button("⌕ Find", self.find_text))
-        self.ai_button = self.make_button("✦ AI Assistant", self.ask_local_ai, "aiButton")
-        self.ai_button.setCheckable(True)
-        self.ai_server_button = self.make_button("AI Network", self.toggle_ai_server)
-        command_layout.addWidget(self.ai_server_button)
-        self.remote_ai_button = self.make_button("Remote AI", self.configure_remote_ai)
-        self.remote_ai_button.setToolTip(self.t("Use an Al-Baa model running on another computer"))
-        if self.remote_ai_url:
-            self.remote_ai_button.setText(self.t("Remote AI ✓"))
-        command_layout.addWidget(self.remote_ai_button)
-        self.rag_button = self.make_button("RAG Documents", self.add_rag_documents)
-        command_layout.addWidget(self.rag_button)
+        edit_menu.addAction(self.t("Cut"), lambda: self.editor.cut())
+        edit_menu.addAction(self.t("Copy"), lambda: self.editor.copy())
+        edit_menu.addAction(self.t("Paste"), lambda: self.editor.paste())
+
         self.rag_progress = QProgressBar(objectName="ragProgress")
         self.rag_progress.setRange(0, 100)
         self.rag_progress.setValue(0)
@@ -1022,12 +897,6 @@ class ArabicPyIDE(QMainWindow):
         self.rag_progress.setFixedHeight(20)
         self.rag_progress.setTextVisible(True)
         self.rag_progress.hide()
-        command_layout.addWidget(self.rag_progress)
-        self.python_toggle_button = self.make_button("◀" if self.rtl else "▶", self.toggle_python_preview)
-        self.python_toggle_button.setFixedWidth(34)
-        self.python_toggle_button.setToolTip(self.t("Show Python Code"))
-        command_layout.addWidget(self.python_toggle_button)
-        command_layout.addStretch()
         self.apk_progress = QProgressBar()
         self.apk_progress.setRange(0, 0)
         self.apk_progress.setFixedWidth(150)
@@ -1035,25 +904,42 @@ class ArabicPyIDE(QMainWindow):
         self.apk_progress.setFormat("%p%")
         self.apk_progress.setTextVisible(False)
         self.apk_progress.hide()
-        command_layout.addWidget(self.apk_progress)
-        self.theme_button = self.make_button("☀ Theme", self.toggle_ide_theme, "themeButton")
-        self.theme_button.setToolTip(self.t("Toggle Al-Baa's overall theme"))
-        command_layout.addWidget(self.theme_button)
-        self.package_button = self.make_button("▣ Cross-Platform Bundle", self.export_cross_platform)
-        self.package_button.setToolTip(self.t("Generate a project for Browser, Windows, Linux, macOS, Android, and iOS"))
-        command_layout.addWidget(self.package_button)
-        self.apk_tools_button = self.make_button("↓ Install APK Tools", self.install_apk_tools)
-        self.apk_tools_button.setToolTip(self.t("Install the local Android APK build requirements"))
-        command_layout.addWidget(self.apk_tools_button)
-        self.apk_button = self.make_button("▣ Build APK", self.build_android_apk)
-        self.apk_button.setToolTip(self.t("Export the Android project and build a debug APK"))
-        command_layout.addWidget(self.apk_button)
         self.designer_button = self.make_button("Designer", self.toggle_android_designer)
-        command_layout.addWidget(self.designer_button)
-        command_layout.addWidget(self.ai_button)
+        self.ai_button = self.make_button("✦ AI Assistant", self.ask_local_ai, "aiButton")
+        self.ai_button.setCheckable(True)
         self.run_button = self.make_button("▶ Run", self.run_code, "runButton")
-        command_layout.addWidget(self.run_button)
-        layout.addWidget(command_bar)
+
+        self.title_search_box = QLineEdit(objectName="titleSearchBox")
+        self.title_search_box.setPlaceholderText(self.t("⌕  Search"))
+        self.title_search_box.setMinimumWidth(180)
+        self.title_search_box.setMaximumWidth(420)
+        self.title_search_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.title_search_box.returnPressed.connect(self.search_from_title_bar)
+
+        menu_buttons = [
+            self.make_menu_button("File", [
+                ("New File", self.new_file), ("New Flutter File", self.new_flutter_file),
+                ("New Python File", self.new_python_file),
+                ("Open File...", self.open_file),
+                ("Save", self.save_file), ("Refresh Explorer", self.refresh_file_list),
+                ("New Android Project", self.new_android_file),
+                ("Export Cross-Platform Project...", self.export_cross_platform),
+            ]),
+            edit_button,
+            self.make_menu_button("Select", [
+                ("Select All", lambda: self.editor.selectAll()),
+                ("Find...", self.find_text),
+            ]),
+            view_button,
+            self.make_menu_button("Run", [
+                ("Run Program", self.run_code), ("Clear Output", self.clear_output),
+            ]),
+            overflow_button,
+        ]
+
+        left_actions = [self.rag_progress, self.title_search_box]
+        right_actions = [self.apk_progress, self.designer_button, self.ai_button, self.run_button]
+        layout.addWidget(TitleBar(self, menu_buttons, left_actions, right_actions))
 
         workspace = QHBoxLayout()
         workspace.setDirection(self.box_direction)
@@ -1085,6 +971,7 @@ class ArabicPyIDE(QMainWindow):
         workspace.addWidget(activity)
 
         editor_splitter = QSplitter(Qt.Horizontal)
+        self.editor_splitter = editor_splitter
         editor_splitter.setLayoutDirection(self.direction)
         sidebar = QWidget(objectName="sideBar")
         sidebar.setLayoutDirection(self.direction)
@@ -1124,7 +1011,7 @@ class ArabicPyIDE(QMainWindow):
         self.tab_widget.currentChanged.connect(self.switch_tab)
         self.tab_widget.tabBarDoubleClicked.connect(self.rename_tab)
         add_tab = self.make_button("+", self.new_file)
-        add_tab.setFixedWidth(30)
+        add_tab.setFixedWidth(24)
         self.tab_widget.setCornerWidget(add_tab, Qt.TopLeftCorner)
 
         code_splitter = QSplitter(Qt.Horizontal)
@@ -1134,9 +1021,6 @@ class ArabicPyIDE(QMainWindow):
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.setSpacing(0)
-        source_title = QLabel(self.t("Al-Baa — Arabic Code"), objectName="codePaneTitle")
-        source_title.setAlignment((Qt.AlignRight if self.rtl else Qt.AlignLeft) | Qt.AlignVCenter)
-        source_layout.addWidget(source_title)
         self.find_bar = QWidget(objectName="findBar")
         find_layout = QHBoxLayout(self.find_bar)
         find_layout.setDirection(self.box_direction)
@@ -1275,16 +1159,17 @@ class ArabicPyIDE(QMainWindow):
         workspace.addWidget(main_splitter)
 
         self.ai_chat_panel = QWidget(objectName="aiChatPanel")
-        self.ai_chat_panel.setFixedWidth(360)
+        self.ai_chat_panel.setFixedWidth(300)
         chat_layout = QVBoxLayout(self.ai_chat_panel)
         chat_layout.setContentsMargins(10, 8, 10, 10)
         chat_layout.setSpacing(8)
         self.ai_chat_header = QWidget(objectName="aiChatHeader")
         chat_header = QHBoxLayout(self.ai_chat_header)
-        chat_header.setContentsMargins(8, 7, 8, 7)
+        chat_header.setContentsMargins(8, 5, 8, 5)
+        chat_header.setSpacing(6)
         self.ai_chat_avatar = QLabel("B", objectName="aiChatAvatar")
         self.ai_chat_avatar.setAlignment(Qt.AlignCenter)
-        self.ai_chat_avatar.setFixedSize(30, 26)
+        self.ai_chat_avatar.setFixedSize(24, 22)
         chat_header.addWidget(self.ai_chat_avatar)
         title_box = QVBoxLayout()
         title_box.setSpacing(0)
@@ -1295,7 +1180,7 @@ class ArabicPyIDE(QMainWindow):
         chat_header.addLayout(title_box)
         chat_header.addStretch()
         close_chat = self.make_button("×", self.toggle_ai_chat, "aiCloseButton")
-        close_chat.setFixedSize(28, 28)
+        close_chat.setFixedSize(22, 22)
         chat_header.addWidget(close_chat)
         chat_layout.addWidget(self.ai_chat_header)
         model_row = QHBoxLayout()
@@ -1379,7 +1264,7 @@ class ArabicPyIDE(QMainWindow):
         self.ai_attach_button.setFocusPolicy(Qt.NoFocus)
         composer_icon_row.addWidget(self.ai_attach_button)
         composer_icon_row.addStretch(1)
-        self.ai_send_button = SendIconButton(self.send_ai_message)
+        self.ai_send_button = SendIconButton(self.on_ai_composer_button)
         self.ai_send_button.setToolTip(self.t("Send"))
         self.ai_send_button.setFixedSize(30, 30)
         self.ai_send_button.setFocusPolicy(Qt.NoFocus)
@@ -1411,7 +1296,10 @@ class ArabicPyIDE(QMainWindow):
         self.apk_install_stage = None
         self.python_run_process = None
         self.terminal_process = None
+        self.terminal_stdout_buffer = ""
         self.ai_process = None
+        self.ai_message_queue = []
+        self.ai_stopped_by_user = False
         self.embedded_ai_process = None
         self.pending_ai_payload = None
         self.pending_ai_engine = None
@@ -1479,6 +1367,7 @@ class ArabicPyIDE(QMainWindow):
             self.update_undo_redo_buttons()
             self.update_position()
             self.update_python_preview()
+            theme.fade_in(self.editor, duration=120)
             if self.android_designer.isVisible():
                 if is_android_source(self.editor.toPlainText()):
                     self.android_designer.load_source(self.editor.toPlainText())
@@ -1616,7 +1505,7 @@ class ArabicPyIDE(QMainWindow):
     def add_tab_close_button(self, index, editor):
         close_button = QPushButton("×")
         close_button.setObjectName("tabCloseButton")
-        close_button.setFixedSize(20, 20)
+        close_button.setFixedSize(16, 16)
         close_button.setToolTip(self.t("Close"))
         close_button.clicked.connect(
             lambda: self.close_tab(self.tab_widget.indexOf(editor))
@@ -1808,7 +1697,9 @@ class ArabicPyIDE(QMainWindow):
         input_layout = QHBoxLayout(input_row)
         input_layout.setContentsMargins(8, 4, 8, 6)
         input_layout.setSpacing(6)
-        input_layout.addWidget(QLabel("PS>", objectName="terminalPrompt"))
+        self.terminal_prompt = QLabel(f"PS {os.getcwd()}>", objectName="terminalPrompt")
+        self.terminal_prompt.setToolTip("PowerShell — طرفية أوامر Windows")
+        input_layout.addWidget(self.terminal_prompt)
         self.terminal_input = TerminalInput()
         self.terminal_input.setObjectName("terminalInput")
         self.terminal_input.setLayoutDirection(Qt.LeftToRight)
@@ -1824,10 +1715,14 @@ class ArabicPyIDE(QMainWindow):
         process = QProcess(self)
         self.terminal_process = process
         process.setProgram("powershell.exe")
-        process.setArguments(["-NoLogo", "-NoProfile"])
+        process.setArguments([
+            "-NoLogo", "-NoProfile", "-NoExit", "-Command", "-",
+        ])
         source_path = getattr(self.editor, "file_path", None)
         working_directory = os.path.dirname(source_path) if source_path else os.getcwd()
         process.setWorkingDirectory(working_directory)
+        self.terminal_prompt.setText(f"PS {working_directory}>")
+        self.terminal_stdout_buffer = ""
         process.readyReadStandardOutput.connect(self.read_terminal_stdout)
         process.readyReadStandardError.connect(self.read_terminal_stderr)
         process.finished.connect(self.terminal_process_finished)
@@ -1849,7 +1744,27 @@ class ArabicPyIDE(QMainWindow):
             return
         data = bytes(process.readAllStandardOutput())
         if data:
-            self.append_terminal_text(data.decode("utf-8", errors="replace"), "#d4d4d4")
+            text = self.terminal_stdout_buffer + data.decode("utf-8", errors="replace")
+            lines = text.splitlines(keepends=True)
+            if lines and not lines[-1].endswith(("\n", "\r")):
+                self.terminal_stdout_buffer = lines.pop()
+            else:
+                self.terminal_stdout_buffer = ""
+            visible = []
+            for line in lines:
+                marker = "__ALBAA_CWD__"
+                if marker in line:
+                    path = line.split(marker, 1)[1].strip()
+                    if path:
+                        self.terminal_prompt.setText(f"PS {path}>")
+                    continue
+                # PowerShell's stdin mode can emit continuation glyphs even
+                # though Al-Baa supplies its own visible prompt.
+                if re.fullmatch(r"[\s>;]+", line):
+                    continue
+                visible.append(line)
+            if visible:
+                self.append_terminal_text("".join(visible), "#d4d4d4")
 
     def read_terminal_stderr(self):
         process = self.terminal_process
@@ -1876,14 +1791,18 @@ class ArabicPyIDE(QMainWindow):
         self.ensure_terminal_process()
         if self.terminal_process is None:
             return
-        self.append_terminal_text("PS> " + command + "\n", "#4ec9b0")
-        self.terminal_process.write((command + "\r\n").encode("utf-8"))
+        self.append_terminal_text(self.terminal_prompt.text() + " " + command + "\n", "#4ec9b0")
+        shell_input = (
+            command + "\r\n"
+            "Write-Output (\"__ALBAA_CWD__\" + (Get-Location).Path)\r\n"
+        )
+        self.terminal_process.write(shell_input.encode("utf-8"))
 
     def toggle_sidebar(self):
-        self.sidebar.setVisible(not self.sidebar.isVisible())
-
-    def toggle_sidebar(self):
-        self.sidebar.setVisible(not self.sidebar.isVisible())
+        opening = not self.sidebar.isVisible()
+        target = 245 if opening else 0  # matches the initial editor_splitter.setSizes([245, ...])
+        on_finished = (lambda: theme.fade_in(self.sidebar)) if opening else None
+        theme.animate_panel(self.sidebar, target, splitter=self.editor_splitter, on_finished=on_finished)
 
     def toggle_output(self):
         output_widget = self.main_splitter.widget(1)
@@ -1896,13 +1815,14 @@ class ArabicPyIDE(QMainWindow):
         # which flips with UI direction -- so the collapse/expand arrows must
         # flip too, always pointing toward where the hidden panel will appear.
         collapse_arrow, expand_arrow = ("▶", "◀") if self.rtl else ("◀", "▶")
+        label = self.t("Toggle Python Code")
         if visible:
             self.code_splitter.setSizes([700, 700])
-            self.python_toggle_button.setText(collapse_arrow)
+            self.python_toggle_button.setText(f"{collapse_arrow} {label}")
             self.python_toggle_button.setToolTip(self.t("Hide Python Code"))
             QTimer.singleShot(0, self.align_code_pane_headers)
         else:
-            self.python_toggle_button.setText(expand_arrow)
+            self.python_toggle_button.setText(f"{expand_arrow} {label}")
             self.python_toggle_button.setToolTip(self.t("Show Python Code"))
 
     def set_active_activity(self, active_button):
@@ -2160,25 +2080,48 @@ class ArabicPyIDE(QMainWindow):
 
     def toggle_ai_chat(self, _checked=False, show=None):
         visible = not self.ai_chat_panel.isVisible() if show is None else show
-        self.ai_chat_panel.setVisible(visible)
         self.ai_button.setChecked(visible)
-        if visible:
+        target = 300 if visible else 0  # matches ai_chat_panel's fixed width when open
+
+        def _on_opened():
+            theme.fade_in(self.ai_chat_panel)
             self.ai_chat_input.setFocus()
 
-    def toggle_ide_theme(self, _checked=False):
-        self.ide_dark = not self.ide_dark
+        theme.animate_panel(self.ai_chat_panel, target, on_finished=_on_opened if visible else None)
+
+    def cycle_theme(self, _checked=False):
+        """Toggle between Al-Baa's Dark and Light themes."""
+        next_mode = {theme.DARK: theme.LIGHT, theme.LIGHT: theme.DARK}
+        self.theme_mode = next_mode[self.theme_mode]
+        self.ide_dark = self.theme_mode != theme.LIGHT
         self.ai_chat_dark = self.ide_dark
         settings = QSettings("AlBaa", "AlBaaIDE")
-        settings.setValue("ide_dark", self.ide_dark)
-        settings.setValue("ai_chat_dark", self.ide_dark)
-        self.setStyleSheet(self.stylesheet(self.ide_dark))
+        settings.setValue("ide_theme_mode", self.theme_mode)
+        self.setStyleSheet(self.stylesheet())
         for editor in self.findChildren(CodeEditor):
             editor.set_theme(self.ide_dark)
         for highlighter in self.findChildren(ArabicPyHighlighter):
             highlighter.set_theme(self.ide_dark)
         self.settings_button.set_dark_theme(self.ide_dark)
         self.apply_ai_chat_theme()
+        self.apply_elevation_effects()
         self.render_ai_messages()
+
+    def toggle_glass_effects(self, _checked=False):
+        """Let glass translucency/shadows be switched off for performance, in any theme."""
+        self.glass_effects = not self.glass_effects
+        QSettings("AlBaa", "AlBaaIDE").setValue("ide_glass_effects", self.glass_effects)
+        self.effects_button.setChecked(self.glass_effects)
+        self.effects_button.setText(self.t("◈ Effects: On") if self.glass_effects else self.t("◇ Effects: Off"))
+        self.setStyleSheet(self.stylesheet())
+        self.apply_ai_chat_theme()
+        self.apply_elevation_effects()
+
+    def apply_elevation_effects(self):
+        """(Re)apply the soft depth shadows used on the sidebar, AI panel, and dialogs."""
+        palette = theme.PALETTES[self.theme_mode]
+        theme.apply_elevation(self.sidebar, palette, "md", self.glass_effects)
+        theme.apply_elevation(self.ai_chat_panel, palette, "md", self.glass_effects)
 
     def change_language(self):
         """Let the user switch the IDE's language; applying it needs a restart."""
@@ -2202,55 +2145,55 @@ class ArabicPyIDE(QMainWindow):
         if getattr(sys, "frozen", False):
             QProcess.startDetached(sys.executable, [])
         else:
-            QProcess.startDetached(sys.executable, sys.argv)
+            # sys.argv[0] under `-m` is the resolved absolute path to this
+            # file, not "-m arabicpy.ide" -- relaunching with sys.argv as-is
+            # runs ide.py as a bare script, which crashes instantly on its
+            # relative imports ("from . import theme") and never reopens.
+            QProcess.startDetached(sys.executable, ["-m", "arabicpy.ide"] + sys.argv[1:])
         self.close()
 
-    def toggle_ai_chat_theme(self, _checked=False):
-        """Compatibility alias: themes now apply to the entire IDE."""
-        self.toggle_ide_theme()
-
     def apply_ai_chat_theme(self):
-        if self.ai_chat_dark:
-            panel, history, composer, text, border, muted = (
-                "#252526", "#1e1e1e", "#2d2d30", "#e0e0e0", "#333333", "#9d9d9d"
-            )
-            self.theme_button.setText(self.t("☀ Theme"))
-        else:
-            panel, history, composer, text, border, muted = (
-                "#f3f6f9", "#ffffff", "#ffffff", "#1f2937", "#d7dde5", "#667085"
-            )
-            self.theme_button.setText(self.t("☾ Theme"))
-        card = "#2d2d30" if self.ai_chat_dark else "#ffffff"
+        p = theme.PALETTES[self.theme_mode]
+        theme_labels = {theme.DARK: "☀ Theme", theme.LIGHT: "☾ Theme"}
+        self.theme_button.setText(self.t(theme_labels[self.theme_mode]))
+
+        panel = theme.glass_fill(p, self.glass_effects)
+        header = theme.glass_fill(p, self.glass_effects, strong=True)
+        history = theme.glass_fill(p, self.glass_effects)
+        composer = theme.glass_fill(p, self.glass_effects, strong=True)
+        border = p.border_glass
+        text, muted = p.text, p.text_muted
+        hover = p.border_glass if self.glass_effects else p.border
+
         self.ai_chat_panel.setStyleSheet(f"#aiChatPanel {{ background:{panel}; border-left:1px solid {border}; }}")
         self.ai_chat_history.setStyleSheet(
             f"#aiChatHistory {{ background:{history}; border:1px solid {border}; border-radius:14px; }}"
         )
-        self.ai_chat_content.setStyleSheet(f"#aiChatContent {{ background:{history}; }}")
+        self.ai_chat_content.setStyleSheet("#aiChatContent { background: transparent; }")
         self.ai_composer.setStyleSheet(
-            f"#aiComposer {{ background:{card}; border:1px solid {border}; border-radius:18px; }}"
+            f"#aiComposer {{ background:{composer}; border:1px solid {border}; border-radius:18px; }}"
         )
         self.ai_chat_header.setStyleSheet(
-            f"#aiChatHeader {{ background:{panel}; border-bottom:1px solid {border}; border-radius:0; }}"
+            f"#aiChatHeader {{ background:{header}; border-bottom:1px solid {border}; border-radius:0; }}"
         )
         self.ai_chat_avatar.setStyleSheet(
-            "#aiChatAvatar { background:#007ACC; color:white; border-radius:7px; font-size:16px; font-weight:800; }"
+            f"#aiChatAvatar {{ background:{p.accent}; color:{p.text_on_accent}; border-radius:6px; font-size:13px; font-weight:800; }}"
         )
         self.ai_model_label.setStyleSheet(f"background:transparent; color:{muted}; border:none; font-size:11px;")
-        popup_hover = "#37373d" if self.ai_chat_dark else "#e8eef5"
         self.ai_model_selector.setStyleSheet(
-            f"#aiModelSelector {{ background:{card}; color:{text}; border:1px solid {border}; "
+            f"#aiModelSelector {{ background:{composer}; color:{text}; border:1px solid {border}; "
             "border-radius:10px; padding:5px 10px; font-size:12px; }"
-            f"#aiModelSelector:hover {{ border:1px solid #007ACC; }}"
-            f"#aiModelSelector:focus {{ border:1px solid #007ACC; outline:none; }}"
+            f"#aiModelSelector:hover {{ border:1px solid {p.accent}; }}"
+            f"#aiModelSelector:focus {{ border:1px solid {p.accent}; outline:none; }}"
             "#aiModelSelector::drop-down { border:none; width:22px; }"
             f"#aiModelSelector::down-arrow {{ width:0; height:0; margin-right:8px; "
             f"border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid {muted}; }}"
-            f"#aiModelSelector QAbstractItemView {{ background:{card}; color:{text}; "
-            f"border:1px solid {border}; border-radius:8px; padding:4px; outline:none; "
-            f"selection-background-color:{popup_hover}; selection-color:{text}; }}"
+            f"#aiModelSelector QAbstractItemView {{ background:{p.surface_alt}; color:{text}; "
+            f"border:1px solid {p.border}; border-radius:8px; padding:4px; outline:none; "
+            f"selection-background-color:{hover}; selection-color:{text}; }}"
         )
         self.ai_chat_title.setStyleSheet(
-            f"background:transparent; color:{text}; border:none; font-size:14px; font-weight:700;"
+            f"background:transparent; color:{text}; border:none; font-size:13px; font-weight:700; padding:0;"
         )
         self.ai_chat_subtitle.setStyleSheet(
             f"background:transparent; color:{muted}; border:none; font-size:10px;"
@@ -2258,20 +2201,55 @@ class ArabicPyIDE(QMainWindow):
         self.ai_chat_input.setStyleSheet(
             f"#aiChatInput {{ background:transparent; color:{text}; border:none; padding:2px 2px; }}"
         )
-        attach_hover = "#37373d" if self.ai_chat_dark else "#e8eef5"
         self.ai_attach_button.setStyleSheet(
-            f"#aiAttachButton {{ background:transparent; color:{muted}; border:1px solid {border}; "
+            f"#aiAttachButton {{ background:transparent; color:{muted}; border:1px solid {p.border}; "
             "border-radius:13px; font-size:15px; font-weight:700; padding:0; outline:none; }"
-            f"#aiAttachButton:hover, #aiAttachButton:pressed {{ background:{attach_hover}; color:{text}; "
-            f"border:1px solid {border}; outline:none; }}"
-            f"#aiAttachButton:focus {{ border:1px solid {border}; outline:none; }}"
+            f"#aiAttachButton:hover, #aiAttachButton:pressed {{ background:{hover}; color:{text}; "
+            f"border:1px solid {p.border}; outline:none; }}"
+            f"#aiAttachButton:focus {{ border:1px solid {p.border}; outline:none; }}"
         )
         self.ai_thinking_label.setStyleSheet(f"color:{muted}; padding:2px 8px; font-size:11px;")
+        theme.apply_elevation(self.ai_composer, p, "sm", self.glass_effects)
 
     def append_ai_message(self, sender, message):
         if sender == "assistant":
             message = self.clean_ai_markdown(message)
         self.ai_messages.append((sender, message, datetime.now().strftime("%H:%M")))
+        self.render_ai_messages()
+        self.save_ai_history()
+
+    @staticmethod
+    def ai_history_file():
+        app_data = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()), "AlBaa")
+        return os.path.join(app_data, "chat_history.json")
+
+    def load_ai_history(self):
+        path = self.ai_history_file()
+        if not os.path.isfile(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as stream:
+                data = json.load(stream)
+            return [(entry["sender"], entry["message"], entry["time"]) for entry in data]
+        except (OSError, ValueError, KeyError):
+            return []
+
+    def save_ai_history(self):
+        path = self.ai_history_file()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as stream:
+                json.dump(
+                    [{"sender": sender, "message": message, "time": timestamp}
+                     for sender, message, timestamp in self.ai_messages],
+                    stream, ensure_ascii=False, indent=2,
+                )
+        except OSError:
+            pass
+
+    def clear_ai_history(self):
+        self.ai_messages = []
+        self.save_ai_history()
         self.render_ai_messages()
 
     @staticmethod
@@ -2330,26 +2308,22 @@ class ArabicPyIDE(QMainWindow):
         # with a small avatar (no bubble/border), while the user's own turn
         # sits in a subtly shaded box rather than a saturated chat bubble.
         is_user = sender == "user"
-        if self.ai_chat_dark:
-            background = "#2d2d30" if is_user else "transparent"
-            foreground = "#e0e0e0"
-            muted = "#9d9d9d"
-            bubble_border = "1px solid #3c3c3c" if is_user else "none"
-        else:
-            background = "#eef2f6" if is_user else "transparent"
-            foreground = "#1f2937"
-            muted = "#667085"
-            bubble_border = "1px solid #d7dde5" if is_user else "none"
+        p = theme.PALETTES[self.theme_mode]
+        background = p.surface_alt if is_user else "transparent"
+        foreground = p.text
+        muted = p.text_muted
+        bubble_border = f"1px solid {p.border}" if is_user else "none"
         safe_message = html.escape(message).replace("\n", "<br>")
         row = QWidget()
         row.setStyleSheet("background:transparent;")
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(3, 0, 3, 0)
         row_layout.setSpacing(8)
-        bubble = QLabel(
+        bubble_html = (
             f'<span style="font-size:13px;">{safe_message}</span><br><br>'
             f'<span style="color:{muted}; font-size:9px;">{timestamp}</span>'
         )
+        bubble = QLabel(bubble_html)
         bubble.setTextFormat(Qt.RichText)
         bubble.setLayoutDirection(self.direction)
         bubble.setAlignment((Qt.AlignRight if self.rtl else Qt.AlignLeft) | Qt.AlignTop)
@@ -2359,20 +2333,32 @@ class ArabicPyIDE(QMainWindow):
         if is_user:
             longest_line = max(message.splitlines() or [""], key=len)
             natural_width = max(metrics.horizontalAdvance(longest_line), len(longest_line) * 7) + 28
-            bubble_width = min(250, max(68, natural_width))
+            # The history viewport is narrower than the 300 px panel after its
+            # outer margins, frame, padding, and the row's own margins.  Keep
+            # user bubbles inside that usable width instead of letting their
+            # right edge disappear behind the viewport clip.
+            bubble_width = min(238, max(68, natural_width))
         else:
-            bubble_width = 288
+            # Assistant rows also contain a 22 px avatar and an 8 px gap, so
+            # their text area must be narrower than a user-only row.
+            bubble_width = 208
         bubble.setContentsMargins(12, 9, 12, 9)
         bubble.setStyleSheet(
             f"QLabel {{ background:{background}; color:{foreground}; border:{bubble_border}; "
             "border-radius:10px; padding:0; }"
         )
         bubble.setFixedWidth(bubble_width)
-        # Ask the label itself for the height its actual rich-text content
-        # needs at this width — authoritative, unlike a plain-text
-        # QFontMetrics estimate which doesn't see the HTML markup and used to
-        # wildly overshoot on Windows, leaving a blank gap inside the bubble.
-        bubble_height = bubble.heightForWidth(bubble_width)
+        # QLabel.heightForWidth() doesn't fully account for QTextDocument's
+        # own default document margin on top of the label's contentsMargins,
+        # undershooting by ~8px for rich text and clipping the last line --
+        # laying the same HTML out in a QTextDocument at the exact content
+        # width gives the real height that will be needed.
+        content_width = bubble_width - 12 - 12
+        doc = QTextDocument()
+        doc.setDefaultFont(bubble.font())
+        doc.setHtml(bubble_html)
+        doc.setTextWidth(content_width)
+        bubble_height = int(doc.size().height()) + 9 + 9
         bubble.setFixedHeight(max(44, bubble_height))
         bubble.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         if is_user:
@@ -2383,22 +2369,53 @@ class ArabicPyIDE(QMainWindow):
             avatar.setFixedSize(22, 22)
             avatar.setAlignment(Qt.AlignCenter)
             avatar.setStyleSheet(
-                "background:#007ACC; color:white; border-radius:11px; font-size:11px; font-weight:800;"
+                f"background:{p.accent}; color:{p.text_on_accent}; border-radius:11px; font-size:11px; font-weight:800;"
             )
             row_layout.addWidget(avatar, 0, Qt.AlignTop)
             row_layout.addWidget(bubble, 0, Qt.AlignLeft)
             row_layout.addStretch(1)
         self.ai_chat_messages_layout.addWidget(row)
 
-    def send_ai_message(self):
+    def on_ai_composer_button(self):
+        """The composer's single icon button sends when idle, stops when a request is in flight."""
         if self.ai_process is not None:
-            QMessageBox.information(self, self.t("AI Assistant"), self.t("Wait until the assistant finishes its current answer."))
+            self.stop_ai_request()
+        else:
+            self.send_ai_message()
+
+    def stop_ai_request(self):
+        """Cancel the in-flight AI request; the next queued question (if any) starts right after."""
+        if self.ai_process is None:
             return
+        self.ai_stopped_by_user = True
+        self.ai_process.kill()
+
+    def send_ai_message(self):
         question = self.ai_chat_input.toPlainText().strip()
         if not question:
             return
         self.ai_chat_input.clear()
         self.append_ai_message("user", question)
+        if self.ai_process is not None:
+            self.ai_message_queue.append(question)
+            self.update_ai_thinking_text()
+            return
+        self.dispatch_ai_question(question)
+
+    def update_ai_thinking_text(self):
+        base = self.t("Al-Baa Assistant is thinking")
+        if self.ai_message_queue:
+            base = self.t("{base} ({count} queued)", base=base, count=len(self.ai_message_queue))
+        self.set_ai_thinking_text(base)
+
+    def dispatch_next_queued_ai_message(self):
+        if not self.ai_message_queue:
+            return
+        next_question = self.ai_message_queue.pop(0)
+        self.update_ai_thinking_text()
+        QTimer.singleShot(0, lambda: self.dispatch_ai_question(next_question))
+
+    def dispatch_ai_question(self, question):
         use_remote = bool(self.remote_ai_url and self.remote_ai_token)
         if self.language == "ar":
             prompt = (
@@ -2679,10 +2696,12 @@ class ArabicPyIDE(QMainWindow):
 
     def start_ai_http_request(self, endpoint, payload, extra_headers=None):
         """Send a request to either supported local AI runtime."""
+        self.update_ai_thinking_text()
         self.ai_thinking_label.show()
         self.scroll_ai_chat_to_bottom()
         self.ai_button.setEnabled(False)
-        self.ai_send_button.setEnabled(False)
+        self.ai_send_button.set_mode("stop")
+        self.ai_send_button.setToolTip(self.t("Stop"))
         self.ai_response_buffer.clear()
         process = QProcess(self)
         self.ai_process = process
@@ -2716,30 +2735,45 @@ class ArabicPyIDE(QMainWindow):
         self.ai_process = None
         self.ai_button.setEnabled(True)
         self.ai_send_button.setEnabled(True)
+        self.ai_send_button.set_mode("send")
+        self.ai_send_button.setToolTip(self.t("Send"))
         self.ai_thinking_label.hide()
-        raw = bytes(self.ai_response_buffer).decode("utf-8", errors="replace")
-        try:
-            result = json.loads(raw)
-            if self.ai_backend == "embedded":
-                answer = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            elif self.ai_backend == "remote":
-                answer = result.get("answer", "").strip()
+        stopped = self.ai_stopped_by_user
+        self.ai_stopped_by_user = False
+        if not stopped:
+            raw = bytes(self.ai_response_buffer).decode("utf-8", errors="replace")
+            try:
+                result = json.loads(raw)
+                if self.ai_backend == "embedded":
+                    answer = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                elif self.ai_backend == "remote":
+                    answer = result.get("answer", "").strip()
+                else:
+                    answer = result.get("response", "").strip()
+            except json.JSONDecodeError:
+                answer = ""
+            if exit_code == 0 and answer:
+                self.append_ai_message("assistant", answer)
             else:
-                answer = result.get("response", "").strip()
-        except json.JSONDecodeError:
-            answer = ""
-        if exit_code == 0 and answer:
-            self.append_ai_message("assistant", answer)
-        else:
-            if self.ai_backend == "remote":
-                self.append_ai_message("assistant", self.t("Could not connect to the remote AI computer. Make sure it's running and the address is correct."))
-            else:
-                self.append_ai_message("assistant", self.t("Could not run {model}. Make sure the model is installed, or try again.", model=self.ai_model))
+                if self.ai_backend == "remote":
+                    self.append_ai_message("assistant", self.t("Could not connect to the remote AI computer. Make sure it's running and the address is correct."))
+                else:
+                    self.append_ai_message("assistant", self.t("Could not run {model}. Make sure the model is installed, or try again.", model=self.ai_model))
+        self.dispatch_next_queued_ai_message()
 
     def local_ai_error(self, _error):
+        had_process = self.ai_process is not None
+        self.ai_process = None
+        self.ai_button.setEnabled(True)
+        self.ai_send_button.setEnabled(True)
+        self.ai_send_button.set_mode("send")
+        self.ai_send_button.setToolTip(self.t("Send"))
         self.ai_thinking_label.hide()
-        if self.ai_process is not None:
+        stopped = self.ai_stopped_by_user
+        self.ai_stopped_by_user = False
+        if had_process and not stopped:
             self.append_ai_message("assistant", self.t("Could not start a connection to the local AI engine."))
+        self.dispatch_next_queued_ai_message()
 
     def ensure_ai_server(self):
         if os.name == "nt":
@@ -3607,6 +3641,14 @@ class ArabicPyIDE(QMainWindow):
         self.editor.setTextCursor(found)
         self.editor.ensureCursorVisible()
         self.find_status.setText(self.t("Found"))
+
+    def search_from_title_bar(self):
+        """The title bar's quick-search box reuses the in-editor find logic."""
+        text = self.title_search_box.text()
+        if not text:
+            return
+        self.find_input.setText(text)
+        self.find_next()
 
     def run_code(self):
         code_language = getattr(self.editor, "code_language", "albaa")

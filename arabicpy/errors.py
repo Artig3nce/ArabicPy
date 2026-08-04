@@ -19,15 +19,15 @@ def format_error(error, source):
             name = match.group(1) if match else "unknown"
             hint = ""
             if name == "اطب":
-                hint = "\nDid you mean: اطبع(...) ?"
-            return f"Runtime error:\nName not defined: {name}{hint}"
+                hint = "\nهل تقصد: اطبع(...) ؟"
+            return f"خطأ أثناء التشغيل:\nالاسم غير معرّف: {name}{hint}"
         if isinstance(error, ZeroDivisionError):
-            return "Runtime error:\nCannot divide by zero."
+            return "خطأ أثناء التشغيل:\nلا يمكن القسمة على صفر."
         if isinstance(error, TypeError):
-            return f"Runtime error:\nIncorrect use of a value or operation: {error}"
-        return f"Runtime error:\nAn unexpected error occurred: {error}"
+            return f"خطأ أثناء التشغيل:\nاستخدام غير صحيح لقيمة أو عملية: {error}"
+        return f"خطأ أثناء التشغيل:\nحدث خطأ غير متوقع: {error}"
 
-    header = "Al-Baa Error"
+    header = "خطأ في الباء"
     if error.line is None:
         return f"{header}: {error.message}"
 
@@ -35,4 +35,4 @@ def format_error(error, source):
     code_line = lines[error.line - 1] if error.line <= len(lines) else ""
     column = max(1, error.column or 1)
     pointer = " " * (column - 1) + "^"
-    return f"{header} on line {error.line}, column {column}:\n{code_line}\n{pointer}\n{error.message}"
+    return f"{header} في السطر {error.line}، العمود {column}:\n{code_line}\n{pointer}\n{error.message}"
