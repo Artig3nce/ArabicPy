@@ -1183,7 +1183,7 @@ class ArabicPyIDE(QMainWindow):
         self.editor = CodeEditor()
         self.editor.set_text_direction(self.direction)
         self.highlighter = ArabicPyHighlighter(self.editor.document())
-        self.editor.setPlainText('اطبع("Hello World")')
+        self.editor.setPlainText('اطبع("What\'s up")')
         self.editor.document().modificationChanged.connect(self.update_tab_title)
         self.enable_autosave(self.editor)
         self.editor.undoAvailable.connect(self.update_undo_redo_buttons)
