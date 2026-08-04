@@ -18,8 +18,15 @@ app dependencies, `assets/`, or the PyInstaller setup), update
 Windows equivalents so `linux-deb` doesn't silently break or fall out of
 sync. Don't remove or skip the `linux-deb` job without being asked.
 
-Note: the `.deb` does not bundle the embedded llama.cpp AI engine (that's
-Windows-only, via `prepare_embedded_ai.ps1` / `AlBaaAIHost.spec`). On
-Linux, AI features fall back to a system-installed `llama-server`,
-Ollama, or a remote AI host reachable over the network
-(`arabicpy/embedded_ai.py`).
+## AI assistant
+
+There is no bundled/embedded local AI engine (it was removed — see
+`arabicpy/ai_server.py` history). The AI Assistant panel works two ways:
+
+- **Ollama**, if `ollama` is on PATH (`arabicpy/ide.py` shells out to
+  `http://127.0.0.1:11434`)
+- a **remote AI host**: another Al-Baa install running its background
+  "AI Network" bridge (`arabicpy/ai_server.py`, `AlBaaAIHost.spec` /
+  `launch_ai_server.py`), reachable over LAN or Tailscale
+
+Don't reintroduce a bundled/offline model download flow unless asked.

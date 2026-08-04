@@ -1,15 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import glob
-import os
-
-
-engine_binaries = [
-    (path, 'ai-engine')
-    for path in glob.glob('vendor/llama.cpp/*')
-    if os.path.isfile(path)
-]
-app_binaries = [('dist/AlBaaAIHost.exe', '.')] + engine_binaries
+app_binaries = [('dist/AlBaaAIHost.exe', '.')]
 
 
 a = Analysis(

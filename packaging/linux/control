@@ -11,6 +11,5 @@ Description: Al-Baa IDE - Arabic programming language editor
  IDE, built with PySide6/Qt. This package installs the IDE as a
  self-contained bundle under /usr/lib/albaa.
  .
- The embedded offline AI assistant is not included in this package; it
- falls back to a system-installed llama-server, Ollama, or a remote AI
- host reachable over the network.
+ The AI assistant needs a system-installed Ollama, or a remote AI host
+ reachable over the network; no AI runtime is bundled.

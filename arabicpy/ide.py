@@ -15,7 +15,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-import socket
+import uuid
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +27,7 @@ from PySide6.QtGui import (
     QTextCharFormat, QTextCursor, QTextDocument, QTextFormat,
 )
 from PySide6.QtWidgets import (
-    QApplication, QBoxLayout, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
+    QApplication, QBoxLayout, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QMenu, QProgressBar, QScrollArea, QSizePolicy, QSplitter, QTabBar, QTabWidget,
     QTextBrowser, QTextEdit, QToolTip, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
@@ -43,12 +43,16 @@ from .parser import Parser
 from .android import export_android_project, generate_kivy, is_android_source
 from .android_designer import AndroidDesigner
 from .tauri_export import export_tauri_project
+from .pyside_template import generate_pyside_project, safe_identifier
 from . import albaa_linux
 from .ai import DEFAULT_MODEL, system_prompt_for, reply as albaa_ai_reply
 from .ai_server import AlBaaAIServer, local_ipv4
+from .ai_providers import (
+    PROVIDER_TYPES, ChatMessage, ProviderConfig, ProviderError, ProviderStore,
+    create_provider, list_provider_types,
+)
 from .updater import installer_asset, is_newer_version
 from .version import __version__
-from .embedded_ai import EMBEDDED_BASE_URL, MODELS, llama_server_path, model_path, server_arguments
 from .errors import format_error
 from .rag import (
     context_for as rag_context,
@@ -823,15 +827,152 @@ class LanguagePickerDialog(QDialog):
         super().closeEvent(event)
 
 
+class ProviderEditDialog(QDialog):
+    """Add or edit one configured AI provider. Fields: label, type, base URL,
+    API key, default model, plus a "Test Connection" round-trip check."""
+
+    def __init__(self, parent=None, *, language="en", dark=True, existing=None):
+        super().__init__(parent)
+        self.language = language
+        self._existing_id = existing.id if existing is not None else str(uuid.uuid4())
+        self._config = None
+        self.setWindowTitle(self.t("Edit Provider") if existing is not None else self.t("Add Provider"))
+        self.setModal(True)
+        self.setMinimumWidth(380)
+        p = theme.PALETTES[theme.DARK if dark else theme.LIGHT]
+        self.setStyleSheet(
+            f"QDialog {{ background:{p.surface}; }}"
+            f"QLabel {{ color:{p.text}; background:transparent; }}"
+            f"QLineEdit, QComboBox {{ background:{p.surface_alt}; color:{p.text}; border:1px solid {p.border}; "
+            f"border-radius:{theme.RADIUS['sm']}px; padding:5px 8px; }}"
+            f"QLineEdit:focus, QComboBox:focus {{ border-color:{p.accent}; }}"
+            f"QPushButton {{ background:{p.surface_alt}; color:{p.text}; border:1px solid {p.border}; "
+            f"border-radius:{theme.RADIUS['sm']}px; padding:6px 14px; }}"
+            f"QPushButton:hover {{ border-color:{p.accent}; }}"
+        )
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self.label_edit = QLineEdit(existing.label if existing else "")
+        form.addRow(self.t("Label") + ":", self.label_edit)
+
+        self.type_combo = QComboBox()
+        for spec in list_provider_types():
+            self.type_combo.addItem(spec.display_name, spec.id)
+        if existing is not None:
+            index = self.type_combo.findData(existing.type)
+            if index >= 0:
+                self.type_combo.setCurrentIndex(index)
+        self.type_combo.currentIndexChanged.connect(self._apply_type_defaults)
+        form.addRow(self.t("Type") + ":", self.type_combo)
+
+        self.base_url_edit = QLineEdit(existing.base_url if existing else "")
+        form.addRow(self.t("Base URL") + ":", self.base_url_edit)
+
+        self.api_key_edit = QLineEdit(existing.api_key if existing else "")
+        self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow(self.t("API Key") + ":", self.api_key_edit)
+
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        if existing and existing.default_model:
+            self.model_combo.addItem(existing.default_model)
+        form.addRow(self.t("Default Model") + ":", self.model_combo)
+
+        layout.addLayout(form)
+
+        self.test_result_label = QLabel("")
+        self.test_result_label.setWordWrap(True)
+        layout.addWidget(self.test_result_label)
+
+        button_row = QHBoxLayout()
+        test_button = QPushButton(self.t("Test Connection"))
+        test_button.clicked.connect(self._test_connection)
+        button_row.addWidget(test_button)
+        button_row.addStretch()
+        cancel_button = QPushButton(self.t("Cancel"))
+        cancel_button.clicked.connect(self.reject)
+        button_row.addWidget(cancel_button)
+        ok_button = QPushButton(self.t("OK"))
+        ok_button.setDefault(True)
+        ok_button.clicked.connect(self._accept_if_valid)
+        button_row.addWidget(ok_button)
+        layout.addLayout(button_row)
+
+        if existing is None:
+            self._apply_type_defaults()
+
+    def t(self, text, **kwargs):
+        if self.language == "ar":
+            text = TRANSLATIONS.get(text, text)
+        return text.format(**kwargs) if kwargs else text
+
+    def _apply_type_defaults(self):
+        spec = PROVIDER_TYPES.get(self.type_combo.currentData())
+        if spec is None:
+            return
+        if not self.base_url_edit.text().strip():
+            self.base_url_edit.setPlaceholderText(spec.default_base_url)
+        current_model = self.model_combo.currentText().strip()
+        self.model_combo.clear()
+        self.model_combo.addItems(list(spec.example_models))
+        if current_model:
+            if self.model_combo.findText(current_model) < 0:
+                self.model_combo.addItem(current_model)
+            self.model_combo.setCurrentText(current_model)
+
+    def _build_config(self):
+        return ProviderConfig(
+            id=self._existing_id,
+            type=self.type_combo.currentData(),
+            label=self.label_edit.text().strip() or self.t("Untitled Provider"),
+            base_url=self.base_url_edit.text().strip(),
+            api_key=self.api_key_edit.text().strip(),
+            default_model=self.model_combo.currentText().strip(),
+        )
+
+    def _test_connection(self):
+        try:
+            provider = create_provider(self._build_config())
+        except ProviderError as error:
+            self.test_result_label.setText(self.t("Failed: {error}", error=str(error)))
+            return
+        self.test_result_label.setText(self.t("Testing…"))
+        handle = provider.test_connection()
+        self._test_handle = handle  # keep a reference alive until it finishes
+        handle.finished.connect(lambda _text: self.test_result_label.setText(self.t("Connection succeeded.")))
+        handle.failed.connect(lambda error: self.test_result_label.setText(self.t("Connection failed: {error}", error=error)))
+
+    def _accept_if_valid(self):
+        if not self.label_edit.text().strip():
+            self.label_edit.setFocus()
+            return
+        self._config = self._build_config()
+        self.accept()
+
+    def result_config(self):
+        return self._config
+
+
 class ArabicPyIDE(QMainWindow):
     def __init__(self):
         super().__init__()
         settings = QSettings("AlBaa", "AlBaaIDE")
         self.ai_server_token = settings.value("ai_server_token", "") or secrets.token_urlsafe(24)
         settings.setValue("ai_server_token", self.ai_server_token)
-        self.remote_ai_url = str(settings.value("remote_ai_url", "") or "").rstrip("/")
-        self.remote_ai_token = str(settings.value("remote_ai_token", "") or "")
-        self.ai_model = str(settings.value("ai_model", DEFAULT_MODEL) or DEFAULT_MODEL).strip()
+        self.provider_store = ProviderStore()
+        self.ai_providers, self.active_provider_id = self.provider_store.load()
+        if not self.provider_store.exists():
+            legacy_remote_url = str(settings.value("remote_ai_url", "") or "").rstrip("/")
+            legacy_remote_token = str(settings.value("remote_ai_token", "") or "")
+            legacy_ai_model = str(settings.value("ai_model", "") or "").strip()
+            self.ai_providers, self.active_provider_id = self.provider_store.migrate_legacy_settings(
+                legacy_remote_url, legacy_remote_token, legacy_ai_model, DEFAULT_MODEL,
+            )
+        self._active_provider_instance = None
+        self._active_provider_instance_id = None
         # theme_mode replaces the old ide_dark/ai_chat_dark booleans; migrate
         # a prior install's dark/light choice into the new setting.
         stored_mode = str(settings.value("ide_theme_mode", "") or "")
@@ -1187,10 +1328,8 @@ class ArabicPyIDE(QMainWindow):
         ai_menu = QMenu(self.t("AI"))
         ai_menu.setLayoutDirection(self.direction)
         self.ai_server_button = ai_menu.addAction(self.t("AI Network"), self.toggle_ai_server)
-        self.remote_ai_button = ai_menu.addAction(self.t("Remote AI"), self.configure_remote_ai)
-        self.remote_ai_button.setToolTip(self.t("Use an Al-Baa model running on another computer"))
-        if self.remote_ai_url:
-            self.remote_ai_button.setText(self.t("Remote AI ✓"))
+        self.manage_providers_button = ai_menu.addAction(self.t("Manage AI Providers..."), self.show_ai_providers_page)
+        self.manage_providers_button.setToolTip(self.t("Add, remove, and switch between AI providers"))
         self.rag_button = ai_menu.addAction(self.t("RAG Documents"), self.add_rag_documents)
         ai_menu.addSeparator()
         ai_menu.addAction(self.t("Clear Chat History"), self.clear_ai_history)
@@ -1275,7 +1414,9 @@ class ArabicPyIDE(QMainWindow):
         self.designer_button = self.make_button("Designer", self.toggle_android_designer)
         self.ai_button = self.make_button("✦ AI Assistant", self.ask_local_ai, "aiButton")
         self.ai_button.setCheckable(True)
-        self.run_button = self.make_button("▶ Run", self.run_code, "runButton")
+        self.run_button = self.make_button("▶", self.run_code, "runButton")
+        self.run_button.setFixedSize(28, 28)
+        self.run_button.setToolTip(self.t("Run"))
 
         self.title_search_box = QLineEdit(objectName="titleSearchBox")
         self.title_search_box.setPlaceholderText(self.t("⌕  Search"))
@@ -1292,6 +1433,7 @@ class ArabicPyIDE(QMainWindow):
                 ("Open Folder...", self.open_folder), ("Close Folder", self.close_folder),
                 ("Save", self.save_file), ("Refresh Explorer", self.refresh_file_list),
                 ("New Android Project", self.new_android_file),
+                ("New PySide6 Project...", self.new_pyside6_project),
                 ("Export Cross-Platform Project...", self.export_cross_platform),
             ]),
             edit_button,
@@ -1443,6 +1585,9 @@ class ArabicPyIDE(QMainWindow):
         self.rag_library_page = self.build_rag_library_page()
         self.rag_library_page.hide()
         editor_layout.addWidget(self.rag_library_page)
+        self.ai_providers_page = self.build_ai_providers_page()
+        self.ai_providers_page.hide()
+        editor_layout.addWidget(self.ai_providers_page)
         self.editor = CodeEditor()
         self.editor.wordDetailsRequested.connect(self.show_word_details_panel)
         self.editor.set_text_direction(self.direction)
@@ -1540,41 +1685,22 @@ class ArabicPyIDE(QMainWindow):
         chat_layout.addWidget(self.ai_chat_header)
         model_row = QHBoxLayout()
         model_row.setContentsMargins(8, 2, 8, 6)
-        self.ai_model_label = QLabel(self.t("Model:"), objectName="aiModelLabel")
-        model_row.addWidget(self.ai_model_label)
+        model_row.setSpacing(6)
+        self.ai_provider_selector = QComboBox(objectName="aiProviderSelector")
+        self.ai_provider_selector.setToolTip(self.t("Choose which configured AI provider to use"))
+        self.ai_provider_selector.currentIndexChanged.connect(self.on_ai_provider_selected)
+        model_row.addWidget(self.ai_provider_selector)
         self.ai_model_selector = QComboBox(objectName="aiModelSelector")
         self.ai_model_selector.setEditable(True)
-        self.ai_model_selector.addItems([
-            "qwen3:1.7b",
-            "qwen3:8b",
-        ])
-        installed_models = self.installed_ollama_models()
-        for installed_model in installed_models:
-            if self.ai_model_selector.findText(installed_model) < 0:
-                self.ai_model_selector.addItem(installed_model)
-        if installed_models and self.ai_model not in installed_models:
-            self.ai_model = self.preferred_ollama_model(installed_models)
-            QSettings("AlBaa", "AlBaaIDE").setValue("ai_model", self.ai_model)
-        if self.ai_model_selector.findText(self.ai_model) < 0:
-            self.ai_model_selector.addItem(self.ai_model)
-        self.ai_model_selector.setCurrentText(self.ai_model)
-        self.ai_model_selector.setToolTip(self.t("Choose an Ollama model for this device, or type its name"))
+        self.ai_model_selector.setToolTip(self.t("Choose a model for the active provider, or type its name"))
         self.ai_model_selector.currentTextChanged.connect(self.save_ai_model)
         model_row.addWidget(self.ai_model_selector, 1)
+        self.ai_manage_providers_button = self.make_button("⚙", self.show_ai_providers_page, "aiManageProvidersButton")
+        self.ai_manage_providers_button.setFixedWidth(28)
+        self.ai_manage_providers_button.setToolTip(self.t("Manage AI Providers"))
+        model_row.addWidget(self.ai_manage_providers_button)
         chat_layout.addLayout(model_row)
-        self.ai_download_progress = QProgressBar(objectName="aiDownloadProgress")
-        self.ai_download_progress.setRange(0, 100)
-        self.ai_download_progress.setFormat(self.t("Downloading model: %p%"))
-        self.ai_download_progress.setTextVisible(True)
-        self.ai_download_progress.hide()
-        download_row = QHBoxLayout()
-        download_row.setContentsMargins(0, 0, 0, 0)
-        download_row.addWidget(self.ai_download_progress, 1)
-        self.ai_download_pause_button = self.make_button("Pause", self.toggle_ai_model_download)
-        self.ai_download_pause_button.setFixedWidth(62)
-        self.ai_download_pause_button.hide()
-        download_row.addWidget(self.ai_download_pause_button)
-        chat_layout.addLayout(download_row)
+        self.refresh_provider_selector()
         self.ai_chat_history = QScrollArea(objectName="aiChatHistory")
         self.ai_chat_history.setWidgetResizable(True)
         self.ai_chat_history.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1656,23 +1782,12 @@ class ArabicPyIDE(QMainWindow):
         self.python_run_process = None
         self.terminal_process = None
         self.terminal_stdout_buffer = ""
-        self.ai_process = None
+        self.ai_request_handle = None
         self.ai_message_queue = []
         self.ai_stopped_by_user = False
-        self.embedded_ai_process = None
-        self.pending_ai_payload = None
-        self.pending_ai_engine = None
-        self.pending_ai_model = None
-        self.ai_download_manager = QNetworkAccessManager(self)
-        self.ai_download_reply = None
-        self.ai_download_stream = None
-        self.ai_download_offset = 0
-        self.ai_download_paused = False
-        self.ai_download_profile = None
-        self.ai_download_destination = None
-        self.ai_backend = "ollama"
-        self.ai_engine_wait_attempts = 0
-        self.ai_response_buffer = bytearray()
+        self.ai_stream_row = None
+        self.ai_stream_bubble = None
+        self.ai_stream_text = ""
         self.updating_from_designer = False
         saved_folder = str(QSettings("AlBaa", "AlBaaIDE").value("project_folder", "") or "")
         if saved_folder and os.path.isdir(saved_folder):
@@ -2279,9 +2394,12 @@ class ArabicPyIDE(QMainWindow):
         self.set_active_activity(self.activity_buttons[4])
 
     def restore_editor_view(self):
-        """Leave the RAG library page (if open) and bring the code editor back."""
+        """Leave the RAG library / AI providers page (if open) and bring the code editor back."""
         if self.rag_library_page.isVisible():
             self.rag_library_page.hide()
+            self.code_splitter.show()
+        if self.ai_providers_page.isVisible():
+            self.ai_providers_page.hide()
             self.code_splitter.show()
 
     def restore_sidebar_explorer_content(self):
@@ -2388,6 +2506,7 @@ class ArabicPyIDE(QMainWindow):
         self.restore_sidebar_explorer_content()
         self.android_designer.hide()
         self.code_splitter.hide()
+        self.ai_providers_page.hide()
         self.rag_library_page.show()
         self.refresh_rag_library()
         self.set_active_activity(self.activity_buttons[3])
@@ -2475,12 +2594,82 @@ class ArabicPyIDE(QMainWindow):
         self.toggle_ai_chat()
 
     def save_ai_model(self, model):
-        """Persist the Ollama model independently on each device."""
+        """Persist the chosen model on the currently active AI provider."""
         model = str(model).strip()
-        if not model:
+        config = self.active_provider_config()
+        if not model or config is None:
             return
-        self.ai_model = model
-        QSettings("AlBaa", "AlBaaIDE").setValue("ai_model", model)
+        config.default_model = model
+        self.invalidate_active_provider_cache()
+        self.provider_store.save(self.ai_providers, self.active_provider_id)
+
+    def active_provider_config(self):
+        return next((config for config in self.ai_providers if config.id == self.active_provider_id), None)
+
+    def active_provider(self):
+        """Return the constructed, cached AIProvider for the active config (or None)."""
+        config = self.active_provider_config()
+        if config is None:
+            return None
+        if self._active_provider_instance is None or self._active_provider_instance_id != config.id:
+            self._active_provider_instance = create_provider(config)
+            self._active_provider_instance_id = config.id
+        return self._active_provider_instance
+
+    def invalidate_active_provider_cache(self):
+        self._active_provider_instance = None
+        self._active_provider_instance_id = None
+
+    def refresh_provider_selector(self):
+        """Repopulate the provider combo from self.ai_providers and select the active one."""
+        self.ai_provider_selector.blockSignals(True)
+        self.ai_provider_selector.clear()
+        for config in self.ai_providers:
+            self.ai_provider_selector.addItem(config.label, config.id)
+        index = self.ai_provider_selector.findData(self.active_provider_id)
+        if index >= 0:
+            self.ai_provider_selector.setCurrentIndex(index)
+        self.ai_provider_selector.blockSignals(False)
+        self.refresh_model_selector_for_active_provider()
+
+    def on_ai_provider_selected(self, index):
+        provider_id = self.ai_provider_selector.itemData(index)
+        if provider_id is None or provider_id == self.active_provider_id:
+            return
+        self.switch_active_provider(provider_id)
+
+    def switch_active_provider(self, provider_id):
+        self.active_provider_id = provider_id
+        self.invalidate_active_provider_cache()
+        self.provider_store.save(self.ai_providers, self.active_provider_id)
+        self.refresh_model_selector_for_active_provider()
+
+    def refresh_model_selector_for_active_provider(self):
+        """Seed the model combo from the active provider's type (Ollama's
+        installed-model list, or the provider type's example models)."""
+        config = self.active_provider_config()
+        self.ai_model_selector.blockSignals(True)
+        self.ai_model_selector.clear()
+        if config is None:
+            self.ai_model_selector.blockSignals(False)
+            return
+        if config.type == "ollama":
+            self.ai_model_selector.addItems(["qwen3:1.7b", "qwen3:8b"])
+            installed_models = self.installed_ollama_models()
+            for installed_model in installed_models:
+                if self.ai_model_selector.findText(installed_model) < 0:
+                    self.ai_model_selector.addItem(installed_model)
+            if installed_models and config.default_model not in installed_models:
+                config.default_model = self.preferred_ollama_model(installed_models)
+        else:
+            spec = PROVIDER_TYPES.get(config.type)
+            if spec is not None:
+                self.ai_model_selector.addItems(list(spec.example_models))
+        if config.default_model and self.ai_model_selector.findText(config.default_model) < 0:
+            self.ai_model_selector.addItem(config.default_model)
+        if config.default_model:
+            self.ai_model_selector.setCurrentText(config.default_model)
+        self.ai_model_selector.blockSignals(False)
 
     @staticmethod
     def installed_ollama_models():
@@ -2696,18 +2885,30 @@ class ArabicPyIDE(QMainWindow):
         self.ai_chat_avatar.setStyleSheet(
             f"#aiChatAvatar {{ background:{p.accent}; color:{p.text_on_accent}; border-radius:6px; font-size:13px; font-weight:800; }}"
         )
-        self.ai_model_label.setStyleSheet(f"background:transparent; color:{muted}; border:none; font-size:11px;")
-        self.ai_model_selector.setStyleSheet(
-            f"#aiModelSelector {{ background:{composer}; color:{text}; border:1px solid {border}; "
-            "border-radius:10px; padding:5px 10px; font-size:12px; }"
-            f"#aiModelSelector:hover {{ border:1px solid {p.accent}; }}"
-            f"#aiModelSelector:focus {{ border:1px solid {p.accent}; outline:none; }}"
-            "#aiModelSelector::drop-down { border:none; width:22px; }"
-            f"#aiModelSelector::down-arrow {{ width:0; height:0; margin-right:8px; "
-            f"border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid {muted}; }}"
-            f"#aiModelSelector QAbstractItemView {{ background:{p.surface_alt}; color:{text}; "
-            f"border:1px solid {p.border}; border-radius:8px; padding:4px; outline:none; "
-            f"selection-background-color:{hover}; selection-color:{text}; }}"
+        selector_qss = (
+            "{selector} {{ background:{composer}; color:{text}; border:1px solid {border}; "
+            "border-radius:10px; padding:5px 10px; font-size:12px; }}"
+            "{selector}:hover {{ border:1px solid {accent}; }}"
+            "{selector}:focus {{ border:1px solid {accent}; outline:none; }}"
+            "{selector}::drop-down {{ border:none; width:22px; }}"
+            "{selector}::down-arrow {{ width:0; height:0; margin-right:8px; "
+            "border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid {muted}; }}"
+            "{selector} QAbstractItemView {{ background:{surface_alt}; color:{text}; "
+            "border:1px solid {qborder}; border-radius:8px; padding:4px; outline:none; "
+            "selection-background-color:{hover}; selection-color:{text}; }}"
+        )
+        self.ai_provider_selector.setStyleSheet(selector_qss.format(
+            selector="#aiProviderSelector", composer=composer, text=text, border=border,
+            accent=p.accent, muted=muted, surface_alt=p.surface_alt, qborder=p.border, hover=hover,
+        ))
+        self.ai_model_selector.setStyleSheet(selector_qss.format(
+            selector="#aiModelSelector", composer=composer, text=text, border=border,
+            accent=p.accent, muted=muted, surface_alt=p.surface_alt, qborder=p.border, hover=hover,
+        ))
+        self.ai_manage_providers_button.setStyleSheet(
+            f"#aiManageProvidersButton {{ background:{composer}; color:{text}; border:1px solid {border}; "
+            "border-radius:10px; font-size:13px; }"
+            f"#aiManageProvidersButton:hover {{ border:1px solid {p.accent}; }}"
         )
         self.ai_chat_title.setStyleSheet(
             f"background:transparent; color:{text}; border:none; font-size:13px; font-weight:700; padding:0;"
@@ -2820,6 +3021,19 @@ class ArabicPyIDE(QMainWindow):
             f"{self.ai_thinking_base_text} {self.ai_thinking_frames[self.ai_thinking_frame_index]}"
         )
 
+    @staticmethod
+    def _measure_html_height(font, html_content, content_width):
+        # QLabel.heightForWidth() doesn't fully account for QTextDocument's
+        # own default document margin on top of the label's contentsMargins,
+        # undershooting by ~8px for rich text and clipping the last line --
+        # laying the same HTML out in a QTextDocument at the exact content
+        # width gives the real height that will be needed.
+        doc = QTextDocument()
+        doc.setDefaultFont(font)
+        doc.setHtml(html_content)
+        doc.setTextWidth(content_width)
+        return int(doc.size().height())
+
     def render_ai_message(self, sender, message, timestamp):
         # Copilot Chat-style layout: the assistant's reply is flowing text
         # with a small avatar (no bubble/border), while the user's own turn
@@ -2871,11 +3085,7 @@ class ArabicPyIDE(QMainWindow):
         # laying the same HTML out in a QTextDocument at the exact content
         # width gives the real height that will be needed.
         content_width = bubble_width - 12 - 12
-        doc = QTextDocument()
-        doc.setDefaultFont(bubble.font())
-        doc.setHtml(bubble_html)
-        doc.setTextWidth(content_width)
-        bubble_height = int(doc.size().height()) + 9 + 9
+        bubble_height = self._measure_html_height(bubble.font(), bubble_html, content_width) + 9 + 9
         bubble.setFixedHeight(max(44, bubble_height))
         bubble.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         if is_user:
@@ -2895,17 +3105,17 @@ class ArabicPyIDE(QMainWindow):
 
     def on_ai_composer_button(self):
         """The composer's single icon button sends when idle, stops when a request is in flight."""
-        if self.ai_process is not None:
+        if self.ai_request_handle is not None:
             self.stop_ai_request()
         else:
             self.send_ai_message()
 
     def stop_ai_request(self):
         """Cancel the in-flight AI request; the next queued question (if any) starts right after."""
-        if self.ai_process is None:
+        if self.ai_request_handle is None:
             return
         self.ai_stopped_by_user = True
-        self.ai_process.kill()
+        self.ai_request_handle.cancel()
 
     def send_ai_message(self):
         question = self.ai_chat_input.toPlainText().strip()
@@ -2913,7 +3123,7 @@ class ArabicPyIDE(QMainWindow):
             return
         self.ai_chat_input.clear()
         self.append_ai_message("user", question)
-        if self.ai_process is not None:
+        if self.ai_request_handle is not None:
             self.ai_message_queue.append(question)
             self.update_ai_thinking_text()
             return
@@ -2932,365 +3142,154 @@ class ArabicPyIDE(QMainWindow):
         self.update_ai_thinking_text()
         QTimer.singleShot(0, lambda: self.dispatch_ai_question(next_question))
 
-    def dispatch_ai_question(self, question):
-        use_remote = bool(self.remote_ai_url and self.remote_ai_token)
+    def build_ai_messages(self, question):
+        """Assemble the system + RAG + editor-context + question turns for one request."""
         if self.language == "ar":
-            prompt = (
-                f"{system_prompt_for(self.language)}\n\n"
+            user_content = (
                 f"معرفة موثقة مسترجعة من قاعدة الباء:\n{rag_context(question)}\n\n"
                 f"الكود المفتوح حالياً في المحرر (للسياق فقط — لا علاقة له بالسؤال إلا إذا "
                 f"كان السؤال عن الكود نفسه):\n{self.editor.toPlainText()}\n\n"
                 f"سؤال المستخدم:\n{question}"
             )
         else:
-            prompt = (
-                f"{system_prompt_for(self.language)}\n\n"
+            user_content = (
                 f"Documented knowledge retrieved from the Al-Baa knowledge base:\n{rag_context(question)}\n\n"
                 f"Code currently open in the editor (context only — unrelated to the "
                 f"question unless it's actually about this code):\n{self.editor.toPlainText()}\n\n"
                 f"User's question:\n{question}"
             )
-        if use_remote:
-            self.ai_backend = "remote"
-            self.start_ai_http_request(
-                self.remote_ai_url + "/generate",
-                {"question": prompt},
-                {"Authorization": f"Bearer {self.remote_ai_token}"},
-            )
-            return
-        model = self.ai_model_selector.currentText().strip() or DEFAULT_MODEL
-        installed_models = self.installed_ollama_models() if shutil.which("ollama") else []
-        if installed_models and model not in installed_models:
-            model = self.preferred_ollama_model(installed_models)
-            self.ai_model_selector.setCurrentText(model)
-        self.save_ai_model(model)
-        if shutil.which("ollama"):
-            self.ai_backend = "ollama"
-            payload = {
-                "model": model, "prompt": prompt, "stream": False, "think": False,
-            }
-            self.start_ai_http_request("http://127.0.0.1:11434/api/generate", payload)
-            return
-        engine = llama_server_path()
-        if engine is None:
+        return [
+            ChatMessage(role="system", content=system_prompt_for(self.language)),
+            ChatMessage(role="user", content=user_content),
+        ]
+
+    def dispatch_ai_question(self, question):
+        provider = self.active_provider()
+        config = self.active_provider_config()
+        if provider is None or config is None:
             self.append_ai_message(
                 "assistant",
-                self.t("The embedded AI engine isn't present in this build. Rebuild Al-Baa with llama.cpp included."),
+                self.t("No AI provider is configured. Add one from the AI menu."),
             )
             return
-        profile = MODELS.get(model)
-        if profile is None:
-            self.append_ai_message("assistant", self.t("This model isn't supported by the embedded engine."))
-            return
-        settings = QSettings("AlBaa", "AlBaaIDE")
-        consent_key = f"embedded_model_consent/{model}"
-        if not settings.value(consent_key, False, type=bool):
-            answer = QMessageBox.question(
-                self, self.t("Download AI Model"),
-                self.t("Al-Baa will download {label} (about {size:.1f} GB).\n\nContinue?",
-                       label=profile.label_ar, size=profile.download_gb),
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if answer != QMessageBox.Yes:
-                return
-            settings.setValue(consent_key, True)
-        self.ai_backend = "embedded"
-        self.pending_ai_payload = {
-            "model": profile.id,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
-        local_model = model_path(model)
-        if local_model.is_file() and local_model.stat().st_size > 10_000_000:
-            self.start_embedded_ai(engine, model, local_model)
-        else:
-            self.download_embedded_model(engine, model, profile, local_model)
+        model = self.ai_model_selector.currentText().strip() or config.default_model
+        if model != config.default_model:
+            self.save_ai_model(model)
+        messages = self.build_ai_messages(question)
+        handle = provider.send_chat(messages, model=model, stream=provider.capabilities.streaming)
+        self.begin_ai_request(handle)
 
-    def download_embedded_model(self, engine, model, profile, destination):
-        """Download a selected GGUF model while showing byte-accurate progress."""
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        partial = destination.with_suffix(destination.suffix + ".part")
-        offset = partial.stat().st_size if partial.exists() else 0
-        try:
-            self.ai_download_stream = open(partial, "ab" if offset else "wb")
-        except OSError as error:
-            self.append_ai_message("assistant", self.t("Could not create the model file: {error}", error=error))
-            return
-        self.pending_ai_engine = engine
-        self.pending_ai_model = model
-        self.ai_download_profile = profile
-        self.ai_download_destination = destination
-        self.ai_download_offset = offset
-        self.ai_download_expected_total = None
-        self.ai_download_paused = False
-        request = QNetworkRequest(QUrl(profile.download_url))
-        # Large Hugging Face downloads can finish their bytes and then report
-        # an HTTP/2 protocol error in Qt. HTTP/1.1 is slower only negligibly
-        # here and is substantially more reliable for resumable GGUF files.
-        request.setAttribute(QNetworkRequest.Attribute.Http2AllowedAttribute, False)
-        request.setAttribute(
-            QNetworkRequest.Attribute.RedirectPolicyAttribute,
-            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
-        )
-        if offset:
-            request.setRawHeader(b"Range", f"bytes={offset}-".encode("ascii"))
-        reply = self.ai_download_manager.get(request)
-        self.ai_download_reply = reply
-        reply.readyRead.connect(self.write_ai_model_chunk)
-        reply.downloadProgress.connect(self.update_ai_download_progress)
-        reply.metaDataChanged.connect(self.validate_ai_download_resume)
-        reply.finished.connect(lambda: self.finish_ai_model_download(partial, destination))
-        estimated_total = max(1, int(profile.download_gb * (1024 ** 3)))
-        self.ai_download_progress.setRange(0, 100)
-        self.ai_download_progress.setValue(min(99, int(offset * 100 / estimated_total)))
-        self.ai_download_progress.show()
-        self.ai_download_pause_button.setText(self.t("Pause"))
-        self.ai_download_pause_button.show()
-        self.ai_send_button.setEnabled(False)
-        self.set_ai_thinking_text(self.t("Downloading AI model"))
-        self.ai_thinking_label.show()
-        self.scroll_ai_chat_to_bottom()
-
-    def validate_ai_download_resume(self):
-        """Restart safely if the remote host ignored our Range request."""
-        if self.ai_download_reply is None or not self.ai_download_offset:
-            return
-        status = self.ai_download_reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
-        if status == 200:
-            self.ai_download_paused = True
-            self.ai_download_reply.abort()
-
-    def toggle_ai_model_download(self):
-        if self.ai_download_reply is not None:
-            self.ai_download_paused = True
-            self.ai_download_reply.abort()
-            return
-        if self.ai_download_profile is not None and self.ai_download_destination is not None:
-            self.download_embedded_model(
-                self.pending_ai_engine,
-                self.pending_ai_model,
-                self.ai_download_profile,
-                self.ai_download_destination,
-            )
-
-    def write_ai_model_chunk(self):
-        if self.ai_download_reply is not None and self.ai_download_stream is not None:
-            self.ai_download_stream.write(bytes(self.ai_download_reply.readAll()))
-
-    def update_ai_download_progress(self, received, total):
-        if total > 0:
-            accumulated = self.ai_download_offset + received
-            complete_total = self.ai_download_offset + total
-            self.ai_download_expected_total = complete_total
-            percent = max(0, min(100, int(accumulated * 100 / complete_total)))
-            received_gb = accumulated / (1024 ** 3)
-            total_gb = complete_total / (1024 ** 3)
-            self.ai_download_progress.setValue(percent)
-            self.ai_download_progress.setFormat(
-                self.t("Downloading model: {percent}% — {received:.2f} / {total:.2f} GB",
-                       percent=percent, received=received_gb, total=total_gb)
-            )
-        else:
-            self.ai_download_progress.setRange(0, 0)
-            self.ai_download_progress.setFormat(self.t("Downloading model…"))
-
-    def finish_ai_model_download(self, partial, destination):
-        reply = self.ai_download_reply
-        self.write_ai_model_chunk()
-        if self.ai_download_stream is not None:
-            self.ai_download_stream.close()
-        self.ai_download_stream = None
-        self.ai_download_reply = None
-        failed = reply is None or reply.error() != QNetworkReply.NetworkError.NoError
-        error_text = reply.errorString() if reply is not None else self.t("Unknown error")
-        status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) if reply is not None else None
-        if reply is not None:
-            content_range = bytes(reply.rawHeader(b"Content-Range")).decode("ascii", errors="ignore")
-            total_match = re.search(r"/(\d+)$", content_range)
-            if total_match:
-                self.ai_download_expected_total = int(total_match.group(1))
-        # Some Qt versions report a protocol error after emitting 100%. Accept
-        # the download only when its exact announced size and GGUF signature
-        # prove that all model bytes reached disk.
-        if failed and partial.is_file() and self.ai_download_expected_total:
-            try:
-                with open(partial, "rb") as downloaded:
-                    valid_header = downloaded.read(4) == b"GGUF"
-                complete_size = partial.stat().st_size == self.ai_download_expected_total
-            except OSError:
-                valid_header = complete_size = False
-            if valid_header and complete_size:
-                failed = False
-        if reply is not None:
-            reply.deleteLater()
-        if self.ai_download_paused:
-            # A 200 response after requesting a range means resume is unsupported;
-            # discard the newly appended bytes and restart cleanly.
-            if self.ai_download_offset and status == 200:
-                try:
-                    partial.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                self.ai_download_offset = 0
-                self.ai_download_paused = False
-                self.download_embedded_model(
-                    self.pending_ai_engine, self.pending_ai_model,
-                    self.ai_download_profile, self.ai_download_destination,
-                )
-                return
-            self.ai_download_progress.setRange(0, 100)
-            self.ai_download_progress.setFormat(self.t("Download paused — click Resume"))
-            self.ai_download_pause_button.setText(self.t("Resume"))
-            self.set_ai_thinking_text(self.t("Model download paused"), animated=False)
-            self.ai_send_button.setEnabled(False)
-            return
-        if failed:
-            self.ai_download_progress.hide()
-            self.ai_thinking_label.hide()
-            self.ai_send_button.setEnabled(False)
-            self.ai_download_pause_button.setText(self.t("Resume"))
-            self.append_ai_message("assistant", self.t("Could not download the model: {error}", error=error_text))
-            return
-        try:
-            os.replace(partial, destination)
-        except OSError as error:
-            self.append_ai_message("assistant", self.t("Could not save the model: {error}", error=error))
-            self.ai_send_button.setEnabled(True)
-            return
-        self.ai_download_progress.setRange(0, 100)
-        self.ai_download_progress.setValue(100)
-        self.ai_download_progress.setFormat(self.t("Model download complete — 100%"))
-        self.ai_download_pause_button.hide()
-        self.ai_download_profile = None
-        self.ai_download_destination = None
-        engine, model = self.pending_ai_engine, self.pending_ai_model
-        self.pending_ai_engine = self.pending_ai_model = None
-        self.start_embedded_ai(engine, model, destination)
-
-    def start_embedded_ai(self, engine, model, local_model=None):
-        """Start the bundled llama.cpp server and wait without blocking the UI."""
-        if self.embedded_ai_process is None:
-            process = QProcess(self)
-            process.setProgram(str(engine))
-            process.setArguments(server_arguments(model, local_model))
-            process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-            process.finished.connect(self.embedded_ai_stopped)
-            process.start()
-            self.embedded_ai_process = process
-        self.set_ai_thinking_text(self.t("Downloading or loading AI model"))
-        self.ai_thinking_label.show()
-        self.scroll_ai_chat_to_bottom()
-        self.ai_send_button.setEnabled(False)
-        self.ai_engine_wait_attempts = 0
-        QTimer.singleShot(500, self.wait_for_embedded_ai)
-
-    def wait_for_embedded_ai(self):
-        """Poll the loopback server until the model is ready."""
-        self.ai_engine_wait_attempts += 1
-        try:
-            connection = socket.create_connection(("127.0.0.1", 11435), timeout=0.15)
-            connection.close()
-        except OSError:
-            if self.embedded_ai_process is None or self.ai_engine_wait_attempts >= 3600:
-                self.ai_thinking_label.hide()
-                self.ai_send_button.setEnabled(True)
-                self.append_ai_message("assistant", self.t("Could not start the embedded AI engine."))
-                return
-            QTimer.singleShot(500, self.wait_for_embedded_ai)
-            return
-        payload = self.pending_ai_payload
-        self.pending_ai_payload = None
-        self.ai_download_progress.hide()
-        self.ai_download_pause_button.hide()
-        self.set_ai_thinking_text(self.t("Al-Baa Assistant is thinking"))
-        self.start_ai_http_request(f"{EMBEDDED_BASE_URL}/v1/chat/completions", payload)
-
-    def embedded_ai_stopped(self, _exit_code, _status):
-        if self.embedded_ai_process is not None:
-            self.embedded_ai_process.deleteLater()
-        self.embedded_ai_process = None
-
-    def start_ai_http_request(self, endpoint, payload, extra_headers=None):
-        """Send a request to either supported local AI runtime."""
+    def begin_ai_request(self, handle):
+        self.ai_request_handle = handle
         self.update_ai_thinking_text()
         self.ai_thinking_label.show()
         self.scroll_ai_chat_to_bottom()
         self.ai_button.setEnabled(False)
         self.ai_send_button.set_mode("stop")
         self.ai_send_button.setToolTip(self.t("Stop"))
-        self.ai_response_buffer.clear()
-        process = QProcess(self)
-        self.ai_process = process
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self.read_local_ai_output)
-        process.finished.connect(self.local_ai_finished)
-        process.errorOccurred.connect(self.local_ai_error)
-        process.setProgram("curl.exe")
-        arguments = [
-            "-sS", "-X", "POST", endpoint,
-            "-H", "Content-Type: application/json",
-        ]
-        for name, value in (extra_headers or {}).items():
-            arguments.extend(["-H", f"{name}: {value}"])
-        arguments.extend(["-d", json.dumps(payload, ensure_ascii=False)])
-        process.setArguments(arguments)
-        process.start()
+        handle.token_received.connect(self.on_ai_token)
+        handle.finished.connect(self.on_ai_finished)
+        handle.failed.connect(self.on_ai_failed)
 
-    def read_local_ai_output(self):
-        if self.ai_process is None:
-            return
-        data = bytes(self.ai_process.readAllStandardOutput())
-        if data:
-            self.ai_response_buffer.extend(data)
+    def on_ai_token(self, delta):
+        if self.ai_stream_row is None:
+            self._begin_ai_stream_preview()
+        self.ai_stream_text += delta
+        self._update_ai_stream_preview()
 
-    def local_ai_finished(self, exit_code, _status):
-        process = self.ai_process
-        if process is not None:
-            self.read_local_ai_output()
-            process.deleteLater()
-        self.ai_process = None
+    def end_ai_request(self):
+        if self.ai_request_handle is not None:
+            self.ai_request_handle.deleteLater()
+        self.ai_request_handle = None
         self.ai_button.setEnabled(True)
         self.ai_send_button.setEnabled(True)
         self.ai_send_button.set_mode("send")
         self.ai_send_button.setToolTip(self.t("Send"))
         self.ai_thinking_label.hide()
+
+    def on_ai_finished(self, full_text):
+        self._end_ai_stream_preview()
+        self.end_ai_request()
         stopped = self.ai_stopped_by_user
         self.ai_stopped_by_user = False
         if not stopped:
-            raw = bytes(self.ai_response_buffer).decode("utf-8", errors="replace")
-            try:
-                result = json.loads(raw)
-                if self.ai_backend == "embedded":
-                    answer = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                elif self.ai_backend == "remote":
-                    answer = result.get("answer", "").strip()
-                else:
-                    answer = result.get("response", "").strip()
-            except json.JSONDecodeError:
-                answer = ""
-            if exit_code == 0 and answer:
-                self.append_ai_message("assistant", answer)
+            if full_text.strip():
+                self.append_ai_message("assistant", full_text)
             else:
-                if self.ai_backend == "remote":
-                    self.append_ai_message("assistant", self.t("Could not connect to the remote AI computer. Make sure it's running and the address is correct."))
-                else:
-                    self.append_ai_message("assistant", self.t("Could not run {model}. Make sure the model is installed, or try again.", model=self.ai_model))
+                config = self.active_provider_config()
+                self.append_ai_message(
+                    "assistant",
+                    self.t(
+                        "Could not get a response from {provider}. Make sure it's reachable and try again.",
+                        provider=config.label if config else "",
+                    ),
+                )
         self.dispatch_next_queued_ai_message()
 
-    def local_ai_error(self, _error):
-        had_process = self.ai_process is not None
-        self.ai_process = None
-        self.ai_button.setEnabled(True)
-        self.ai_send_button.setEnabled(True)
-        self.ai_send_button.set_mode("send")
-        self.ai_send_button.setToolTip(self.t("Send"))
-        self.ai_thinking_label.hide()
+    def on_ai_failed(self, error_message):
+        self._end_ai_stream_preview()
+        self.end_ai_request()
         stopped = self.ai_stopped_by_user
         self.ai_stopped_by_user = False
-        if had_process and not stopped:
-            self.append_ai_message("assistant", self.t("Could not start a connection to the local AI engine."))
+        if not stopped:
+            config = self.active_provider_config()
+            self.append_ai_message(
+                "assistant",
+                self.t(
+                    "Could not get a response from {provider}: {error}",
+                    provider=config.label if config else "", error=error_message,
+                ),
+            )
         self.dispatch_next_queued_ai_message()
+
+    def _begin_ai_stream_preview(self):
+        """A lightweight assistant bubble that grows as streamed tokens arrive,
+        replaced by a normal persisted message once the request finishes."""
+        self.ai_stream_text = ""
+        p = theme.PALETTES[self.theme_mode]
+        row = QWidget()
+        row.setStyleSheet("background:transparent;")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(3, 0, 3, 0)
+        row_layout.setSpacing(8)
+        avatar = QLabel("ب")
+        avatar.setFixedSize(22, 22)
+        avatar.setAlignment(Qt.AlignCenter)
+        avatar.setStyleSheet(
+            f"background:{p.accent}; color:{p.text_on_accent}; border-radius:11px; font-size:11px; font-weight:800;"
+        )
+        bubble = QLabel("")
+        bubble.setTextFormat(Qt.RichText)
+        bubble.setLayoutDirection(self.direction)
+        bubble.setAlignment((Qt.AlignRight if self.rtl else Qt.AlignLeft) | Qt.AlignTop)
+        bubble.setWordWrap(True)
+        bubble.setContentsMargins(12, 9, 12, 9)
+        bubble.setStyleSheet(f"QLabel {{ background:transparent; color:{p.text}; border:none; padding:0; }}")
+        bubble.setFixedWidth(208)
+        bubble.setFixedHeight(22)
+        row_layout.addWidget(avatar, 0, Qt.AlignTop)
+        row_layout.addWidget(bubble, 0, Qt.AlignLeft)
+        row_layout.addStretch(1)
+        self.ai_chat_messages_layout.addWidget(row)
+        self.ai_stream_row = row
+        self.ai_stream_bubble = bubble
+
+    def _update_ai_stream_preview(self):
+        safe_message = html.escape(self.ai_stream_text).replace("\n", "<br>")
+        bubble_html = f'<span style="font-size:13px;">{safe_message}</span>'
+        self.ai_stream_bubble.setText(bubble_html)
+        content_width = 208 - 12 - 12
+        bubble_height = self._measure_html_height(self.ai_stream_bubble.font(), bubble_html, content_width) + 9 + 9
+        self.ai_stream_bubble.setFixedHeight(max(22, bubble_height))
+        self.scroll_ai_chat_to_bottom()
+
+    def _end_ai_stream_preview(self):
+        if self.ai_stream_row is not None:
+            self.ai_chat_messages_layout.removeWidget(self.ai_stream_row)
+            self.ai_stream_row.deleteLater()
+        self.ai_stream_row = None
+        self.ai_stream_bubble = None
+        self.ai_stream_text = ""
 
     def ensure_ai_server(self):
         if os.name == "nt":
@@ -3408,48 +3407,125 @@ class ArabicPyIDE(QMainWindow):
         self.ai_server_button.setText(self.t("AI Network"))
         self.output.setPlainText(self.t("The background AI server was stopped and its auto-start was disabled."))
 
-    def configure_remote_ai(self):
-        url, accepted = QInputDialog.getText(
-            self,
-            self.t("Remote AI Connection"),
-            self.t("AI computer address via Tailscale:\nExample: http://my-desktop:8765\n\nLeave empty to go back to local AI:"),
-            text=self.remote_ai_url,
+    def build_ai_providers_page(self):
+        """A dedicated page listing every configured AI provider, with add/edit/remove."""
+        page = QWidget(objectName="aiProvidersPage")
+        layout = QVBoxLayout(page)
+        header_row = QHBoxLayout()
+        header_row.addWidget(QLabel(self.t("AI Providers"), objectName="panelTitle"))
+        header_row.addStretch()
+        close_button = self.make_button("×", self.close_ai_providers_page, "aiCloseButton")
+        close_button.setFixedSize(22, 22)
+        close_button.setToolTip(self.t("Close"))
+        header_row.addWidget(close_button)
+        layout.addLayout(header_row)
+        toolbar_row = QHBoxLayout()
+        self.ai_providers_add_button = self.make_button("+ " + self.t("Add Provider"), self.add_ai_provider)
+        toolbar_row.addWidget(self.ai_providers_add_button)
+        self.ai_providers_edit_button = self.make_button(self.t("Edit"), self.edit_selected_ai_provider)
+        toolbar_row.addWidget(self.ai_providers_edit_button)
+        self.ai_providers_default_button = self.make_button(self.t("Set as Default"), self.set_selected_ai_provider_default)
+        toolbar_row.addWidget(self.ai_providers_default_button)
+        self.ai_providers_remove_button = self.make_button(self.t("Remove"), self.remove_selected_ai_provider, "ragRemoveButton")
+        toolbar_row.addWidget(self.ai_providers_remove_button)
+        toolbar_row.addStretch()
+        layout.addLayout(toolbar_row)
+        self.ai_providers_list = QListWidget(objectName="aiProvidersList")
+        layout.addWidget(self.ai_providers_list, 1)
+        return page
+
+    def refresh_ai_providers_list(self):
+        self.ai_providers_list.clear()
+        for config in self.ai_providers:
+            spec = PROVIDER_TYPES.get(config.type)
+            type_name = spec.display_name if spec else config.type
+            entry = f"{config.label} — {type_name}"
+            label = (
+                self.t("{entry} (default)", entry=entry)
+                if config.id == self.active_provider_id
+                else entry
+            )
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, config.id)
+            self.ai_providers_list.addItem(item)
+
+    def show_ai_providers_page(self):
+        self.restore_sidebar_explorer_content()
+        self.android_designer.hide()
+        self.code_splitter.hide()
+        self.rag_library_page.hide()
+        self.ai_providers_page.show()
+        self.refresh_ai_providers_list()
+
+    def close_ai_providers_page(self):
+        self.restore_editor_view()
+        self.restore_sidebar_explorer_content()
+        self.sidebar.show()
+        self.set_active_activity(self.activity_buttons[0])
+
+    def selected_ai_provider_config(self):
+        item = self.ai_providers_list.currentItem()
+        if item is None:
+            return None
+        provider_id = item.data(Qt.UserRole)
+        return next((config for config in self.ai_providers if config.id == provider_id), None)
+
+    def add_ai_provider(self):
+        dialog = ProviderEditDialog(self, language=self.language, dark=self.ide_dark)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        config = dialog.result_config()
+        self.ai_providers.append(config)
+        if self.active_provider_id is None:
+            self.active_provider_id = config.id
+        self.provider_store.save(self.ai_providers, self.active_provider_id)
+        self.invalidate_active_provider_cache()
+        self.refresh_ai_providers_list()
+        self.refresh_provider_selector()
+
+    def edit_selected_ai_provider(self):
+        config = self.selected_ai_provider_config()
+        if config is None:
+            return
+        dialog = ProviderEditDialog(self, language=self.language, dark=self.ide_dark, existing=config)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        updated = dialog.result_config()
+        config.label = updated.label
+        config.type = updated.type
+        config.base_url = updated.base_url
+        config.api_key = updated.api_key
+        config.default_model = updated.default_model
+        self.provider_store.save(self.ai_providers, self.active_provider_id)
+        self.invalidate_active_provider_cache()
+        self.refresh_ai_providers_list()
+        self.refresh_provider_selector()
+
+    def set_selected_ai_provider_default(self):
+        config = self.selected_ai_provider_config()
+        if config is None:
+            return
+        self.switch_active_provider(config.id)
+        self.refresh_ai_providers_list()
+        self.refresh_provider_selector()
+
+    def remove_selected_ai_provider(self):
+        config = self.selected_ai_provider_config()
+        if config is None:
+            return
+        answer = QMessageBox.question(
+            self, self.t("Remove Provider"),
+            self.t('Remove "{name}"?', name=config.label),
         )
-        if not accepted:
+        if answer != QMessageBox.StandardButton.Yes:
             return
-        url = url.strip().rstrip("/")
-        if not url:
-            self.remote_ai_url = ""
-            self.remote_ai_token = ""
-            settings = QSettings("AlBaa", "AlBaaIDE")
-            settings.remove("remote_ai_url")
-            settings.remove("remote_ai_token")
-            self.remote_ai_button.setText(self.t("Remote AI"))
-            QMessageBox.information(self, self.t("Local AI"), self.t("Al-Baa will use the Ollama model installed on this device."))
-            return
-        if not re.match(r"^https?://[^\s/]+(?::\d+)?$", url):
-            QMessageBox.warning(self, self.t("Invalid Address"), self.t("Enter an address like: http://my-desktop:8765"))
-            return
-        token, accepted = QInputDialog.getText(
-            self,
-            self.t("Remote AI Token"),
-            self.t("Paste the access token shown on the AI computer:"),
-            QLineEdit.EchoMode.Password,
-            self.remote_ai_token,
-        )
-        if not accepted or not token.strip():
-            return
-        self.remote_ai_url = url
-        self.remote_ai_token = token.strip()
-        settings = QSettings("AlBaa", "AlBaaIDE")
-        settings.setValue("remote_ai_url", self.remote_ai_url)
-        settings.setValue("remote_ai_token", self.remote_ai_token)
-        self.remote_ai_button.setText(self.t("Remote AI ✓"))
-        QMessageBox.information(
-            self,
-            self.t("Connection Saved"),
-            self.t("The Al-Baa assistant will now use the AI model on your remote computer."),
-        )
+        self.ai_providers = [entry for entry in self.ai_providers if entry.id != config.id]
+        if self.active_provider_id == config.id:
+            self.active_provider_id = self.ai_providers[0].id if self.ai_providers else None
+            self.invalidate_active_provider_cache()
+        self.provider_store.save(self.ai_providers, self.active_provider_id)
+        self.refresh_ai_providers_list()
+        self.refresh_provider_selector()
 
     def toggle_ai_server(self):
         if os.name == "nt":
@@ -3484,15 +3560,6 @@ class ArabicPyIDE(QMainWindow):
         if self.ai_server is not None and os.name != "nt":
             self.ai_server.stop()
             self.ai_server = None
-        if self.embedded_ai_process is not None:
-            self.embedded_ai_process.terminate()
-            self.embedded_ai_process.waitForFinished(2000)
-            self.embedded_ai_process = None
-        if self.ai_download_reply is not None:
-            self.ai_download_reply.abort()
-        if self.ai_download_stream is not None:
-            self.ai_download_stream.close()
-            self.ai_download_stream = None
         if self.terminal_process is not None:
             self.terminal_process.kill()
             self.terminal_process.waitForFinished(2000)
@@ -3560,6 +3627,33 @@ class ArabicPyIDE(QMainWindow):
         editor.setFocus()
         QTimer.singleShot(0, self.show_android_designer)
 
+    def new_pyside6_project(self):
+        """Scaffold a standalone PySide6 app built on the Al-Baa Design System."""
+        project_name, accepted = QInputDialog.getText(
+            self, self.t("New PySide6 Project"), self.t("Project name:"), text="MyApp"
+        )
+        if not accepted or not project_name.strip():
+            return
+        parent_dir = QFileDialog.getExistingDirectory(self, self.t("Choose a Location for the New Project"))
+        if not parent_dir:
+            return
+        target = os.path.join(parent_dir, safe_identifier(project_name))
+        if os.path.exists(target):
+            QMessageBox.warning(
+                self, self.t("Folder Already Exists"),
+                self.t('A folder named "{name}" already exists there.', name=os.path.basename(target)),
+            )
+            return
+        try:
+            generate_pyside_project(target, project_name.strip())
+        except OSError as error:
+            QMessageBox.critical(self, self.t("Project Creation Failed"), str(error))
+            return
+        QSettings("AlBaa", "AlBaaIDE").setValue("project_folder", target)
+        self.open_folder_path(target)
+        self.load_file(os.path.join(target, "main.py"))
+        self.run_code()
+
     def toggle_android_designer(self):
         if self.android_designer.isVisible():
             self.hide_android_designer()
@@ -3595,7 +3689,8 @@ class ArabicPyIDE(QMainWindow):
     def hide_android_designer(self):
         if self.android_designer.preview_mode:
             self.android_designer.stop_preview()
-            self.run_button.setText(self.t("▶ Run"))
+            self.run_button.setText("▶")
+            self.run_button.setToolTip(self.t("Run"))
         self.android_designer.hide()
         self.code_splitter.show()
         if self.output_was_visible_before_designer:
@@ -4499,11 +4594,13 @@ class ArabicPyIDE(QMainWindow):
                 if self.android_designer.isVisible():
                     if self.android_designer.preview_mode:
                         self.android_designer.stop_preview()
-                        self.run_button.setText(self.t("▶ Run"))
+                        self.run_button.setText("▶")
+                        self.run_button.setToolTip(self.t("Run"))
                     else:
                         self.android_designer.load_source(source)
                         self.android_designer.start_preview()
-                        self.run_button.setText(self.t("■ Stop Preview"))
+                        self.run_button.setText("■")
+                        self.run_button.setToolTip(self.t("Stop Preview"))
                     return
                 self.output.setPlainText(
                     self.t("App verified successfully. Use the File and Run menus to export or build an APK.")

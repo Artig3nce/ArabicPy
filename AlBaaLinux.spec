@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for the Linux .deb build. Unlike AlBaaIDE.spec, this does
-# not bundle the Windows-only embedded AI host/engine binaries -- on Linux,
-# AlBaa falls back to a system-installed llama-server, Ollama, or a remote
-# AI host instead.
+# not bundle AlBaaAIHost.exe -- that binary only exists to auto-start the
+# Ollama LAN bridge via the Windows registry Run key; on Linux the same
+# bridge (arabicpy/ai_server.py) runs in-process instead.
 
 a = Analysis(
     ['launch_ide.py'],

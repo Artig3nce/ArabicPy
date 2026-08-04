@@ -36,12 +36,6 @@ jobs:
           $versionFile = $versionFile -replace '__version__ = "[^"]+"', "__version__ = `"$version`""
           Set-Content ".\arabicpy\version.py" $versionFile -Encoding utf8
 
-      - name: Prepare embedded AI engine
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: .\prepare_embedded_ai.ps1
-
       - name: Build application bundle
         shell: pwsh
         run: .\build_exe.ps1

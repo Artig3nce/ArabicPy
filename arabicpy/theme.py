@@ -255,7 +255,10 @@ def build_stylesheet(mode, glass_effects=True):
     ai_composer_bg = glass_fill(p, glass_effects, strong=True)
     tabbar_bg = glass_fill(p, glass_effects)
 
-    close_hover_bg = p.danger
+    # A fixed, saturated red (matching VS Code/Windows window-chrome convention)
+    # rather than the theme's `danger` color, which is intentionally softer for
+    # in-app error states and reads as too pale for a title-bar close button.
+    close_hover_bg = "#E81123"
 
     return f"""
     QMainWindow {{ background: {window_bg}; }}
@@ -268,7 +271,7 @@ def build_stylesheet(mode, glass_effects=True):
     #windowButton:hover {{ background: {p.border_glass}; color: {p.text}; }}
     #closeButton:hover {{ background: {close_hover_bg}; color: {p.text_on_accent}; }}
 
-    #menuItem {{ background: transparent; border: none; padding: 3px 8px; color: {p.text}; font-size: 12px; }}
+    #menuItem {{ background: transparent; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 8px; color: {p.text}; font-size: 12px; }}
     #menuItem::menu-indicator {{ image: none; width: 0px; }}
     #menuItem:hover, #toolButton:hover, #themeButton:hover {{ background: {p.border_glass if glass_effects else p.border}; }}
     #menuItem:pressed, #toolButton:pressed, #themeButton:pressed {{ background: {rgba(p.accent, 0.22)}; }}
@@ -283,7 +286,7 @@ def build_stylesheet(mode, glass_effects=True):
     QMenu::item:disabled {{ color: {p.text_dim}; }}
     QMenu::separator {{ height: 1px; background: {p.border}; margin: 4px 10px; }}
 
-    #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 12px; font-weight: 600; font-size: 12px; }}
+    #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: 14px; padding: 0; font-weight: 600; font-size: 12px; }}
     #runButton:hover {{ background: {p.success_hover}; }}
     #aiButton {{ background: {p.accent}; color: {p.text_on_accent}; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 10px; font-weight: 600; font-size: 12px; }}
     #aiButton:hover {{ background: {p.accent_hover}; }}
@@ -388,4 +391,10 @@ def build_stylesheet(mode, glass_effects=True):
     #ragRemoveButton {{ background: transparent; color: {p.danger}; border: 1px solid {rgba(p.danger, 0.4)}; border-radius: {RADIUS["sm"]}px; padding: 6px 12px; }}
     #ragRemoveButton:hover {{ background: {rgba(p.danger, 0.16)}; color: {p.danger_hover}; border-color: {p.danger}; }}
     #ragRemoveButton:disabled {{ color: {p.text_dim}; border-color: {p.border}; }}
+
+    #aiProvidersPage {{ background: {p.surface}; }}
+    #aiProvidersList {{ background: {p.surface_alt}; border: 1px solid {p.border}; border-radius: {RADIUS["md"]}px; outline: none; color: {p.text}; padding: 4px; }}
+    #aiProvidersList::item {{ padding: 10px; border-radius: {RADIUS["sm"]}px; margin: 2px 0; }}
+    #aiProvidersList::item:selected {{ background: {p.selection}; color: {p.text}; }}
+    #aiProvidersList::item:hover {{ background: {p.border_glass if glass_effects else p.border}; }}
     """
