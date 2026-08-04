@@ -286,9 +286,9 @@ def build_stylesheet(mode, glass_effects=True):
     QMenu::item:disabled {{ color: {p.text_dim}; }}
     QMenu::separator {{ height: 1px; background: {p.border}; margin: 4px 10px; }}
 
-    #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: 14px; padding: 0; font-weight: 600; font-size: 12px; }}
+    #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: 50%; padding: 0; font-weight: 600; font-size: 14px; min-width: 28px; min-height: 28px; }}
     #runButton:hover {{ background: {p.success_hover}; }}
-    #aiButton {{ background: {p.accent}; color: {p.text_on_accent}; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 10px; font-weight: 600; font-size: 12px; }}
+    #aiButton {{ background: {p.accent}; color: {p.text_on_accent}; border: none; border-radius: 50%; padding: 0; font-weight: 600; font-size: 14px; min-width: 28px; min-height: 28px; }}
     #aiButton:hover {{ background: {p.accent_hover}; }}
     #aiButton:pressed {{ background: {p.accent_pressed}; }}
 

@@ -1412,7 +1412,9 @@ class ArabicPyIDE(QMainWindow):
         self.update_progress.setTextVisible(True)
         self.update_progress.hide()
         self.designer_button = self.make_button("Designer", self.toggle_android_designer)
-        self.ai_button = self.make_button("✦ AI Assistant", self.ask_local_ai, "aiButton")
+        self.ai_button = self.make_button("✦", self.ask_local_ai, "aiButton")
+        self.ai_button.setToolTip(self.t("AI Assistant"))
+        self.ai_button.setFixedSize(28, 28)
         self.ai_button.setCheckable(True)
         self.run_button = self.make_button("▶", self.run_code, "runButton")
         self.run_button.setFixedSize(28, 28)
@@ -1756,6 +1758,7 @@ class ArabicPyIDE(QMainWindow):
         self.apply_word_details_theme()
         self.ai_chat_panel.hide()
         workspace.addWidget(self.ai_chat_panel)
+        self.toggle_ai_chat(show=True)
         layout.addLayout(workspace)
 
         status = QWidget(objectName="statusBar")
