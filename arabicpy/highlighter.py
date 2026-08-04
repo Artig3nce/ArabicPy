@@ -1,6 +1,7 @@
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 
+
 class ArabicPyHighlighter(QSyntaxHighlighter):
     """Visual Studio-inspired syntax colours for ArabicPy and Python keywords."""
 
@@ -60,6 +61,7 @@ class ArabicPyHighlighter(QSyntaxHighlighter):
             if target:
                 text_format.setForeground(QColor(target))
         self.rehighlight()
+
     def _add_words(self, words, text_format):
         for word in words:
             # PCRE's default \b handling does not reliably treat Arabic

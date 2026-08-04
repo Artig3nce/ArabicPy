@@ -180,18 +180,7 @@ def animate_panel(widget, target_width, duration=180, splitter=None, on_finished
     splitter's own layout). Otherwise the widget is animated directly, which
     is correct for panels placed straight in a box layout (e.g. the AI panel).
     """
-    previous = getattr(widget, "_albaa_panel_anim", None)
-    if previous is not None:
-        previous.stop()
     showing = target_width > 0
-
-    # A drop-shadow/blur QGraphicsEffect forces Qt to re-render an offscreen
-    # buffer on every single frame of the resize, which is what makes the
-    # slide stutter. Drop it for the duration of the animation and put the
-    # same effect instance back once the width settles.
-    suspended_effect = widget.graphicsEffect()
-    if suspended_effect is not None:
-        widget.setGraphicsEffect(None)
 
     if splitter is not None:
         index = splitter.indexOf(widget)
@@ -210,10 +199,7 @@ def animate_panel(widget, target_width, duration=180, splitter=None, on_finished
     else:
         start_width = widget.width() if widget.isVisible() else 0
         if showing:
-            # A hidden fixed-width panel must be pinned to its animation's
-            # first frame before show(). Otherwise the surrounding layout can
-            # expand it to all available space until valueChanged first runs.
-            widget.setFixedWidth(start_width)
+            widget.setMaximumWidth(16777215)
             widget.show()
 
         def _apply(value, widget=widget):
@@ -231,8 +217,6 @@ def animate_panel(widget, target_width, duration=180, splitter=None, on_finished
             widget.hide()
         elif splitter is None:
             widget.setFixedWidth(target_width)
-        if suspended_effect is not None:
-            widget.setGraphicsEffect(suspended_effect)
         if on_finished:
             on_finished()
 
@@ -255,10 +239,7 @@ def build_stylesheet(mode, glass_effects=True):
     ai_composer_bg = glass_fill(p, glass_effects, strong=True)
     tabbar_bg = glass_fill(p, glass_effects)
 
-    # A fixed, saturated red (matching VS Code/Windows window-chrome convention)
-    # rather than the theme's `danger` color, which is intentionally softer for
-    # in-app error states and reads as too pale for a title-bar close button.
-    close_hover_bg = "#E81123"
+    close_hover_bg = p.danger
 
     return f"""
     QMainWindow {{ background: {window_bg}; }}
@@ -271,10 +252,9 @@ def build_stylesheet(mode, glass_effects=True):
     #windowButton:hover {{ background: {p.border_glass}; color: {p.text}; }}
     #closeButton:hover {{ background: {close_hover_bg}; color: {p.text_on_accent}; }}
 
-    #menuItem {{ background: transparent; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 8px; color: {p.text}; font-size: 12px; }}
+    #menuItem {{ background: transparent; border: none; padding: 3px 8px; color: {p.text}; font-size: 12px; }}
     #menuItem::menu-indicator {{ image: none; width: 0px; }}
     #menuItem:hover, #toolButton:hover, #themeButton:hover {{ background: {p.border_glass if glass_effects else p.border}; }}
-    #menuItem:pressed, #toolButton:pressed, #themeButton:pressed {{ background: {rgba(p.accent, 0.22)}; }}
     #toolButton, #themeButton {{ background: transparent; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 8px; color: {p.text}; font-size: 12px; }}
     #titleSearchBox {{ background: {p.canvas}; color: {p.text}; border: 1px solid {p.border}; border-radius: {RADIUS["sm"]}px; padding: 3px 10px; font-size: 12px; }}
     #titleSearchBox:hover {{ border: 1px solid {p.border_glass if glass_effects else p.text_dim}; }}
@@ -286,6 +266,7 @@ def build_stylesheet(mode, glass_effects=True):
     QMenu::item:disabled {{ color: {p.text_dim}; }}
     QMenu::separator {{ height: 1px; background: {p.border}; margin: 4px 10px; }}
 
+<<<<<<< HEAD
 <<<<<<< Updated upstream
     QToolButton#runButton {{
         background: {p.accent}; color: {p.text_on_accent}; border: none;
@@ -303,9 +284,12 @@ def build_stylesheet(mode, glass_effects=True):
     #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: 14px; padding: 0; font-weight: 600; font-size: 12px; }}
     #runButton:hover {{ background: {p.success_hover}; }}
 >>>>>>> Stashed changes
+=======
+    #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 12px; font-weight: 600; font-size: 12px; }}
+    #runButton:hover {{ background: {p.success_hover}; }}
+>>>>>>> parent of aca10fd (v8)
     #aiButton {{ background: {p.accent}; color: {p.text_on_accent}; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 10px; font-weight: 600; font-size: 12px; }}
     #aiButton:hover {{ background: {p.accent_hover}; }}
-    #aiButton:pressed {{ background: {p.accent_pressed}; }}
 
     #aiChatPanel {{ background: {ai_panel_bg}; border-left: 1px solid {p.border_glass}; }}
     #aiChatHeader {{ background: {ai_header_bg}; border-bottom: 1px solid {p.border_glass}; border-radius: 0; }}
@@ -339,9 +323,6 @@ def build_stylesheet(mode, glass_effects=True):
     #fileList {{ background: transparent; border: none; outline: none; color: {p.text}; padding: 2px 6px; }}
     #fileList::item {{ padding: 6px 8px; border-radius: {RADIUS["sm"]}px; }}
     #fileList::item:selected {{ background: {p.border_glass if glass_effects else p.border}; color: {p.text}; }}
-    #fileTree {{ background: transparent; border: none; outline: none; color: {p.text}; padding: 2px 6px; }}
-    #fileTree::item {{ padding: 4px 6px; border-radius: {RADIUS["sm"]}px; }}
-    #fileTree::item:selected {{ background: {p.border_glass if glass_effects else p.border}; color: {p.text}; }}
     #newFilePanel {{ background: transparent; }}
     #languageCard {{ background: transparent; border: none; border-bottom: 1px solid {p.border}; }}
     #languageCard:hover {{ background: {p.border_glass if glass_effects else p.border}; }}
@@ -353,6 +334,10 @@ def build_stylesheet(mode, glass_effects=True):
     #pythonTabSpacer {{ background: {p.surface}; border-bottom: 1px solid {p.surface}; }}
     #codeEditor {{ background: {p.surface}; color: {p.text}; border: none; selection-background-color: {p.selection}; font-family: 'Segoe UI'; font-size: 15px; }}
     #codePaneTitle {{ background: {p.surface_alt}; color: {p.text}; border-bottom: 1px solid {p.border}; padding: 4px 12px; font-weight: 600; }}
+    #findBar {{ background: {p.surface_alt}; border-bottom: 1px solid {p.border}; }}
+    #findInput {{ background: {p.surface}; color: {p.text}; border: 1px solid {p.border}; border-radius: {RADIUS["sm"]}px; padding: 5px 8px; selection-background-color: {p.accent}; }}
+    #findInput:focus {{ border-color: {p.accent}; }}
+    #findStatus {{ background: transparent; color: {p.text_muted}; padding: 0 5px; }}
     #pythonPreview {{ background: {p.surface}; color: {p.text}; border: none; selection-background-color: {p.selection}; font-family: 'Segoe UI'; font-size: 15px; }}
 
     #outputHeader {{ background: {p.surface_alt}; border-top: 1px solid {p.border}; }}
@@ -375,11 +360,11 @@ def build_stylesheet(mode, glass_effects=True):
     #designerTool {{ background: {p.surface}; color: {p.text}; border: 1px solid {p.border}; border-radius: {RADIUS["sm"]}px; padding: 8px; text-align: right; }}
     #designerTool:hover {{ background: {p.border_glass if glass_effects else p.border}; border-color: {p.accent}; }}
     #designerCanvas {{ background: {p.canvas}; border: none; }}
-    #canvasFrame {{ background: #fafafa; border: 1px solid {p.border}; }}
-    #canvasTitle {{ background: #202124; color: white; padding: 10px; font-weight: 600; }}
-    #canvasNavigation {{ background: #050505; border-top: 1px solid #2f3336; min-height: 48px; max-height: 48px; }}
-    #canvasNavigationButton {{ background: transparent; color: #f2f2f2; border: none; padding: 6px 2px; font-size: 10px; }}
-    #canvasNavigationButton:hover {{ background: #16181c; border-radius: 12px; }}
+    #phoneFrame {{ background: #fafafa; border: 8px solid #333333; border-radius: 24px; }}
+    #phoneTitle {{ background: #202124; color: white; padding: 10px; font-weight: 600; }}
+    #phoneNavigation {{ background: #050505; border-top: 1px solid #2f3336; min-height: 48px; max-height: 48px; }}
+    #phoneNavigationButton {{ background: transparent; color: #f2f2f2; border: none; padding: 6px 2px; font-size: 10px; }}
+    #phoneNavigationButton:hover {{ background: #16181c; border-radius: 12px; }}
     #designerItem {{ background: transparent; border: 2px solid transparent; border-radius: {RADIUS["sm"]}px; }}
     #designerItem[selected="true"] {{ border-color: {p.accent}; background: {rgba(p.accent, 0.12)}; }}
     #designerItem QLabel, #designerItem QLineEdit, #designerItem QPushButton {{ color: #202124; background: #ffffff; border: 1px solid #bdbdbd; border-radius: {RADIUS["sm"]}px; padding: 8px; }}
@@ -406,6 +391,7 @@ def build_stylesheet(mode, glass_effects=True):
     #ragRemoveButton {{ background: transparent; color: {p.danger}; border: 1px solid {rgba(p.danger, 0.4)}; border-radius: {RADIUS["sm"]}px; padding: 6px 12px; }}
     #ragRemoveButton:hover {{ background: {rgba(p.danger, 0.16)}; color: {p.danger_hover}; border-color: {p.danger}; }}
     #ragRemoveButton:disabled {{ color: {p.text_dim}; border-color: {p.border}; }}
+<<<<<<< HEAD
 
     #aiProvidersPage {{ background: {p.surface}; }}
     #aiProvidersList {{ background: {p.surface_alt}; border: 1px solid {p.border}; border-radius: {RADIUS["md"]}px; outline: none; color: {p.text}; padding: 4px; }}
@@ -429,4 +415,6 @@ def build_stylesheet(mode, glass_effects=True):
     #osBuilderPage QPushButton#secondaryButton:hover {{ border-color: {p.accent}; background: {p.border_glass}; }}
 =======
 >>>>>>> Stashed changes
+=======
+>>>>>>> parent of aca10fd (v8)
     """

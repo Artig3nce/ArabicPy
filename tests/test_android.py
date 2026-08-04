@@ -1,10 +1,10 @@
 import pytest
 
-from arabicpy.app_dsl import is_app_source, parse_app_source
+from arabicpy.android import export_android_project, generate_kivy, is_android_source, parse_android
 from arabicpy.errors import ArabicPyError
 
 
-APP_SOURCE = """تطبيق "تطبيق الاختبار"
+ANDROID_SOURCE = """تطبيق "تطبيق الاختبار"
 
 رسالة = نص("مرحباً")
 الاسم = حقل("اكتب اسمك")
@@ -15,14 +15,16 @@ APP_SOURCE = """تطبيق "تطبيق الاختبار"
 """
 
 
-def test_detects_and_parses_app_source():
-    assert is_app_source(APP_SOURCE)
+def test_detects_and_generates_kivy_application():
+    assert is_android_source(ANDROID_SOURCE)
 
-    program = parse_app_source(APP_SOURCE)
+    python_code = generate_kivy(ANDROID_SOURCE)
 
-    assert program.title == "تطبيق الاختبار"
-    assert [widget.kind for widget in program.widgets] == ["نص", "حقل", "زر"]
-    assert program.events[0].actions == [("رسالة", "أهلاً بك")]
+    assert "class AlBaaAndroidApp(App):" in python_code
+    assert "self.رسالة = Label(text='مرحباً')" in python_code
+    assert "self.الاسم = TextInput(text='اكتب اسمك', multiline=False)" in python_code
+    assert "self.زر_الترحيب.bind(on_press=self._event_1)" in python_code
+    assert "self.رسالة.text = 'أهلاً بك'" in python_code
 
 
 def test_rejects_unknown_event_target():
@@ -33,17 +35,138 @@ def test_rejects_unknown_event_target():
 """
 
     with pytest.raises(ArabicPyError, match="زر غير معروف"):
-        parse_app_source(source)
+        generate_kivy(source)
 
 
-def test_video_widget_is_parsed():
+def test_exports_main_and_buildozer_spec(tmp_path):
+    main_path, spec_path = export_android_project(ANDROID_SOURCE, tmp_path)
+
+    assert main_path == str(tmp_path / "main.py")
+    assert spec_path == str(tmp_path / "buildozer.spec")
+    assert "AlBaaAndroidApp().run()" in (tmp_path / "main.py").read_text(encoding="utf-8")
+    spec = (tmp_path / "buildozer.spec").read_text(encoding="utf-8")
+    assert "requirements = python3==3.12.9,hostpython3==3.12.9,kivy" in spec
+    assert "title = تطبيق الاختبار" in spec
+    workflow = tmp_path / ".github" / "workflows" / "build-apk.yml"
+    assert workflow.exists()
+    workflow_text = workflow.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in workflow_text
+    assert "actions/upload-artifact@v4" in workflow_text
+    assert "git+https://github.com/kivy/buildozer" in workflow_text
+    assert "libltdl-dev" in workflow_text
+    assert "actions/cache@v4" in workflow_text
+    assert "android.api = 35" in spec
+    assert "android.ndk = 28c" in spec
+    assert "android.accept_sdk_license = True" in spec
+
+
+def test_exports_authenticated_lan_ai_client(tmp_path):
+    export_android_project(
+        ANDROID_SOURCE, tmp_path,
+        "http://192.168.1.20:8765", "private-token",
+    )
+
+    main = (tmp_path / "main.py").read_text(encoding="utf-8")
+    spec = (tmp_path / "buildozer.spec").read_text(encoding="utf-8")
+    assert "المساعد" in main
+    assert "http://192.168.1.20:8765" in main
+    assert "Bearer ' + token" in main
+    assert "private-token" in main
+    assert "android.permissions = INTERNET" in spec
+
+
+def test_video_widget_is_parsed_generated_and_packaged(tmp_path):
     source = '''تطبيق "Video App"
 intro = فيديو("media/intro.mp4")
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
     assert program.widgets[0].kind == "فيديو"
     assert program.widgets[0].text == "media/intro.mp4"
+
+    python_code = generate_kivy(source)
+    assert "from kivy.uix.video import Video" in python_code
+    assert "Video(source='media/intro.mp4'" in python_code
+    assert "allow_fullscreen=True" in python_code
+
+    export_android_project(source, tmp_path)
+    spec = (tmp_path / "buildozer.spec").read_text(encoding="utf-8")
+    assert "ffpyplayer" in spec
+    assert "mp4" in spec
+
+
+def test_element_colors_are_generated_for_kivy():
+    source = """تطبيق "ألوان"
+رسالة = نص("مرحباً")
+لون_النص(رسالة، "#112233")
+لون_الخلفية(رسالة، "#AABBCC")
+زر_أول = زر("اضغط")
+لون_الخلفية(زر_أول، "#FF0000")
+"""
+
+    python_code = generate_kivy(source)
+
+    assert "class ColoredLabel(Label):" in python_code
+    assert "color=[0.0667, 0.1333, 0.2, 1]" in python_code
+    assert "background_color=[0.6667, 0.7333, 0.8, 1]" in python_code
+    assert "background_color=[1.0, 0.0, 0.0, 1]" in python_code
+
+
+def test_screen_background_color_is_generated_for_kivy():
+    source = """تطبيق "خلفية"
+لون_الشاشة("#123456")
+رسالة = نص("مرحباً")
+"""
+
+    python_code = generate_kivy(source)
+
+    assert "from kivy.core.window import Window" in python_code
+    assert "Window.clearcolor = [0.0706, 0.2039, 0.3373, 1]" in python_code
+
+
+def test_bottom_navigation_is_parsed_and_generated():
+    source = '''تطبيق "اجتماعي"
+لون_الشاشة("#000000")
+شريط_سفلي("⌂ الرئيسية | ⌕ البحث | ♢ التنبيهات | ✉ الرسائل")
+عنوان = نص("آخر المنشورات")
+'''
+
+    python_code = generate_kivy(source)
+
+    assert "from kivy.uix.button import Button" in python_code
+    assert "bottom_navigation = BoxLayout" in python_code
+    assert "text='الرئيسية'" in python_code
+    assert "text='الرسائل'" in python_code
+
+
+@pytest.mark.parametrize(
+    ("statement", "rgba"),
+    [
+        ("لون الشاشة اسود", "[0.0, 0.0, 0.0, 1]"),
+        ("لون الشاشة ابيض", "[1.0, 1.0, 1.0, 1]"),
+    ],
+)
+def test_natural_arabic_screen_colors(statement, rgba):
+    source = f'''تطبيق "ألوان عربية"
+{statement}
+رسالة = نص("مرحباً")
+'''
+
+    assert f"Window.clearcolor = {rgba}" in generate_kivy(source)
+
+
+def test_natural_arabic_bottom_navigation():
+    source = '''تطبيق "اجتماعي"
+ضع في شريط السفلي الرئيسية و البحث و التنبيهات و الرسائل
+عنوان = نص("المنشورات")
+'''
+
+    python_code = generate_kivy(source)
+
+    assert "text='الرئيسية'" in python_code
+    assert "text='البحث'" in python_code
+    assert "text='التنبيهات'" in python_code
+    assert "text='الرسائل'" in python_code
 
 
 def test_natural_arabic_widget_text_color():
@@ -54,7 +177,7 @@ def test_natural_arabic_widget_text_color():
 لون النص هو اسود
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     assert program.widgets[0].text_color == "#F2F2F2"
     assert program.widgets[1].text_color == "#000000"
@@ -65,8 +188,8 @@ def test_natural_arabic_application_name():
 رسالة = نص("مرحباً")
 '''
 
-    assert is_app_source(source)
-    assert parse_app_source(source).title == "الباء"
+    assert is_android_source(source)
+    assert parse_android(source).title == "الباء"
 
 
 def test_natural_arabic_click_event():
@@ -78,7 +201,7 @@ def test_natural_arabic_click_event():
     غيّر_النص(رسالة، "أهلاً")
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     assert program.events[0].button == "زر_الترحيب"
     assert program.events[0].actions == [("رسالة", "أهلاً")]
@@ -92,10 +215,13 @@ def test_natural_button_text_and_page_navigation():
     اذهب الى صفحة الرئيسية
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
+    python_code = generate_kivy(source)
 
     assert program.events[0].button == "زر_الترحيب"
     assert program.events[0].actions == [("__page__", "الرئيسية")]
+    assert "self._go_to_page('الرئيسية')" in python_code
+    assert "navigation_button.bind(on_press=" not in python_code
 
 
 def test_natural_arabic_button_creation():
@@ -108,7 +234,7 @@ def test_natural_arabic_button_creation():
     اذهب الى صفحة البحث
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     assert program.widgets[0].name == "زر_اضغط_هنا"
     assert program.widgets[0].text == "اضغط هنا"
@@ -142,7 +268,7 @@ def test_password_function_page_block_syntax():
     تحتوي على رمز
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     password = program.widgets[-1]
     assert password.kind == "كلمة_مرور"
@@ -158,7 +284,7 @@ def test_short_text_color_and_unquoted_page():
 لون النص اسود
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     assert program.widgets[0].page == "قوة كلمة المرور"
     assert program.widgets[0].text_color == "#000000"
@@ -170,7 +296,7 @@ def test_background_color_without_connector_word():
 لون الخلفية #0A0A0A
 '''
 
-    assert parse_app_source(source).widgets[0].background_color == "#0A0A0A"
+    assert parse_android(source).widgets[0].background_color == "#0A0A0A"
 
 
 def test_function_accepts_unindented_print_command():
@@ -182,10 +308,11 @@ def test_function_accepts_unindented_print_command():
 اطبع("مرحبا")
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     assert program.events[0].function_name == "الطباعة"
     assert program.events[0].actions == [("__print__", "مرحبا")]
+    assert "print('مرحبا')" in generate_kivy(source)
 
 
 def test_function_button_without_color_inherits_previous_button_design():
@@ -199,7 +326,7 @@ def test_function_button_without_color_inherits_previous_button_design():
 اطبع("مرحبا")
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     first_button, function_button = program.widgets
     assert function_button.background_color == first_button.background_color == "#000000"
@@ -212,7 +339,7 @@ def test_numbered_natural_text_elements():
 نص 2 = كيف حالك؟
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     assert [(widget.name, widget.kind, widget.text) for widget in program.widgets] == [
         ("نص_1", "نص", "مرحباً بك"),
@@ -230,7 +357,7 @@ def test_standalone_function_uses_latest_button_and_existing_click_event():
     اطبع("تم الفحص")
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     assert len(program.events) == 1
     assert program.events[0].button == "زر_اضغط_هنا"
@@ -251,21 +378,25 @@ def test_comments_are_ignored_inside_password_rules():
     ## تحتوي على رمز
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
 
     assert program.widgets[0].kind == "كلمة_مرور"
 
 
-def test_simple_display_and_field_syntax():
+def test_simple_display_and_field_syntax_generates_live_application_text():
     source = '''اسم التطبيق هو الباء
 اطبع "ما هو اسمك"
 الاسم = حقل "اكتب اسمك"
 اطبع الاسم
 '''
 
-    program = parse_app_source(source)
+    program = parse_android(source)
+    python_code = generate_kivy(source)
 
     assert program.widgets[0].text == "ما هو اسمك"
     assert program.widgets[1].name == "الاسم"
     assert program.widgets[1].natural_syntax
     assert program.widgets[2].bind_to == "الاسم"
+    assert "hint_text='اكتب اسمك', text=''" in python_code
+    assert "self.الاسم.bind(text=lambda _field, value:" in python_code
+    assert "setattr(self.نص_مطبوع_2, 'text', value)" in python_code

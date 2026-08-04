@@ -372,6 +372,7 @@ class AndroidDesigner(QWidget):
         canvas_host_layout.setContentsMargins(12, 14, 12, 12)
         canvas_host_layout.setSpacing(10)
         canvas_host_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+<<<<<<< HEAD
         self.canvas_frame = QFrame(objectName="canvasFrame")
         self.canvas_logical_size = (960, 620)
         self.canvas_frame.setFixedSize(*self.canvas_logical_size)
@@ -387,12 +388,55 @@ class AndroidDesigner(QWidget):
         self.bottom_navigation_layout.setContentsMargins(4, 4, 4, 4)
         self.bottom_navigation_layout.setSpacing(2)
         canvas_frame_layout.addWidget(self.bottom_navigation)
+=======
+        device_bar = QFrame(objectName="designerPanel")
+        device_bar.setFixedHeight(46)
+        device_bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        device_layout = QHBoxLayout(device_bar)
+        device_layout.setContentsMargins(6, 4, 6, 4)
+        device_layout.setSpacing(4)
+        self.device_buttons = {}
+        for key, label in (
+            ("phone", self.t("Phone")),
+            ("tablet", self.t("Tablet")),
+            ("desktop", self.t("Desktop")),
+            ("browser", self.t("Browser")),
+        ):
+            button = QPushButton(label, objectName="designerTool")
+            button.setCheckable(True)
+            button.setChecked(key == "phone")
+            button.clicked.connect(lambda _checked=False, value=key: self.set_device_preview(value))
+            self.device_buttons[key] = button
+            device_layout.addWidget(button)
+        canvas_host_layout.addWidget(device_bar, 0, Qt.AlignCenter)
+        self.phone = QFrame(objectName="phoneFrame")
+        self.preview_device = "phone"
+        self.preview_logical_size = (360, 620)
+        self.phone.setFixedSize(360, 620)
+        phone_layout = QVBoxLayout(self.phone)
+        phone_layout.setContentsMargins(12, 12, 12, 12)
+        self.phone_title = QLabel(self.program.title, objectName="phoneTitle")
+        self.phone_title.setAlignment(Qt.AlignCenter)
+        phone_layout.addWidget(self.phone_title)
+        self.canvas_layout = QVBoxLayout()
+        phone_layout.addLayout(self.canvas_layout, 1)
+        self.bottom_navigation = QFrame(objectName="phoneNavigation")
+        self.bottom_navigation_layout = QHBoxLayout(self.bottom_navigation)
+        self.bottom_navigation_layout.setContentsMargins(4, 4, 4, 4)
+        self.bottom_navigation_layout.setSpacing(2)
+        phone_layout.addWidget(self.bottom_navigation)
+>>>>>>> parent of aca10fd (v8)
         self.page_placeholder = QLabel()
         self.page_placeholder.setAlignment(Qt.AlignCenter)
         self.page_placeholder.setStyleSheet("font-size: 18px; font-weight: 600;")
         self.page_placeholder.hide()
+<<<<<<< HEAD
         canvas_frame_layout.insertWidget(2, self.page_placeholder)
         canvas_host_layout.addWidget(self.canvas_frame, 0, Qt.AlignHCenter | Qt.AlignTop)
+=======
+        phone_layout.insertWidget(2, self.page_placeholder)
+        canvas_host_layout.addWidget(self.phone, 0, Qt.AlignHCenter | Qt.AlignTop)
+>>>>>>> parent of aca10fd (v8)
         canvas_scroll.setWidget(canvas_host)
         root.addWidget(canvas_scroll, 1)
 
@@ -445,6 +489,7 @@ class AndroidDesigner(QWidget):
         properties_layout.addStretch()
         root.addWidget(properties)
         self.refresh_canvas()
+<<<<<<< HEAD
         QTimer.singleShot(0, self.fit_canvas_size)
 
     def fit_canvas_size(self):
@@ -452,11 +497,39 @@ class AndroidDesigner(QWidget):
         if not hasattr(self, "canvas_scroll") or not hasattr(self, "canvas_frame"):
             return
         logical_width, logical_height = self.canvas_logical_size
+=======
+        QTimer.singleShot(0, self.fit_device_preview)
+
+    def set_device_preview(self, device):
+        """Switch the responsive design canvas without changing application data."""
+        sizes = {
+            "phone": (360, 620),
+            "tablet": (720, 760),
+            "desktop": (960, 620),
+            "browser": (960, 620),
+        }
+        self.preview_device = device if device in sizes else "phone"
+        self.preview_logical_size = sizes[self.preview_device]
+        self.phone.setProperty("device", device)
+        for key, button in self.device_buttons.items():
+            button.setChecked(key == self.preview_device)
+        self.fit_device_preview()
+
+    def fit_device_preview(self):
+        """Fit the selected device completely inside the current designer viewport."""
+        if not hasattr(self, "canvas_scroll") or not hasattr(self, "phone"):
+            return
+        logical_width, logical_height = self.preview_logical_size
+>>>>>>> parent of aca10fd (v8)
         viewport = self.canvas_scroll.viewport().size()
         available_width = max(240, viewport.width() - 40)
         available_height = max(300, viewport.height() - 72)
         scale = min(1.0, available_width / logical_width, available_height / logical_height)
+<<<<<<< HEAD
         self.canvas_frame.setFixedSize(
+=======
+        self.phone.setFixedSize(
+>>>>>>> parent of aca10fd (v8)
             max(240, round(logical_width * scale)),
             max(300, round(logical_height * scale)),
         )
@@ -467,7 +540,11 @@ class AndroidDesigner(QWidget):
             and watched is self.canvas_scroll.viewport()
             and event.type() == QEvent.Type.Resize
         ):
+<<<<<<< HEAD
             QTimer.singleShot(0, self.fit_canvas_size)
+=======
+            QTimer.singleShot(0, self.fit_device_preview)
+>>>>>>> parent of aca10fd (v8)
         return super().eventFilter(watched, event)
 
     def load_source(self, source):
@@ -486,7 +563,11 @@ class AndroidDesigner(QWidget):
         return True
 
     def start_preview(self):
+<<<<<<< HEAD
         """Run supported click events directly inside the design canvas."""
+=======
+        """Run supported click events directly inside the phone canvas."""
+>>>>>>> parent of aca10fd (v8)
         self.preview_mode = True
         self.selected_name = None
         self.palette_panel.setEnabled(False)
@@ -520,7 +601,11 @@ class AndroidDesigner(QWidget):
     def show_preview_page(self, page_name):
         if not self.preview_mode:
             return
+<<<<<<< HEAD
         self.canvas_title.setText(page_name)
+=======
+        self.phone_title.setText(page_name)
+>>>>>>> parent of aca10fd (v8)
         page_items = [
             item for item in self.item_widgets.values()
             if item.widget_model.page == page_name
@@ -606,7 +691,11 @@ class AndroidDesigner(QWidget):
         title = self.app_title_edit.text().strip()
         if title and '"' not in title:
             self.program.title = title
+<<<<<<< HEAD
             self.canvas_title.setText(title)
+=======
+            self.phone_title.setText(title)
+>>>>>>> parent of aca10fd (v8)
             self.emit_source()
 
     def choose_screen_color(self):
@@ -615,7 +704,11 @@ class AndroidDesigner(QWidget):
         if not color.isValid():
             return
         self.program.background_color = color.name().upper()
+<<<<<<< HEAD
         self.refresh_canvas_color()
+=======
+        self.refresh_phone_color()
+>>>>>>> parent of aca10fd (v8)
         self.emit_source()
 
     def apply_color_theme(self, theme_name):
@@ -770,8 +863,13 @@ class AndroidDesigner(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         self.item_widgets = {}
+<<<<<<< HEAD
         self.canvas_title.setText(self.program.title)
         self.refresh_canvas_color()
+=======
+        self.phone_title.setText(self.program.title)
+        self.refresh_phone_color()
+>>>>>>> parent of aca10fd (v8)
         self.app_title_edit.setText(self.program.title)
         has_chat = any(widget.kind == "دردشة" for widget in self.program.widgets)
         # A chat widget takes over its whole page like a real messaging screen --
@@ -805,16 +903,27 @@ class AndroidDesigner(QWidget):
             self.text_color_button.setText(self.t("Text Color"))
             self.background_color_button.setText(self.t("Background Color"))
 
+<<<<<<< HEAD
     def refresh_canvas_color(self):
+=======
+    def refresh_phone_color(self):
+>>>>>>> parent of aca10fd (v8)
         color = self.program.background_color or "#FAFAFA"
         is_dark = QColor(color).lightness() < 128
         foreground = "#F2F2F2" if is_dark else "#0F172A"
         surface = "#050505" if is_dark else "#FFFFFF"
         border = "#2F3336" if is_dark else "#CBD5E1"
+<<<<<<< HEAD
         self.canvas_frame.setStyleSheet(
             f"QFrame#canvasFrame {{ background-color: {color}; }}"
         )
         self.canvas_title.setStyleSheet(
+=======
+        self.phone.setStyleSheet(
+            f"QFrame#phoneFrame {{ background-color: {color}; }}"
+        )
+        self.phone_title.setStyleSheet(
+>>>>>>> parent of aca10fd (v8)
             f"background-color: {surface}; color: {foreground}; "
             f"border-bottom: 1px solid {border}; padding: 10px; font-weight: 600;"
         )
@@ -833,16 +942,28 @@ class AndroidDesigner(QWidget):
         navigation_text = "#F2F2F2" if screen_color.lightness() < 128 else "#0F172A"
         for index, label in enumerate(self.program.bottom_navigation):
             button = QPushButton(label)
+<<<<<<< HEAD
             button.setObjectName("canvasNavigationButton")
+=======
+            button.setObjectName("phoneNavigationButton")
+>>>>>>> parent of aca10fd (v8)
             selected = index == self.selected_navigation_index and not self.preview_mode
             border_style = "1px solid #007ACC" if selected else "none"
             selected_background = "rgba(0,122,204,45)" if selected else "transparent"
             button.setStyleSheet(
+<<<<<<< HEAD
                 "QPushButton#canvasNavigationButton {"
                 f"background: {selected_background}; color: {navigation_text}; "
                 f"border: {border_style}; border-radius: 5px; "
                 "font-size: 11px; font-weight: 600; padding: 6px 2px; }"
                 "QPushButton#canvasNavigationButton:pressed { "
+=======
+                "QPushButton#phoneNavigationButton {"
+                f"background: {selected_background}; color: {navigation_text}; "
+                f"border: {border_style}; border-radius: 5px; "
+                "font-size: 11px; font-weight: 600; padding: 6px 2px; }"
+                "QPushButton#phoneNavigationButton:pressed { "
+>>>>>>> parent of aca10fd (v8)
                 "background-color: rgba(0,0,0,70); }"
             )
             button.clicked.connect(

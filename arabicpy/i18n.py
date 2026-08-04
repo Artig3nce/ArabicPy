@@ -20,6 +20,7 @@ TRANSLATIONS = {
     "Save": "حفظ",
     "Refresh Explorer": "تحديث المستكشف",
     "New Android Project": "مشروع تطبيق جديد",
+<<<<<<< HEAD
     "New PySide6 Project...": "مشروع PySide6 جديد...",
     "New PySide6 Project": "مشروع PySide6 جديد",
     "Project name:": "اسم المشروع:",
@@ -31,6 +32,9 @@ TRANSLATIONS = {
 =======
     "Export Cross-Platform Project...": "تصدير مشروع لكل المنصات...",
 >>>>>>> Stashed changes
+=======
+    "Export Cross-Platform Project...": "تصدير مشروع لكل المنصات...",
+>>>>>>> parent of aca10fd (v8)
     "Edit": "تحرير",
     "Undo": "تراجع",
     "Redo": "إعادة",
@@ -84,8 +88,10 @@ TRANSLATIONS = {
     "Build an APK in the cloud via GitHub Actions": "إنشاء APK سحابيًا عبر GitHub Actions",
     "▣ Build iOS": "▣ إنشاء iOS",
     "Build an iOS Simulator app in the cloud on macOS via GitHub Actions": "إنشاء تطبيق iOS Simulator سحابيًا على macOS عبر GitHub Actions",
+    "▣ Cross-Platform Bundle": "▣ حزم المنصات",
     "Generate a project for Browser, Windows, Linux, macOS, Android, and iOS": "توليد مشروع للمتصفح وWindows وLinux وmacOS وAndroid وiOS",
     "Designer": "تصميم",
+    "▶ Run": "▶ تشغيل",
 
     # -- Activity bar / sidebar / tabs / find bar --
     "EXPLORER": "المستكشف",
@@ -127,6 +133,8 @@ TRANSLATIONS = {
     "Connected": "متصل الآن",
     "Model:": "النموذج:",
     "Choose an Ollama model for this device, or type its name": "اختر نموذج Ollama لهذا الجهاز أو اكتب اسمه",
+    "Downloading model: %p%": "تنزيل النموذج: %p%",
+    "Pause": "إيقاف",
     "Al-Baa Assistant is thinking": "مساعد الباء يفكر",
     "{base} ({count} queued)": "{base} ({count} في الانتظار)",
     "Type your message...": "اكتب رسالتك هنا...",
@@ -159,6 +167,30 @@ TRANSLATIONS = {
     # -- AI backend --
     "AI Assistant": "المساعد الذكي",
     "Wait until the assistant finishes its current answer.": "انتظر حتى ينتهي المساعد من الإجابة الحالية.",
+    "The embedded AI engine isn't present in this build. Rebuild Al-Baa with llama.cpp included.":
+        "محرك الذكاء المضمّن غير موجود في هذه النسخة. أعد بناء الباء لتضمين llama.cpp.",
+    "This model isn't supported by the embedded engine.": "هذا النموذج غير مدعوم في المحرك المضمّن.",
+    "Download AI Model": "تنزيل نموذج الذكاء",
+    "Al-Baa will download {label} (about {size:.1f} GB).\n\nContinue?":
+        "سيقوم الباء بتنزيل {label} بحجم يقارب {size:.1f} GB.\n\nهل تريد المتابعة؟",
+    "Could not create the model file: {error}": "تعذر إنشاء ملف النموذج: {error}",
+    "Downloading AI model": "جارٍ تنزيل نموذج الذكاء",
+    "Downloading model: {percent}% — {received:.2f} / {total:.2f} GB":
+        "تنزيل النموذج: {percent}% — {received:.2f} / {total:.2f} GB",
+    "Downloading model…": "جارٍ تنزيل النموذج…",
+    "Unknown error": "خطأ غير معروف",
+    "Download paused — click Resume": "تم إيقاف التنزيل — اضغط متابعة",
+    "Resume": "متابعة",
+    "Model download paused": "تنزيل النموذج متوقف مؤقتًا",
+    "Could not download the model: {error}": "تعذر تنزيل النموذج: {error}",
+    "Could not save the model: {error}": "تعذر حفظ النموذج: {error}",
+    "Model download complete — 100%": "اكتمل تنزيل النموذج — 100%",
+    "Downloading or loading AI model": "جارٍ تنزيل أو تحميل نموذج الذكاء",
+    "Could not start the embedded AI engine.": "تعذر تشغيل محرك الذكاء المضمّن.",
+    "Could not connect to the remote AI computer. Make sure it's running and the address is correct.":
+        "تعذر الاتصال بكمبيوتر AI البعيد. تأكد أنه يعمل وأن العنوان صحيح.",
+    "Could not run {model}. Make sure the model is installed, or try again.":
+        "تعذر تشغيل {model}. تأكد أن النموذج مثبت أو أعد المحاولة.",
     "Could not start a connection to the local AI engine.": "تعذر بدء الاتصال بمحرك الذكاء المحلي.",
     "Could Not Start AI Network": "تعذر تشغيل شبكة AI",
     "Could not open port 8765 on this device:\n{error}": "تعذر فتح المنفذ 8765 على هذا الجهاز:\n{error}",
@@ -193,6 +225,19 @@ TRANSLATIONS = {
     "The server started but didn't respond on port 8765.": "بدأ الخادم لكنه لم يستجب على المنفذ 8765.",
     "AI Network": "شبكة AI",
     "The background AI server was stopped and its auto-start was disabled.": "تم إيقاف خادم AI في الخلفية وتعطيل تشغيله التلقائي.",
+    "Remote AI Connection": "اتصال AI بعيد",
+    "AI computer address via Tailscale:\nExample: http://my-desktop:8765\n\nLeave empty to go back to local AI:":
+        "عنوان كمبيوتر AI عبر Tailscale:\nمثال: http://my-desktop:8765\n\nاتركه فارغًا للعودة إلى AI المحلي:",
+    "Remote AI": "AI بعيد",
+    "Local AI": "AI محلي",
+    "Al-Baa will use the Ollama model installed on this device.": "سيستخدم الباء نموذج Ollama الموجود على هذا الجهاز.",
+    "Invalid Address": "عنوان غير صالح",
+    "Enter an address like: http://my-desktop:8765": "اكتب عنوانًا مثل: http://my-desktop:8765",
+    "Remote AI Token": "رمز AI البعيد",
+    "Paste the access token shown on the AI computer:": "الصق رمز الوصول الظاهر في كمبيوتر AI:",
+    "Remote AI ✓": "AI بعيد ✓",
+    "Connection Saved": "تم حفظ الاتصال",
+    "The Al-Baa assistant will now use the AI model on your remote computer.": "سيستخدم مساعد الباء الآن نموذج AI الموجود على كمبيوترك البعيد.",
     "AI Network Always On": "شبكة AI تعمل دائمًا",
     "The AI server is running in the background and will keep running when Al-Baa closes, starting automatically with Windows.":
         "خادم AI يعمل في الخلفية وسيبقى يعمل عند إغلاق الباء، وسيبدأ تلقائيًا مع Windows.",
@@ -201,43 +246,12 @@ TRANSLATIONS = {
         "العنوان: {address}\n\nاترك الباء وOllama يعملان أثناء استخدام تطبيق الهاتف.",
     "The local AI server was stopped.": "تم إيقاف خادم الذكاء المحلي.",
 
-    # -- AI providers --
-    "Manage AI Providers...": "إدارة مزودي الذكاء الاصطناعي...",
-    "Manage AI Providers": "إدارة مزودي الذكاء الاصطناعي",
-    "Add, remove, and switch between AI providers": "أضف مزودي الذكاء الاصطناعي واحذفهم وبدّل بينهم",
-    "Choose which configured AI provider to use": "اختر مزود الذكاء الاصطناعي الذي تريد استخدامه",
-    "Choose a model for the active provider, or type its name": "اختر نموذجًا للمزود النشط أو اكتب اسمه",
-    "AI Providers": "مزودو الذكاء الاصطناعي",
-    "Add Provider": "إضافة مزود",
-    "Edit Provider": "تعديل المزود",
-    "Set as Default": "تعيين كافتراضي",
-    "Remove": "حذف",
-    "Remove Provider": "حذف المزود",
-    'Remove "{name}"?': 'حذف "{name}"؟',
-    "{entry} (default)": "{entry} (افتراضي)",
-    "No AI provider is configured. Add one from the AI menu.":
-        "لا يوجد مزود ذكاء اصطناعي مُعدّ. أضف واحدًا من قائمة AI.",
-    "Could not get a response from {provider}. Make sure it's reachable and try again.":
-        "تعذر الحصول على رد من {provider}. تأكد من إمكانية الوصول إليه وأعد المحاولة.",
-    "Could not get a response from {provider}: {error}": "تعذر الحصول على رد من {provider}: {error}",
-    "Label": "الاسم",
-    "Type": "النوع",
-    "Base URL": "عنوان الخادم (URL)",
-    "API Key": "مفتاح API",
-    "Default Model": "النموذج الافتراضي",
-    "Test Connection": "اختبار الاتصال",
-    "Testing…": "جارٍ الاختبار…",
-    "Connection succeeded.": "نجح الاتصال.",
-    "Connection failed: {error}": "فشل الاتصال: {error}",
-    "Failed: {error}": "فشل: {error}",
-    "Untitled Provider": "مزود بلا اسم",
-    "OK": "موافق",
-
     # -- Android designer / export --
     "Could not read the app code.": "تعذر قراءة كود التطبيق.",
     "Could Not Open Designer": "تعذر فتح التصميم",
     "Fix the error first:\n\n{message}": "أصلح الخطأ أولاً:\n\n{message}",
     "Code": "الكود",
+    "▶ Run": "▶ تشغيل",
     "Designer": "تصميم",
     'This file isn\'t an Android app. Start with: تطبيق "App Name"':
         'هذا الملف ليس تطبيق Android. ابدأ بـ: تطبيق "اسم التطبيق"',
@@ -429,7 +443,7 @@ TRANSLATIONS = {
     "Type a word to search": "اكتب كلمة للبحث",
     "No results": "لا توجد نتائج",
     "Found": "تم العثور",
-    "Stop Preview": "إيقاف المعاينة",
+    "■ Stop Preview": "■ إيقاف المعاينة",
     "App verified successfully. Use the File and Run menus to export or build an APK.":
         "تم التحقق من التطبيق بنجاح. استخدم قائمتي ملف وتشغيل للتصدير أو إنشاء APK.",
     "Ran successfully — no output.": "تم التنفيذ بنجاح — لا توجد مخرجات.",
@@ -447,6 +461,10 @@ TRANSLATIONS = {
     "+ Input Field": "+ حقل إدخال",
     "+ Video": "+ فيديو",
     "Video source": "مصدر الفيديو",
+    "Phone": "هاتف",
+    "Tablet": "جهاز لوحي",
+    "Desktop": "حاسوب",
+    "Browser": "متصفح",
     "Properties": "الخصائص",
     "App Name": "اسم التطبيق",
     "Screen Background Color": "لون خلفية الشاشة",

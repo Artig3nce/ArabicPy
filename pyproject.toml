@@ -24,4 +24,4 @@ albaa = "arabicpy.__main__:run"
 
 
 [tool.setuptools]
-packages = ["arabicpy", "arabicpy.design_system"]
+packages = ["arabicpy"]
