@@ -2,8 +2,9 @@ name: Build Windows release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,14 +23,14 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install --upgrade pip pyinstaller PySide6 .
 
-      - name: Verify release version
+      - name: Generate release version
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          $declared = python -c "from arabicpy.version import __version__; print(__version__)"
-          if ($declared -ne $version) {
-            throw "Tag version $version does not match arabicpy/version.py ($declared)."
-          }
+          $version = "1.0.${{ github.run_number }}"
+          "ALBAA_RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          $versionFile = Get-Content ".\arabicpy\version.py" -Raw
+          $versionFile = $versionFile -replace '__version__ = "[^"]+"', "__version__ = `"$version`""
+          Set-Content ".\arabicpy\version.py" $versionFile -Encoding utf8
 
       - name: Prepare embedded AI engine
         shell: pwsh
@@ -46,14 +47,13 @@ jobs:
       - name: Compile installer
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" ".\AlBaaInstaller.iss"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:ALBAA_RELEASE_VERSION" ".\AlBaaInstaller.iss"
 
       - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
+          $version = $env:ALBAA_RELEASE_VERSION
           $installer = ".\dist\installer\AlBaa-Setup-$version-x64.exe"
-          gh release create "${{ github.ref_name }}" $installer --generate-notes --title "Al-Baa $version"
+          gh release create "v$version" $installer --target "${{ github.sha }}" --generate-notes --title "Al-Baa $version"
