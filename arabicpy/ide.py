@@ -756,11 +756,20 @@ class ArabicPyIDE(QMainWindow):
         self.update_reply = None
         self.update_stream = None
         self.update_asset = None
+        self.update_interactive = False
         if getattr(sys, "frozen", False) and os.name == "nt":
             QTimer.singleShot(1500, self.check_for_updates)
 
-    def check_for_updates(self):
+    def check_for_updates(self, interactive=False):
         """Check GitHub Releases in the background each time the packaged IDE starts."""
+        if self.update_reply is not None:
+            if interactive:
+                QMessageBox.information(self, "Update Manager", "An update check or download is already running.")
+            return
+        self.update_interactive = bool(interactive)
+        self.update_progress.setRange(0, 0)
+        self.update_progress.setFormat("Checking for updates...")
+        self.update_progress.show()
         request = QNetworkRequest(QUrl("https://api.github.com/repos/Artig3nce/ArabicPy/releases/latest"))
         request.setRawHeader(b"Accept", b"application/vnd.github+json")
         request.setRawHeader(b"User-Agent", b"AlBaa-Updater")
@@ -778,14 +787,27 @@ class ArabicPyIDE(QMainWindow):
             return
         try:
             if reply.error() != QNetworkReply.NetworkError.NoError:
+                if self.update_interactive:
+                    QMessageBox.warning(self, "Update Manager", f"Could not check for updates:\n{reply.errorString()}")
+                self.update_progress.hide()
                 return
             release = json.loads(bytes(reply.readAll()).decode("utf-8"))
             if not is_newer_version(str(release.get("tag_name", "")), __version__):
+                self.update_progress.hide()
+                if self.update_interactive:
+                    QMessageBox.information(self, "Update Manager", f"Al-Baa {__version__} is up to date.")
                 return
             asset = installer_asset(release)
             if asset and asset.get("browser_download_url"):
                 self.download_update(asset)
+            else:
+                self.update_progress.hide()
+                if self.update_interactive:
+                    QMessageBox.warning(self, "Update Manager", "The latest release has no Windows installer.")
         except (TypeError, ValueError, UnicodeError):
+            self.update_progress.hide()
+            if self.update_interactive:
+                QMessageBox.warning(self, "Update Manager", "GitHub returned an invalid update response.")
             return
         finally:
             reply.deleteLater()
@@ -797,7 +819,10 @@ class ArabicPyIDE(QMainWindow):
         destination = update_dir / str(asset["name"])
         try:
             self.update_stream = destination.open("wb")
-        except OSError:
+        except OSError as error:
+            self.update_progress.hide()
+            if self.update_interactive:
+                QMessageBox.warning(self, "Update Manager", f"Could not save the update:\n{error}")
             return
         self.update_asset = {**asset, "destination": str(destination)}
         request = QNetworkRequest(QUrl(str(asset["browser_download_url"])))
@@ -808,7 +833,18 @@ class ArabicPyIDE(QMainWindow):
         )
         self.update_reply = self.update_manager.get(request)
         self.update_reply.readyRead.connect(self.write_update_data)
+        self.update_reply.downloadProgress.connect(self.update_download_progress)
         self.update_reply.finished.connect(self.update_download_finished)
+
+    def update_download_progress(self, received, total):
+        self.update_progress.show()
+        if total > 0:
+            self.update_progress.setRange(0, 100)
+            self.update_progress.setValue(min(100, int(received * 100 / total)))
+            self.update_progress.setFormat("Downloading update: %p%")
+        else:
+            self.update_progress.setRange(0, 0)
+            self.update_progress.setFormat("Downloading update...")
 
     def write_update_data(self):
         if self.update_reply is not None and self.update_stream is not None:
@@ -830,10 +866,16 @@ class ArabicPyIDE(QMainWindow):
                 actual = hashlib.sha256(destination.read_bytes()).hexdigest()
                 valid = valid and actual.lower() == digest.split(":", 1)[1].lower()
             if valid:
+                self.update_progress.setRange(0, 100)
+                self.update_progress.setValue(100)
+                self.update_progress.setFormat("Installing update...")
                 self.install_downloaded_update(destination)
             else:
+                self.update_progress.hide()
                 destination.unlink(missing_ok=True)
+                QMessageBox.warning(self, "Update Manager", "The downloaded update failed validation.")
         except OSError:
+            self.update_progress.hide()
             destination.unlink(missing_ok=True)
         finally:
             reply.deleteLater()
@@ -849,8 +891,13 @@ class ArabicPyIDE(QMainWindow):
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
             "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS",
         ]
-        if QProcess.startDetached(str(installer), arguments):
+        started = QProcess.startDetached(str(installer), arguments)
+        started_ok = started[0] if isinstance(started, tuple) else bool(started)
+        if started_ok:
             QTimer.singleShot(500, QApplication.instance().quit)
+        else:
+            self.update_progress.hide()
+            QMessageBox.warning(self, "Update Manager", "Could not start the downloaded installer.")
 
     def show_fitted(self):
         """Open at a useful normal size while staying inside the desktop."""
@@ -970,6 +1017,7 @@ class ArabicPyIDE(QMainWindow):
             ("Build APK", self.build_android_apk),
         ])
         help_menu = self.make_menu("Help", [
+            ("Check for Updates", lambda: self.check_for_updates(True)),
             ("About Al-Baa", self.show_about),
         ])
         overflow_button, overflow_menu = self.make_toolbar_menu("…")
@@ -1006,6 +1054,11 @@ class ArabicPyIDE(QMainWindow):
         self.apk_progress.setFormat("%p%")
         self.apk_progress.setTextVisible(False)
         self.apk_progress.hide()
+        self.update_progress = QProgressBar()
+        self.update_progress.setFixedWidth(180)
+        self.update_progress.setFixedHeight(18)
+        self.update_progress.setTextVisible(True)
+        self.update_progress.hide()
         self.designer_button = self.make_button("Designer", self.toggle_android_designer)
         self.ai_button = self.make_button("✦ AI Assistant", self.ask_local_ai, "aiButton")
         self.ai_button.setCheckable(True)
@@ -1039,7 +1092,7 @@ class ArabicPyIDE(QMainWindow):
             overflow_button,
         ]
 
-        left_actions = [self.rag_progress, self.title_search_box]
+        left_actions = [self.update_progress, self.rag_progress, self.title_search_box]
         right_actions = [self.apk_progress, self.designer_button, self.ai_button, self.run_button]
         layout.addWidget(TitleBar(self, menu_buttons, left_actions, right_actions))
 
