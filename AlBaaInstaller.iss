@@ -1,6 +1,6 @@
 #define MyAppName "Al-Baa IDE"
 #ifndef MyAppVersion
-#define MyAppVersion "0.1.1"
+#define MyAppVersion "0.1.2"
 #endif
 #define MyAppPublisher "Saud"
 #define MyAppExeName "AlBaa.exe"

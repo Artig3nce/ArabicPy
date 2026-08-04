@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "albaa"
-version = "0.1.1"
+version = "0.1.2"
 description = "Al-Baa Arabic programming language"
 dependencies = [
     "pypdf>=5",
