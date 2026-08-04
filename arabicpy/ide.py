@@ -1236,7 +1236,7 @@ class ArabicPyIDE(QMainWindow):
         self.editor = CodeEditor()
         self.editor.set_text_direction(self.direction)
         self.highlighter = ArabicPyHighlighter(self.editor.document())
-        self.editor.setPlainText("yes")
+        self.editor.setPlainText("no")
         self.editor.document().modificationChanged.connect(self.update_tab_title)
         self.enable_autosave(self.editor)
         self.editor.undoAvailable.connect(self.update_undo_redo_buttons)
