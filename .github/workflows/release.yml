@@ -1,4 +1,4 @@
-name: Build Windows release
+name: Build release
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: albaa-windows-release
+  group: albaa-release
   cancel-in-progress: true
 
 jobs:
@@ -63,3 +63,40 @@ jobs:
           $version = $env:ALBAA_RELEASE_VERSION
           $installer = ".\dist\installer\AlBaa-Setup-$version-x64.exe"
           gh release create "v$version" $installer --target "${{ github.sha }}" --generate-notes --title "Al-Baa $version"
+
+  linux-deb:
+    needs: windows-installer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            dpkg-dev libgl1 libegl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libdbus-1-3 libfontconfig1 libx11-xcb1 libxrender1 libxi6
+          python -m pip install --upgrade pip pyinstaller PySide6 .
+
+      - name: Generate release version
+        run: |
+          version="1.0.${{ github.run_number }}"
+          echo "ALBAA_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$version\"/" arabicpy/version.py
+
+      - name: Build .deb package
+        run: |
+          chmod +x build_deb.sh
+          ./build_deb.sh
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$ALBAA_RELEASE_VERSION"
+          gh release upload "v$version" "dist/deb/albaa_${version}_amd64.deb" --clobber

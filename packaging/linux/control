@@ -1,0 +1,16 @@
+Package: albaa
+Version: 0.0.0
+Section: devel
+Priority: optional
+Architecture: amd64
+Maintainer: Saud <noreply@albaa.dev>
+Depends: libc6, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libdbus-1-3, libfontconfig1, libx11-xcb1, libxrender1, libxi6
+Homepage: https://albaa.dev/
+Description: Al-Baa IDE - Arabic programming language editor
+ Al-Baa (الباء) is an Arabic-syntax programming language and its desktop
+ IDE, built with PySide6/Qt. This package installs the IDE as a
+ self-contained bundle under /usr/lib/albaa.
+ .
+ The embedded offline AI assistant is not included in this package; it
+ falls back to a system-installed llama-server, Ollama, or a remote AI
+ host reachable over the network.
