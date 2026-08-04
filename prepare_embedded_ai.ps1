@@ -10,7 +10,11 @@ if (Test-Path -LiteralPath $serverPath -PathType Leaf) {
 }
 
 New-Item -ItemType Directory -Force -Path $engineDir | Out-Null
-$release = Invoke-RestMethod -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+$apiHeaders = @{ "User-Agent" = "AlBaa-Build" }
+if ($env:GITHUB_TOKEN) {
+    $apiHeaders["Authorization"] = "Bearer $($env:GITHUB_TOKEN)"
+}
+$release = Invoke-RestMethod -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -Headers $apiHeaders
 $asset = $release.assets | Where-Object { $_.name -match 'bin-win-cpu-x64\.zip$' } | Select-Object -First 1
 if (-not $asset) {
     throw "The official llama.cpp Windows CPU package was not found in the latest release."
