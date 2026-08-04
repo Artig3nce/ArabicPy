@@ -1,6 +1,11 @@
 """Scaffold a standalone PySide6 desktop app built on the Al-Baa Design System.
 
+<<<<<<< Updated upstream
 Writes a complete runnable project to the selected directory.
+=======
+Mirrors the write-a-whole-project-to-disk pattern used by
+`tauri_export.export_tauri_project` / `android.export_android_project`.
+>>>>>>> Stashed changes
 """
 
 import importlib.resources

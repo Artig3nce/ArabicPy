@@ -286,6 +286,7 @@ def build_stylesheet(mode, glass_effects=True):
     QMenu::item:disabled {{ color: {p.text_dim}; }}
     QMenu::separator {{ height: 1px; background: {p.border}; margin: 4px 10px; }}
 
+<<<<<<< Updated upstream
     QToolButton#runButton {{
         background: {p.accent}; color: {p.text_on_accent}; border: none;
         border-radius: {RADIUS["sm"]}px; padding: 4px 20px 4px 10px; font-size: 13px; font-weight: 600;
@@ -298,6 +299,10 @@ def build_stylesheet(mode, glass_effects=True):
         border-top-right-radius: {RADIUS["sm"]}px; border-bottom-right-radius: {RADIUS["sm"]}px;
     }}
     QToolButton#runButton::menu-button:hover {{ background: {rgba(p.text_on_accent, 0.12)}; }}
+=======
+    #runButton {{ background: {p.success}; color: {p.text_on_accent}; border: none; border-radius: 14px; padding: 0; font-weight: 600; font-size: 12px; }}
+    #runButton:hover {{ background: {p.success_hover}; }}
+>>>>>>> Stashed changes
     #aiButton {{ background: {p.accent}; color: {p.text_on_accent}; border: none; border-radius: {RADIUS["sm"]}px; padding: 4px 10px; font-weight: 600; font-size: 12px; }}
     #aiButton:hover {{ background: {p.accent_hover}; }}
     #aiButton:pressed {{ background: {p.accent_pressed}; }}
@@ -407,6 +412,7 @@ def build_stylesheet(mode, glass_effects=True):
     #aiProvidersList::item {{ padding: 10px; border-radius: {RADIUS["sm"]}px; margin: 2px 0; }}
     #aiProvidersList::item:selected {{ background: {p.selection}; color: {p.text}; }}
     #aiProvidersList::item:hover {{ background: {p.border_glass if glass_effects else p.border}; }}
+<<<<<<< Updated upstream
 
     #osBuilderPage, #osBuilderScroll {{ background: {p.canvas}; border: none; }}
     #osBuilderHeader {{ background: {p.surface}; border-bottom: 1px solid {p.border}; }}
@@ -421,4 +427,6 @@ def build_stylesheet(mode, glass_effects=True):
     #osBuilderPage QPushButton#primaryButton:hover {{ background: {p.accent_hover}; }}
     #osBuilderPage QPushButton#secondaryButton {{ background: {p.surface_alt}; color: {p.text}; border: 1px solid {p.border}; border-radius: {RADIUS["sm"]}px; padding: 6px 12px; }}
     #osBuilderPage QPushButton#secondaryButton:hover {{ border-color: {p.accent}; background: {p.border_glass}; }}
+=======
+>>>>>>> Stashed changes
     """

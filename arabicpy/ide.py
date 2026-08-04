@@ -30,7 +30,11 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
+<<<<<<< Updated upstream
     QPushButton, QMenu, QProgressBar, QScrollArea, QSizePolicy, QSplitter, QTabBar, QTabWidget, QToolButton,
+=======
+    QPushButton, QMenu, QProgressBar, QScrollArea, QSizePolicy, QSplitter, QTabBar, QTabWidget,
+>>>>>>> Stashed changes
     QTextBrowser, QTextEdit, QToolTip, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -41,9 +45,17 @@ from .dart_highlighter import DartHighlighter
 from .keywords import KEYWORDS
 from .lexer import Lexer
 from .parser import Parser
+<<<<<<< Updated upstream
 from .app_dsl import is_app_source
 from .pyside_template import generate_pyside_project, safe_identifier
 from .os_builder import OSBuilderPage
+=======
+from .android import export_android_project, generate_kivy, is_android_source
+from .android_designer import AndroidDesigner
+from .tauri_export import export_tauri_project
+from .pyside_template import generate_pyside_project, safe_identifier
+from . import albaa_linux
+>>>>>>> Stashed changes
 from .ai import DEFAULT_MODEL, system_prompt_for, reply as albaa_ai_reply
 from .ai_server import AlBaaAIServer, local_ipv4
 from .ai_providers import (
@@ -1358,15 +1370,50 @@ class ArabicPyIDE(QMainWindow):
         ai_menu.addSeparator()
         ai_menu.addAction(self.t("Clear Chat History"), self.clear_ai_history)
 
+<<<<<<< Updated upstream
+=======
+        build_menu = QMenu(self.t("Build"))
+        build_menu.setLayoutDirection(self.direction)
+        self.package_button = build_menu.addAction(self.t("▣ Cross-Platform Bundle"), self.export_cross_platform)
+        self.package_button.setToolTip(self.t("Generate a project for Browser, Windows, Linux, macOS, Android, and iOS"))
+        self.apk_tools_button = build_menu.addAction(self.t("↓ Install APK Tools"), self.install_apk_tools)
+        self.apk_tools_button.setToolTip(self.t("Install the local Android APK build requirements"))
+        self.apk_button = build_menu.addAction(self.t("▣ Build APK"), self.build_android_apk)
+        self.apk_button.setToolTip(self.t("Export the Android project and build a debug APK"))
+
+        albaa_linux_menu = QMenu(self.t("Al Baa Linux"))
+        albaa_linux_menu.setLayoutDirection(self.direction)
+        self.linux_builder_tools_button = albaa_linux_menu.addAction(
+            self.t("↓ Install Builder Tools"), self.install_linux_builder_tools
+        )
+        self.linux_builder_tools_button.setToolTip(self.t("Install the live-build toolchain (WSL2 + Ubuntu required)"))
+        self.linux_build_iso_button = albaa_linux_menu.addAction(
+            self.t("▣ Build Al Baa Linux ISO"), self.build_albaa_linux_iso
+        )
+        self.linux_build_iso_button.setToolTip(self.t("Build the official, Ubuntu-based Al Baa Linux ISO"))
+
+        android_menu = self.make_menu("Android", [
+            ("New Android Project", self.new_android_file),
+            ("Export Android Project...", self.export_android),
+            ("Install APK Tools", self.install_apk_tools),
+            ("Build APK", self.build_android_apk),
+        ])
+>>>>>>> Stashed changes
         help_menu = self.make_menu("Help", [
             ("Check for Updates", lambda: self.check_for_updates(True)),
             ("About Al-Baa", self.show_about),
         ])
         overflow_button, overflow_menu = self.make_toolbar_menu("…")
         overflow_button.setObjectName("menuItem")
+<<<<<<< Updated upstream
         overflow_button.setToolTip(self.t("AI, Help"))
         overflow_menu.addAction(self.t("OS Builder"), self.show_os_builder_page)
         overflow_menu.addSeparator()
+=======
+        overflow_button.setToolTip(self.t("Android, AI, Build, Help"))
+        overflow_menu.addMenu(android_menu)
+        overflow_menu.addMenu(albaa_linux_menu)
+>>>>>>> Stashed changes
         overflow_menu.addMenu(ai_menu)
         overflow_menu.addMenu(help_menu)
 
@@ -1389,6 +1436,23 @@ class ArabicPyIDE(QMainWindow):
         self.rag_progress.setFixedHeight(20)
         self.rag_progress.setTextVisible(True)
         self.rag_progress.hide()
+<<<<<<< Updated upstream
+=======
+        self.apk_progress = QProgressBar()
+        self.apk_progress.setRange(0, 0)
+        self.apk_progress.setFixedWidth(150)
+        self.apk_progress.setFixedHeight(18)
+        self.apk_progress.setFormat("%p%")
+        self.apk_progress.setTextVisible(False)
+        self.apk_progress.hide()
+        self.linux_iso_progress = QProgressBar()
+        self.linux_iso_progress.setRange(0, 0)
+        self.linux_iso_progress.setFixedWidth(150)
+        self.linux_iso_progress.setFixedHeight(18)
+        self.linux_iso_progress.setFormat("%p%")
+        self.linux_iso_progress.setTextVisible(False)
+        self.linux_iso_progress.hide()
+>>>>>>> Stashed changes
         self.update_progress = QProgressBar()
         self.update_progress.setFixedWidth(180)
         self.update_progress.setFixedHeight(18)
@@ -1396,6 +1460,7 @@ class ArabicPyIDE(QMainWindow):
         self.update_progress.hide()
         self.ai_button = self.make_button("✦ AI Assistant", self.ask_local_ai, "aiButton")
         self.ai_button.setCheckable(True)
+<<<<<<< Updated upstream
         self.run_button = QToolButton(objectName="runButton")
         self.run_button.setText("▷")
         self.run_button.setPopupMode(QToolButton.MenuButtonPopup)
@@ -1406,6 +1471,10 @@ class ArabicPyIDE(QMainWindow):
         run_menu.addAction(self.t("Run Program"), self.run_code)
         run_menu.addAction(self.t("Clear Output"), self.clear_output)
         self.run_button.setMenu(run_menu)
+=======
+        self.run_button = self.make_button("▶", self.run_code, "runButton")
+        self.run_button.setFixedSize(28, 28)
+>>>>>>> Stashed changes
         self.run_button.setToolTip(self.t("Run"))
 
         self.title_search_box = QLineEdit(objectName="titleSearchBox")
@@ -1422,7 +1491,13 @@ class ArabicPyIDE(QMainWindow):
                 ("Open File...", self.open_file),
                 ("Open Folder...", self.open_folder), ("Close Folder", self.close_folder),
                 ("Save", self.save_file), ("Refresh Explorer", self.refresh_file_list),
+<<<<<<< Updated upstream
                 ("New PySide6 Project...", self.new_pyside6_project),
+=======
+                ("New Android Project", self.new_android_file),
+                ("New PySide6 Project...", self.new_pyside6_project),
+                ("Export Cross-Platform Project...", self.export_cross_platform),
+>>>>>>> Stashed changes
             ]),
             edit_button,
             self.make_menu_button("Select", [
@@ -1437,7 +1512,11 @@ class ArabicPyIDE(QMainWindow):
         ]
 
         left_actions = [self.update_progress, self.rag_progress, self.title_search_box]
+<<<<<<< Updated upstream
         right_actions = [self.ai_button, self.run_button]
+=======
+        right_actions = [self.apk_progress, self.linux_iso_progress, self.designer_button, self.ai_button, self.run_button]
+>>>>>>> Stashed changes
         layout.addWidget(TitleBar(self, menu_buttons, left_actions, right_actions))
 
         workspace = QHBoxLayout()
@@ -1578,9 +1657,12 @@ class ArabicPyIDE(QMainWindow):
         self.ai_providers_page = self.build_ai_providers_page()
         self.ai_providers_page.hide()
         editor_layout.addWidget(self.ai_providers_page)
+<<<<<<< Updated upstream
         self.os_builder_page = OSBuilderPage()
         self.os_builder_page.hide()
         editor_layout.addWidget(self.os_builder_page)
+=======
+>>>>>>> Stashed changes
         self.editor = CodeEditor()
         self.editor.wordDetailsRequested.connect(self.show_word_details_panel)
         self.editor.set_text_direction(self.direction)
@@ -1765,6 +1847,16 @@ class ArabicPyIDE(QMainWindow):
         self.editor.cursorPositionChanged.connect(self.update_position)
         layout.addWidget(status)
         self.setCentralWidget(root)
+<<<<<<< Updated upstream
+=======
+        self.android_project_path = None
+        self.android_build_process = None
+        self.apk_install_process = None
+        self.linux_iso_build_process = None
+        self.linux_builder_install_process = None
+        self.linux_builder_install_stage = None
+        self.apk_install_stage = None
+>>>>>>> Stashed changes
         self.python_run_process = None
         self.terminal_process = None
         self.terminal_stdout_buffer = ""
@@ -1774,6 +1866,10 @@ class ArabicPyIDE(QMainWindow):
         self.ai_stream_row = None
         self.ai_stream_bubble = None
         self.ai_stream_text = ""
+<<<<<<< Updated upstream
+=======
+        self.updating_from_designer = False
+>>>>>>> Stashed changes
         saved_folder = str(QSettings("AlBaa", "AlBaaIDE").value("project_folder", "") or "")
         if saved_folder and os.path.isdir(saved_folder):
             self.open_folder_path(saved_folder)
@@ -2375,13 +2471,18 @@ class ArabicPyIDE(QMainWindow):
         self.set_active_activity(self.activity_buttons[4])
 
     def restore_editor_view(self):
+<<<<<<< Updated upstream
         """Leave auxiliary pages and bring the code editor back."""
+=======
+        """Leave the RAG library / AI providers page (if open) and bring the code editor back."""
+>>>>>>> Stashed changes
         if self.rag_library_page.isVisible():
             self.rag_library_page.hide()
             self.code_splitter.show()
         if self.ai_providers_page.isVisible():
             self.ai_providers_page.hide()
             self.code_splitter.show()
+<<<<<<< Updated upstream
         if self.os_builder_page.isVisible():
             self.os_builder_page.hide()
             self.code_splitter.show()
@@ -2395,6 +2496,8 @@ class ArabicPyIDE(QMainWindow):
         self.os_builder_page.show()
         self.sidebar.hide()
         self.set_active_activity(self.os_builder_activity_button)
+=======
+>>>>>>> Stashed changes
 
     def restore_sidebar_explorer_content(self):
         """Leave the new-file language panel (if open) and bring the file list/tree back."""
@@ -3444,6 +3547,10 @@ class ArabicPyIDE(QMainWindow):
 
     def show_ai_providers_page(self):
         self.restore_sidebar_explorer_content()
+<<<<<<< Updated upstream
+=======
+        self.android_designer.hide()
+>>>>>>> Stashed changes
         self.code_splitter.hide()
         self.rag_library_page.hide()
         self.ai_providers_page.show()
@@ -3613,12 +3720,48 @@ class ArabicPyIDE(QMainWindow):
             clamped_height = min(self.height(), available.height())
             QTimer.singleShot(0, lambda: self.resize(clamped_width, clamped_height))
 
+<<<<<<< Updated upstream
+=======
+    def new_android_file(self):
+        if self.rtl:
+            source = (
+                'اسم التطبيق هو الباء\n\n'
+                'في شريط السفلي ضع:\n'
+                '    الرئيسية\n'
+                '    البحث\n'
+                '    التنبيهات\n'
+                '    الرسائل\n\n'
+                'اطبع "ما هو اسمك"\n\n'
+                'الاسم = حقل "اكتب اسمك"\n\n'
+                'اطبع الاسم\n'
+            )
+        else:
+            source = (
+                'اسم التطبيق هو Al-Baa\n\n'
+                'في شريط السفلي ضع:\n'
+                '    Home\n'
+                '    Search\n'
+                '    Alerts\n'
+                '    Messages\n\n'
+                'اطبع "What is your name"\n\n'
+                'name = حقل "Type your name"\n\n'
+                'اطبع name\n'
+            )
+        editor = self.add_editor_tab(source)
+        editor.document().setModified(True)
+        self.update_tab_title(True)
+        editor.setFocus()
+        QTimer.singleShot(0, self.show_android_designer)
+
+>>>>>>> Stashed changes
     def new_pyside6_project(self):
         """Scaffold a standalone PySide6 app built on the Al-Baa Design System."""
         project_name, accepted = QInputDialog.getText(
             self, self.t("New PySide6 Project"), self.t("Project name:"), text="MyApp"
         )
         if not accepted or not project_name.strip():
+<<<<<<< Updated upstream
+=======
             return
         parent_dir = QFileDialog.getExistingDirectory(self, self.t("Choose a Location for the New Project"))
         if not parent_dir:
@@ -3639,6 +3782,63 @@ class ArabicPyIDE(QMainWindow):
         self.open_folder_path(target)
         self.load_file(os.path.join(target, "main.py"))
         self.run_code()
+
+    def toggle_android_designer(self):
+        if self.android_designer.isVisible():
+            self.hide_android_designer()
+        else:
+            self.show_android_designer()
+
+    def show_android_designer(self):
+        source = self.editor.toPlainText()
+        if not is_android_source(source):
+            self.new_android_file()
+>>>>>>> Stashed changes
+            return
+        parent_dir = QFileDialog.getExistingDirectory(self, self.t("Choose a Location for the New Project"))
+        if not parent_dir:
+            return
+        target = os.path.join(parent_dir, safe_identifier(project_name))
+        if os.path.exists(target):
+            QMessageBox.warning(
+                self, self.t("Folder Already Exists"),
+                self.t('A folder named "{name}" already exists there.', name=os.path.basename(target)),
+            )
+            return
+<<<<<<< Updated upstream
+        try:
+            generate_pyside_project(target, project_name.strip())
+        except OSError as error:
+            QMessageBox.critical(self, self.t("Project Creation Failed"), str(error))
+=======
+        self.editor.clear_error_line()
+        self.output_was_visible_before_designer = self.main_splitter.widget(1).isVisible()
+        self.main_splitter.widget(1).hide()
+        self.main_splitter.setSizes([1, 0])
+        self.code_splitter.hide()
+        self.android_designer.show()
+        self.designer_button.setText(self.t("Code"))
+
+    def hide_android_designer(self):
+        if self.android_designer.preview_mode:
+            self.android_designer.stop_preview()
+            self.run_button.setText("▶")
+            self.run_button.setToolTip(self.t("Run"))
+        self.android_designer.hide()
+        self.code_splitter.show()
+        if self.output_was_visible_before_designer:
+            self.main_splitter.widget(1).show()
+            self.main_splitter.setSizes([650, 190])
+        self.designer_button.setText(self.t("Designer"))
+
+    def apply_designer_source(self, source):
+        if not is_android_source(self.editor.toPlainText()):
+>>>>>>> Stashed changes
+            return
+        QSettings("AlBaa", "AlBaaIDE").setValue("project_folder", target)
+        self.open_folder_path(target)
+        self.load_file(os.path.join(target, "main.py"))
+        self.run_code()
         return
 
         self.output.setPlainText(
@@ -3647,6 +3847,324 @@ class ArabicPyIDE(QMainWindow):
                    "Building a real app for each platform needs that platform's own toolchain.",
                    directory=output_directory)
         )
+
+    def linux_builder_output_dir(self):
+        return os.path.join(
+            os.environ.get("LOCALAPPDATA", tempfile.gettempdir()), "AlBaa", "linux_builder", "output"
+        )
+
+    @staticmethod
+    def windows_path_to_wsl(path):
+        """C:\\Users\\... -> /mnt/c/Users/... , the path WSL2 uses for the same file."""
+        drive, rest = path[0].lower(), path[2:].replace("\\", "/")
+        return f"/mnt/{drive}{rest}"
+
+    def check_linux_build_disk_space(self):
+        """Return (ok, message). A live-build XFCE run needs headroom both on
+        the Windows host drive (where the WSL2 vhdx grows and the final ISO
+        is copied to) and inside WSL2's own filesystem (the live-build chroot)."""
+        host_root = os.environ.get("LOCALAPPDATA", tempfile.gettempdir())
+        try:
+            host_free_gb = shutil.disk_usage(host_root).free / (1024 ** 3)
+        except OSError:
+            host_free_gb = None
+
+        wsl_free_gb = None
+        check = QProcess(self)
+        check.setProgram("wsl.exe")
+        check.setArguments(["-d", "Ubuntu", "-u", "root", "--", "df", "--output=avail", "-B1", "/"])
+        check.start()
+        if check.waitForStarted(2500) and check.waitForFinished(8000):
+            output = bytes(check.readAllStandardOutput()).decode("utf-8", errors="replace")
+            lines = [line.strip() for line in output.splitlines() if line.strip()]
+            if len(lines) >= 2 and lines[1].isdigit():
+                wsl_free_gb = int(lines[1]) / (1024 ** 3)
+
+        if host_free_gb is not None and host_free_gb < 25:
+            return False, self.t(
+                "Only {free:.1f} GB free on the Windows drive. Al Baa Linux Builder needs at least 25 GB free.",
+                free=host_free_gb,
+            )
+        if wsl_free_gb is not None and wsl_free_gb < 15:
+            return False, self.t(
+                "Only {free:.1f} GB free inside WSL2's Ubuntu filesystem. Al Baa Linux Builder needs at least 15 GB free there.",
+                free=wsl_free_gb,
+            )
+        if host_free_gb is not None and host_free_gb < 35:
+            return True, self.t(
+                "Only {free:.1f} GB free on the Windows drive. The build should fit, but it's close.",
+                free=host_free_gb,
+            )
+        return True, ""
+
+    def linux_builder_tools_are_ready(self):
+        """Return True only when the live-build toolchain is installed in WSL2."""
+        check = QProcess(self)
+        check.setProgram("wsl.exe")
+        check.setArguments(["-d", "Ubuntu", "-u", "root", "--", "test", "-x", "/usr/bin/lb"])
+        check.start()
+        if not check.waitForStarted(2500):
+            return False
+        if not check.waitForFinished(8000):
+            check.kill()
+            return False
+        return check.exitCode() == 0
+
+    def install_linux_builder_tools(self):
+        """Install WSL2 first if needed, then the live-build toolchain."""
+        if self.linux_builder_install_process is not None:
+            self.output.setPlainText(
+                self.t("Al Baa Linux builder tools are already being installed. Wait for it to finish.")
+            )
+            return
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText(self.t("Checking WSL2 and Ubuntu...\n"))
+        self.linux_builder_tools_button.setEnabled(False)
+        self.linux_build_iso_button.setEnabled(False)
+        self.linux_builder_tools_button.setText(self.t("… Checking"))
+        self.linux_iso_progress.setToolTip(self.t("Checking and installing Al Baa Linux builder tools"))
+        self.linux_iso_progress.show()
+        self.linux_builder_install_stage = "check"
+        process = QProcess(self)
+        self.linux_builder_install_process = process
+        process.setProgram("wsl.exe")
+        process.setArguments(["-d", "Ubuntu", "-u", "root", "--", "true"])
+        process.readyReadStandardOutput.connect(self.read_linux_builder_install_output)
+        process.readyReadStandardError.connect(self.read_linux_builder_install_output)
+        process.finished.connect(self.linux_builder_install_finished)
+        process.start()
+
+    def read_linux_builder_install_output(self):
+        process = self.linux_builder_install_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
+        if data:
+            encoding = "utf-16" if b"\x00" in data[:20] else "utf-8"
+            self.output.appendPlainText(data.decode(encoding, errors="replace").rstrip())
+
+    def linux_builder_install_finished(self, exit_code, _status):
+        process = self.linux_builder_install_process
+        if process is not None:
+            self.read_linux_builder_install_output()
+            process.deleteLater()
+        self.linux_builder_install_process = None
+
+        if self.linux_builder_install_stage == "check":
+            if exit_code != 0:
+                self.start_linux_builder_wsl_install()
+                return
+            self.start_linux_builder_tools_install()
+            return
+
+        if self.linux_builder_install_stage == "wsl":
+            if exit_code == 0:
+                message = self.t(
+                    "The WSL2 and Ubuntu installation step finished.\n\n"
+                    "Restart Windows now, then open «Al-Baa» and click "
+                    "«Install Builder Tools» again to finish the live-build toolchain."
+                )
+                self.output.appendPlainText("\n" + message)
+                QMessageBox.information(self, self.t("First Stage Complete"), message)
+            else:
+                message = self.t(
+                    "WSL2 installation failed with code {code}.\n\n"
+                    "The Android menu's «Install APK Tools» offers a Windows component repair "
+                    "option for this same failure -- try that, then click «Install Builder Tools» again.",
+                    code=exit_code,
+                )
+                self.output.appendPlainText("\n" + message)
+                QMessageBox.critical(self, self.t("WSL2 Installation Failed"), message)
+            self.reset_linux_builder_install_button()
+            return
+
+        if exit_code == 0:
+            message = self.t(
+                "Al Baa Linux builder tools installed successfully. You can now click Build Al Baa Linux ISO."
+            )
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.information(self, self.t("Installation Complete"), message)
+        else:
+            message = self.t(
+                "Al Baa Linux builder tools installation failed with code {code}. Check the output log.\n\n"
+                "If Ubuntu is newly installed, open it once and finish its setup, then try again.",
+                code=exit_code,
+            )
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.critical(self, self.t("Installation Failed"), message)
+        self.reset_linux_builder_install_button()
+
+    def start_linux_builder_wsl_install(self):
+        """Run the elevated Windows installer while keeping its lifecycle visible."""
+        self.linux_builder_install_stage = "wsl"
+        self.linux_builder_tools_button.setText(self.t("… Installing WSL2"))
+        self.output.setPlainText(
+            self.t("Windows will ask for administrator permission to install WSL2 and Ubuntu.\n"
+                   "Approve the prompt and wait until it finishes. Don't close «Al-Baa».\n\n")
+        )
+        elevated_script = (
+            "wsl.exe --install --web-download -d Ubuntu; "
+            "$result = $LASTEXITCODE; "
+            "Write-Host ''; "
+            "if ($result -eq 0) { Write-Host 'WSL installation finished.' -ForegroundColor Green } "
+            "else { Write-Host ('WSL installation failed. Exit code: ' + $result) -ForegroundColor Red }; "
+            "Read-Host 'Press Enter to return to AlBaa'; exit $result"
+        )
+        encoded_script = base64.b64encode(elevated_script.encode("utf-16-le")).decode("ascii")
+        command = (
+            "$p = Start-Process -FilePath powershell.exe -WindowStyle Normal "
+            f"-ArgumentList '-NoProfile','-EncodedCommand','{encoded_script}' "
+            "-Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+        )
+        process = QProcess(self)
+        self.linux_builder_install_process = process
+        process.setProgram("powershell.exe")
+        process.setArguments(["-NoProfile", "-Command", command])
+        process.readyReadStandardOutput.connect(self.read_linux_builder_install_output)
+        process.readyReadStandardError.connect(self.read_linux_builder_install_output)
+        process.finished.connect(self.linux_builder_install_finished)
+        process.start()
+
+    def start_linux_builder_tools_install(self):
+        self.linux_builder_install_stage = "tools"
+        self.output.setPlainText(
+            self.t("Starting to install the live-build toolchain inside WSL2...\n"
+                   "This may take a few minutes depending on your internet speed.\n\n")
+        )
+        self.linux_builder_tools_button.setText(self.t("… Installing"))
+        process = QProcess(self)
+        self.linux_builder_install_process = process
+        process.setProgram("wsl.exe")
+        process.setArguments(["-u", "root", "--", "bash", "-lc", albaa_linux.builder_tools_install_script()])
+        process.readyReadStandardOutput.connect(self.read_linux_builder_install_output)
+        process.readyReadStandardError.connect(self.read_linux_builder_install_output)
+        process.finished.connect(self.linux_builder_install_finished)
+        process.start()
+
+    def reset_linux_builder_install_button(self):
+        self.linux_builder_install_stage = None
+        self.linux_builder_tools_button.setEnabled(True)
+        self.linux_build_iso_button.setEnabled(True)
+        self.linux_builder_tools_button.setText(self.t("↓ Install Builder Tools"))
+        self.linux_iso_progress.hide()
+
+    def build_albaa_linux_iso(self):
+        if self.linux_iso_build_process is not None:
+            self.output.setPlainText(self.t("An Al Baa Linux build is already in progress. Wait for it to finish."))
+            return
+        if not self.linux_builder_tools_are_ready():
+            self.main_splitter.widget(1).show()
+            self.output.setPlainText(
+                self.t("Al Baa Linux builder tools aren't fully set up. First click: Install Builder Tools.\n"
+                       "If you just installed WSL2 on Windows, restart the device and click Install again.")
+            )
+            QMessageBox.warning(
+                self, self.t("Builder Tools Not Ready"),
+                self.t("Can't build Al Baa Linux right now.\n\n"
+                       "Click «Install Builder Tools» and complete every step first. "
+                       "You may need to restart Windows.")
+            )
+            return
+        ok, message = self.check_linux_build_disk_space()
+        if not ok:
+            self.main_splitter.widget(1).show()
+            self.output.setPlainText(message)
+            QMessageBox.warning(self, self.t("Not Enough Disk Space"), message)
+            return
+
+        output_dir = self.linux_builder_output_dir()
+        os.makedirs(output_dir, exist_ok=True)
+        output_iso_path = os.path.join(output_dir, albaa_linux.ISO_FILENAME)
+        output_iso_wsl_path = self.windows_path_to_wsl(output_iso_path)
+
+        wallpaper_base64 = ""
+        wallpaper_path = os.path.join(os.path.dirname(__file__), "..", "assets", "albaa.png")
+        if os.path.isfile(wallpaper_path):
+            with open(wallpaper_path, "rb") as file:
+                wallpaper_base64 = base64.b64encode(file.read()).decode("ascii")
+
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText(
+            self.t("Starting the Al Baa Linux build inside WSL2...\n"
+                   "This produces a full Ubuntu-based ISO and can take a long time.\n\n")
+            + (message + "\n\n" if message else "")
+        )
+        process = QProcess(self)
+        self.linux_iso_build_process = process
+        self.linux_build_iso_button.setEnabled(False)
+        self.linux_builder_tools_button.setEnabled(False)
+        self.linux_build_iso_button.setText(self.t("… Building ISO"))
+        self.linux_iso_progress.setToolTip(self.t("Building Al Baa Linux ISO"))
+        self.linux_iso_progress.show()
+        process.setProgram("wsl.exe")
+        process.setArguments([
+            "-d", "Ubuntu", "-u", "root", "--", "bash", "-lc",
+            albaa_linux.lb_build_script(output_iso_wsl_path, wallpaper_base64),
+        ])
+        process.readyReadStandardOutput.connect(self.read_linux_build_output)
+        process.readyReadStandardError.connect(self.read_linux_build_output)
+        process.errorOccurred.connect(self.linux_build_error)
+        process.finished.connect(self.linux_build_finished)
+        process.start()
+
+    def read_linux_build_output(self):
+        process = self.linux_iso_build_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
+        if data:
+            self.output.appendPlainText(data.decode("utf-8", errors="replace").rstrip())
+
+    def linux_build_error(self, _error):
+        if self.linux_iso_build_process is not None:
+            self.output.appendPlainText(
+                "\n" + self.t("Could not start WSL2/live-build. Make sure they're installed inside WSL.")
+            )
+            self.linux_iso_build_process.deleteLater()
+            self.linux_iso_build_process = None
+        self.linux_build_iso_button.setEnabled(True)
+        self.linux_builder_tools_button.setEnabled(True)
+        self.linux_build_iso_button.setText(self.t("▣ Build Al Baa Linux ISO"))
+        self.linux_iso_progress.hide()
+        QMessageBox.critical(
+            self, self.t("Could Not Build Al Baa Linux"),
+            self.t("Could not run WSL2 or live-build. Click «Install Builder Tools» and try again.")
+        )
+
+    def linux_build_finished(self, exit_code, _status):
+        output_dir = self.linux_builder_output_dir()
+        if exit_code == 0:
+            iso_path = os.path.join(output_dir, albaa_linux.ISO_FILENAME)
+            QSettings("AlBaa", "AlBaaIDE").setValue("linux_builder_last_build_path", iso_path)
+            message = self.t("Al Baa Linux ISO built successfully:\n{path}", path=iso_path)
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.information(self, self.t("Al Baa Linux Built"), message)
+            try:
+                os.startfile(output_dir)
+            except OSError:
+                pass
+        else:
+            message = self.t(
+                "Al Baa Linux build failed with exit code {code}. Check the live-build log in the output.",
+                code=exit_code,
+            )
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.critical(self, self.t("Al Baa Linux Build Failed"), message)
+        if self.linux_iso_build_process is not None:
+            self.linux_iso_build_process.deleteLater()
+            self.linux_iso_build_process = None
+        self.linux_build_iso_button.setEnabled(True)
+        self.linux_builder_tools_button.setEnabled(True)
+        self.linux_build_iso_button.setText(self.t("▣ Build Al Baa Linux ISO"))
+        self.linux_iso_progress.hide()
+
+    # -- Al Baa Linux Builder ------------------------------------------------
+    # Mirrors the Android/Buildozer WSL2 pipeline above. The WSL2-install
+    # step is intentionally its own short copy rather than shared with
+    # install_apk_tools()/start_wsl_install() -- see the "v1's WSL2-install
+    # step is independent" design decision in the Al Baa Linux Builder plan.
+    # No function here accepts a name/branding argument; the fixed identity
+    # lives entirely in arabicpy/albaa_linux.py.
 
     def linux_builder_output_dir(self):
         return os.path.join(

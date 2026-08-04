@@ -27,6 +27,10 @@ TRANSLATIONS = {
     "Folder Already Exists": "المجلد موجود بالفعل",
     'A folder named "{name}" already exists there.': 'يوجد بالفعل مجلد باسم "{name}" في هذا الموقع.',
     "Project Creation Failed": "فشل إنشاء المشروع",
+<<<<<<< Updated upstream
+=======
+    "Export Cross-Platform Project...": "تصدير مشروع لكل المنصات...",
+>>>>>>> Stashed changes
     "Edit": "تحرير",
     "Undo": "تراجع",
     "Redo": "إعادة",
