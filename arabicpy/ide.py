@@ -1414,11 +1414,11 @@ class ArabicPyIDE(QMainWindow):
         self.designer_button = self.make_button("Designer", self.toggle_android_designer)
         self.ai_button = self.make_button("✦", self.ask_local_ai, "aiButton")
         self.ai_button.setToolTip(self.t("AI Assistant"))
-        self.ai_button.setFixedSize(30, 30)
+        self.ai_button.setFixedSize(24, 24)
         self.ai_button.setCheckable(True)
         self.ai_button.setFocusPolicy(Qt.NoFocus)
         self.run_button = self.make_button("▶", self.run_code, "runButton")
-        self.run_button.setFixedSize(30, 30)
+        self.run_button.setFixedSize(24, 24)
         self.run_button.setToolTip(self.t("Run"))
         self.run_button.setFocusPolicy(Qt.NoFocus)
 
