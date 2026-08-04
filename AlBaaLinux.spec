@@ -1,12 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
-
-app_binaries = [('dist/AlBaaAIHost.exe', '.')]
-
+# PyInstaller spec for the Linux .deb build. Unlike AlBaaIDE.spec, this does
+# not bundle AlBaaAIHost.exe -- that binary only exists to auto-start the
+# Ollama LAN bridge via the Windows registry Run key; on Linux the same
+# bridge (arabicpy/ai_server.py) runs in-process instead.
 
 a = Analysis(
     ['launch_ide.py'],
     pathex=[],
-    binaries=app_binaries,
+    binaries=[],
     datas=[],
     hiddenimports=[],
     hookspath=[],
@@ -23,7 +24,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='AlBaa',
+    name='albaa',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -34,7 +35,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/albaa.ico',
 )
 coll = COLLECT(
     exe,
@@ -43,5 +43,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='AlBaa',
+    name='albaa',
 )

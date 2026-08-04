@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Al-Baa IDE
+GenericName=Arabic Programming IDE
+Comment=Arabic-syntax programming language editor
+Exec=albaa
+Icon=albaa
+Terminal=false
+Categories=Development;IDE;
+StartupWMClass=albaa
