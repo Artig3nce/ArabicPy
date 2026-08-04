@@ -357,11 +357,11 @@ def build_stylesheet(mode, glass_effects=True):
     #designerTool {{ background: {p.surface}; color: {p.text}; border: 1px solid {p.border}; border-radius: {RADIUS["sm"]}px; padding: 8px; text-align: right; }}
     #designerTool:hover {{ background: {p.border_glass if glass_effects else p.border}; border-color: {p.accent}; }}
     #designerCanvas {{ background: {p.canvas}; border: none; }}
-    #phoneFrame {{ background: #fafafa; border: 8px solid #333333; border-radius: 24px; }}
-    #phoneTitle {{ background: #202124; color: white; padding: 10px; font-weight: 600; }}
-    #phoneNavigation {{ background: #050505; border-top: 1px solid #2f3336; min-height: 48px; max-height: 48px; }}
-    #phoneNavigationButton {{ background: transparent; color: #f2f2f2; border: none; padding: 6px 2px; font-size: 10px; }}
-    #phoneNavigationButton:hover {{ background: #16181c; border-radius: 12px; }}
+    #canvasFrame {{ background: #fafafa; border: 1px solid {p.border}; }}
+    #canvasTitle {{ background: #202124; color: white; padding: 10px; font-weight: 600; }}
+    #canvasNavigation {{ background: #050505; border-top: 1px solid #2f3336; min-height: 48px; max-height: 48px; }}
+    #canvasNavigationButton {{ background: transparent; color: #f2f2f2; border: none; padding: 6px 2px; font-size: 10px; }}
+    #canvasNavigationButton:hover {{ background: #16181c; border-radius: 12px; }}
     #designerItem {{ background: transparent; border: 2px solid transparent; border-radius: {RADIUS["sm"]}px; }}
     #designerItem[selected="true"] {{ border-color: {p.accent}; background: {rgba(p.accent, 0.12)}; }}
     #designerItem QLabel, #designerItem QLineEdit, #designerItem QPushButton {{ color: #202124; background: #ffffff; border: 1px solid #bdbdbd; border-radius: {RADIUS["sm"]}px; padding: 8px; }}
