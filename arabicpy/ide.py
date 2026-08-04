@@ -20,28 +20,30 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QPointF, QProcess, QRectF, QSettings, QThread, QTimer, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QProcess, QRectF, QSettings, QThread, QTimer, QRect, QSize, Qt, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtGui import (
-    QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QTextBlockFormat,
+    QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QTextBlockFormat,
     QTextCharFormat, QTextCursor, QTextDocument, QTextFormat,
 )
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QMenu, QProgressBar, QScrollArea, QSizePolicy, QSplitter, QTabBar, QTabWidget,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
+    QTextBrowser, QTextEdit, QToolTip, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from . import theme
 from .generator import Generator
 from .highlighter import ArabicPyHighlighter
 from .dart_highlighter import DartHighlighter
+from .keywords import KEYWORDS
 from .lexer import Lexer
 from .parser import Parser
 from .android import export_android_project, generate_kivy, is_android_source
 from .android_designer import AndroidDesigner
 from .tauri_export import export_tauri_project
+from . import albaa_linux
 from .ai import DEFAULT_MODEL, system_prompt_for, reply as albaa_ai_reply
 from .ai_server import AlBaaAIServer, local_ipv4
 from .updater import installer_asset, is_newer_version
@@ -56,6 +58,15 @@ from .rag import (
     remove_document as remove_rag_document,
 )
 from .i18n import LANGUAGE_NAMES, TRANSLATIONS
+
+
+def load_word_notes():
+    raw = QSettings("AlBaa", "AlBaaIDE").value("word_notes", "{}")
+    try:
+        notes = json.loads(str(raw))
+        return notes if isinstance(notes, dict) else {}
+    except (TypeError, ValueError):
+        return {}
 
 
 def apply_native_dark_title_bar(widget, dark):
@@ -95,7 +106,12 @@ class NativeDialogThemeFilter(QObject):
     def style_dialog(self, dialog):
         apply_native_dark_title_bar(dialog, self.window.ide_dark)
         palette = theme.PALETTES.get(self.window.theme_mode, theme.PALETTES[theme.DARK])
-        theme.apply_elevation(dialog, palette, "lg", self.window.glass_effects)
+        # Graphics effects cache a dialog's rendered pixels. Interactive text
+        # fields inside that cache can leave old glyphs behind while typing.
+        if dialog.property("albaaNoElevation"):
+            dialog.setGraphicsEffect(None)
+        else:
+            theme.apply_elevation(dialog, palette, "lg", self.window.glass_effects)
         if not dialog.property("albaaDialogStyled"):
             dialog.setStyleSheet(
                 dialog.styleSheet()
@@ -366,6 +382,8 @@ class PythonIconLabel(QLabel):
 class CodeEditor(QPlainTextEdit):
     """Editor with a compact gutter, current-line cue, and Arabic-friendly defaults."""
 
+    wordDetailsRequested = Signal(str, str)
+
     def __init__(self):
         super().__init__()
         self.line_number_area = LineNumberArea(self)
@@ -387,6 +405,132 @@ class CodeEditor(QPlainTextEdit):
         self.update_line_number_area_width(0)
         self.highlight_current_line()
         self.apply_line_spacing()
+        self._pending_word_card = None
+        self.setMouseTracking(True)
+        self._hover_word = None
+        self._hover_tip = None
+
+    def _word_at(self, pos):
+        """Word under pos, or "" if pos isn't actually inside its glyphs.
+
+        cursorForPosition() snaps to the nearest character no matter how far
+        pos is from any text, so on a mostly-empty document every mouse
+        position would otherwise resolve to the same lone word.
+        """
+        cursor = self.cursorForPosition(pos)
+        cursor.select(QTextCursor.WordUnderCursor)
+        if not cursor.hasSelection():
+            return "", cursor
+        start = QTextCursor(cursor)
+        start.setPosition(cursor.selectionStart())
+        end = QTextCursor(cursor)
+        end.setPosition(cursor.selectionEnd())
+        start_rect = self.cursorRect(start)
+        end_rect = self.cursorRect(end)
+        left = min(start_rect.left(), end_rect.left())
+        right = max(start_rect.left(), end_rect.left())
+        top = min(start_rect.top(), end_rect.top())
+        bottom = max(start_rect.bottom(), end_rect.bottom())
+        if not QRect(left, top, right - left, bottom - top).contains(pos):
+            return "", cursor
+        return cursor.selectedText(), cursor
+
+    def _show_hover_tip(self, global_pos, content):
+        tip = self._hover_tip
+        if tip is None:
+            tip = QLabel(self, Qt.ToolTip | Qt.FramelessWindowHint)
+            tip.setObjectName("hoverWordTip")
+            tip.setTextFormat(Qt.RichText)
+            tip.setAttribute(Qt.WA_ShowWithoutActivating)
+            tip.setStyleSheet(
+                "QLabel#hoverWordTip {"
+                " background:#252526; color:#d4d4d4; border:1px solid #454545;"
+                " border-radius:4px; padding:6px 10px; }"
+            )
+            self._hover_tip = tip
+        tip.setText(content)
+        tip.adjustSize()
+        tip.move(global_pos + QPoint(12, 20))
+        tip.show()
+        theme.fade_in(tip, duration=140)
+
+    def _hide_hover_tip(self):
+        if self._hover_tip is not None:
+            self._hover_tip.hide()
+
+    def mouseMoveEvent(self, event):
+        source_word, _cursor = self._word_at(event.position().toPoint())
+        if source_word != self._hover_word:
+            self._hover_word = source_word
+            saved = load_word_notes().get(source_word)
+            if saved:
+                fields = [
+                    ("Word", saved.get("word", source_word)),
+                    ("Meaning", saved.get("meaning", "")),
+                    ("Example", saved.get("example", "")),
+                    ("Explanation", saved.get("explanation", "")),
+                ]
+                content = "<br>".join(
+                    f"<b>{label}:</b> {html.escape(str(value))}"
+                    for label, value in fields if value
+                )
+                self._show_hover_tip(event.globalPosition().toPoint(), content)
+            else:
+                self._hide_hover_tip()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover_word = None
+        self._hide_hover_tip()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        """Ctrl+click any programming word to open its word card."""
+        if (
+            event.button() == Qt.LeftButton
+            and event.modifiers() & Qt.ControlModifier
+        ):
+            word, cursor = self._word_at(event.position().toPoint())
+            if self._is_programming_word(word):
+                # Don't open the modal dialog here: the left button is still
+                # physically down, so this editor holds Qt's implicit mouse
+                # grab until mouseReleaseEvent fires, and a dialog opened
+                # before that grab clears won't accept clicks/keystrokes in
+                # its fields. Stash the word and open the dialog on release.
+                self._pending_word_card = (word, cursor)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        pending = self._pending_word_card
+        self._pending_word_card = None
+        if pending is not None:
+            word, cursor = pending
+            event.accept()
+            QTimer.singleShot(0, lambda w=word, c=cursor: self.request_word_details(w, c))
+            return
+        super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        menu = self.createStandardContextMenu()
+        word, cursor = self._word_at(event.pos())
+        if self._is_programming_word(word):
+            first_action = menu.actions()[0] if menu.actions() else None
+            action = QAction(f"Word details: {word}", menu)
+            action.triggered.connect(lambda: self.request_word_details(word, cursor))
+            menu.insertAction(first_action, action)
+            menu.insertSeparator(first_action)
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
+    @staticmethod
+    def _is_programming_word(word):
+        """Accept identifiers from Python, ArabicPy, and other code tabs."""
+        return bool(word and re.fullmatch(r"[^\W\d]\w*", word, re.UNICODE))
+
+    def request_word_details(self, word, cursor):
+        self.wordDetailsRequested.emit(word, cursor.block().text().strip())
 
     def set_text_direction(self, direction):
         """Set paragraph direction and matching alignment together -- Qt doesn't derive one from the other."""
@@ -511,17 +655,6 @@ class CodeEditor(QPlainTextEdit):
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
             number += 1
-
-
-class FindInput(QLineEdit):
-    escapePressed = Signal()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self.escapePressed.emit()
-            event.accept()
-            return
-        super().keyPressEvent(event)
 
 
 class TerminalInput(QLineEdit):
@@ -651,9 +784,8 @@ class LanguagePickerDialog(QDialog):
         self.setModal(True)
         self.setFixedSize(360, 220)
         self.chosen_language = None
-        background = "#1e1e1e" if dark else "#f5f7fa"
-        text = "#f2f2f2" if dark else "#1f2937"
-        self.setStyleSheet(f"QDialog {{ background:{background}; }} QLabel {{ color:{text}; }}")
+        p = theme.PALETTES[theme.DARK if dark else theme.LIGHT]
+        self.setStyleSheet(f"QDialog {{ background:{p.surface}; }} QLabel {{ color:{p.text}; }}")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(14)
@@ -666,8 +798,10 @@ class LanguagePickerDialog(QDialog):
             button = QPushButton(label)
             button.setFixedHeight(42)
             button.setStyleSheet(
-                "QPushButton { background:#007ACC; color:white; border:none; border-radius:6px; "
-                "font-size:14px; font-weight:600; } QPushButton:hover { background:#1594E8; }"
+                f"QPushButton {{ background:{p.accent}; color:{p.text_on_accent}; border:none; "
+                f"border-radius:{theme.RADIUS['sm']}px; font-size:14px; font-weight:600; }}"
+                f"QPushButton:hover {{ background:{p.accent_hover}; }}"
+                f"QPushButton:pressed {{ background:{p.accent_pressed}; }}"
             )
             button.clicked.connect(lambda _checked=False, value=code: self.choose(value))
             layout.addWidget(button)
@@ -707,6 +841,7 @@ class ArabicPyIDE(QMainWindow):
             legacy_dark = settings.value("ide_dark", settings.value("ai_chat_dark", True, type=bool), type=bool)
             self.theme_mode = theme.DARK if legacy_dark else theme.LIGHT
         self.glass_effects = settings.value("ide_glass_effects", True, type=bool)
+        self.project_folder = None
         self.ide_dark = self.theme_mode != theme.LIGHT
         self.ai_chat_dark = self.ide_dark
         self.language = str(settings.value("ui_language", "") or "")
@@ -968,6 +1103,70 @@ class ArabicPyIDE(QMainWindow):
             menu.addAction(self.t(label), callback)
         return menu
 
+    def build_word_details_panel(self):
+        panel = QWidget(objectName="wordDetailsPanel")
+        panel.setFixedWidth(320)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(10, 8, 10, 10)
+        panel_layout.setSpacing(8)
+
+        header = QWidget(objectName="wordDetailsHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 5, 8, 5)
+        self.word_details_avatar = QLabel("W", objectName="wordDetailsAvatar")
+        self.word_details_avatar.setAlignment(Qt.AlignCenter)
+        self.word_details_avatar.setFixedSize(24, 22)
+        header_layout.addWidget(self.word_details_avatar)
+        title_box = QVBoxLayout()
+        title_box.setSpacing(0)
+        self.word_details_title = QLabel("Word Details", objectName="wordDetailsTitle")
+        self.word_details_subtitle = QLabel("Select a code word", objectName="wordDetailsSubtitle")
+        title_box.addWidget(self.word_details_title)
+        title_box.addWidget(self.word_details_subtitle)
+        header_layout.addLayout(title_box)
+        header_layout.addStretch()
+        close_button = self.make_button("×", self.close_word_details_panel, "wordDetailsClose")
+        close_button.setFixedSize(22, 22)
+        header_layout.addWidget(close_button)
+        panel_layout.addWidget(header)
+
+        scroll = QScrollArea(objectName="wordDetailsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget(objectName="wordDetailsBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 8, 8, 8)
+        body_layout.setSpacing(7)
+
+        body_layout.addWidget(QLabel("Word"))
+        self.word_details_word = QLineEdit(objectName="wordDetailsWord")
+        body_layout.addWidget(self.word_details_word)
+        body_layout.addWidget(QLabel("Meaning"))
+        self.word_details_meaning = QLineEdit(objectName="wordDetailsMeaning")
+        self.word_details_meaning.setPlaceholderText("Add your meaning...")
+        body_layout.addWidget(self.word_details_meaning)
+        body_layout.addWidget(QLabel("Example"))
+        self.word_details_example = QPlainTextEdit(objectName="wordDetailsExample")
+        self.word_details_example.setMinimumHeight(95)
+        body_layout.addWidget(self.word_details_example)
+        body_layout.addWidget(QLabel("Explanation"))
+        self.word_details_explanation = QTextEdit(objectName="wordDetailsExplanation")
+        self.word_details_explanation.setMinimumHeight(120)
+        body_layout.addWidget(self.word_details_explanation)
+        body_layout.addStretch()
+        scroll.setWidget(body)
+        panel_layout.addWidget(scroll, 1)
+
+        buttons = QHBoxLayout()
+        cancel = QPushButton("Cancel", objectName="wordDetailsCancel")
+        cancel.clicked.connect(self.close_word_details_panel)
+        save = QPushButton("Save", objectName="wordDetailsSave")
+        save.clicked.connect(self.save_word_details_panel)
+        buttons.addWidget(cancel)
+        buttons.addWidget(save)
+        panel_layout.addLayout(buttons)
+        return panel
+
     def setup_ui(self):
         root = QWidget(objectName="appCanvas")
         layout = QVBoxLayout(root)
@@ -984,11 +1183,6 @@ class ArabicPyIDE(QMainWindow):
         view_menu.addSeparator()
         self.theme_button = view_menu.addAction(self.t("☀ Theme"), self.cycle_theme)
         self.theme_button.setToolTip(self.t("Toggle Al-Baa's theme: Dark or Light"))
-        self.effects_button = view_menu.addAction(self.t("◈ Effects: On"), self.toggle_glass_effects)
-        self.effects_button.setCheckable(True)
-        self.effects_button.setChecked(self.glass_effects)
-        self.effects_button.setText(self.t("◈ Effects: On") if self.glass_effects else self.t("◇ Effects: Off"))
-        self.effects_button.setToolTip(self.t("Toggle glass translucency and shadows (off = flat colors, better performance)"))
 
         ai_menu = QMenu(self.t("AI"))
         ai_menu.setLayoutDirection(self.direction)
@@ -1010,6 +1204,17 @@ class ArabicPyIDE(QMainWindow):
         self.apk_button = build_menu.addAction(self.t("▣ Build APK"), self.build_android_apk)
         self.apk_button.setToolTip(self.t("Export the Android project and build a debug APK"))
 
+        albaa_linux_menu = QMenu(self.t("Al Baa Linux"))
+        albaa_linux_menu.setLayoutDirection(self.direction)
+        self.linux_builder_tools_button = albaa_linux_menu.addAction(
+            self.t("↓ Install Builder Tools"), self.install_linux_builder_tools
+        )
+        self.linux_builder_tools_button.setToolTip(self.t("Install the live-build toolchain (WSL2 + Ubuntu required)"))
+        self.linux_build_iso_button = albaa_linux_menu.addAction(
+            self.t("▣ Build Al Baa Linux ISO"), self.build_albaa_linux_iso
+        )
+        self.linux_build_iso_button.setToolTip(self.t("Build the official, Ubuntu-based Al Baa Linux ISO"))
+
         android_menu = self.make_menu("Android", [
             ("New Android Project", self.new_android_file),
             ("Export Android Project...", self.export_android),
@@ -1024,6 +1229,7 @@ class ArabicPyIDE(QMainWindow):
         overflow_button.setObjectName("menuItem")
         overflow_button.setToolTip(self.t("Android, AI, Build, Help"))
         overflow_menu.addMenu(android_menu)
+        overflow_menu.addMenu(albaa_linux_menu)
         overflow_menu.addMenu(ai_menu)
         overflow_menu.addMenu(build_menu)
         overflow_menu.addMenu(help_menu)
@@ -1054,6 +1260,13 @@ class ArabicPyIDE(QMainWindow):
         self.apk_progress.setFormat("%p%")
         self.apk_progress.setTextVisible(False)
         self.apk_progress.hide()
+        self.linux_iso_progress = QProgressBar()
+        self.linux_iso_progress.setRange(0, 0)
+        self.linux_iso_progress.setFixedWidth(150)
+        self.linux_iso_progress.setFixedHeight(18)
+        self.linux_iso_progress.setFormat("%p%")
+        self.linux_iso_progress.setTextVisible(False)
+        self.linux_iso_progress.hide()
         self.update_progress = QProgressBar()
         self.update_progress.setFixedWidth(180)
         self.update_progress.setFixedHeight(18)
@@ -1076,6 +1289,7 @@ class ArabicPyIDE(QMainWindow):
                 ("New File", self.new_file), ("New Flutter File", self.new_flutter_file),
                 ("New Python File", self.new_python_file),
                 ("Open File...", self.open_file),
+                ("Open Folder...", self.open_folder), ("Close Folder", self.close_folder),
                 ("Save", self.save_file), ("Refresh Explorer", self.refresh_file_list),
                 ("New Android Project", self.new_android_file),
                 ("Export Cross-Platform Project...", self.export_cross_platform),
@@ -1093,7 +1307,7 @@ class ArabicPyIDE(QMainWindow):
         ]
 
         left_actions = [self.update_progress, self.rag_progress, self.title_search_box]
-        right_actions = [self.apk_progress, self.designer_button, self.ai_button, self.run_button]
+        right_actions = [self.apk_progress, self.linux_iso_progress, self.designer_button, self.ai_button, self.run_button]
         layout.addWidget(TitleBar(self, menu_buttons, left_actions, right_actions))
 
         workspace = QHBoxLayout()
@@ -1136,12 +1350,31 @@ class ArabicPyIDE(QMainWindow):
         sidebar_layout.setSpacing(0)
         self.explorer_title_label = QLabel(self.t("EXPLORER"), objectName="panelTitle")
         sidebar_layout.addWidget(self.explorer_title_label)
+        project_header = QWidget()
+        project_header_layout = QHBoxLayout(project_header)
+        project_header_layout.setContentsMargins(0, 0, 0, 0)
+        project_header_layout.setSpacing(0)
         self.explorer_project_label = QLabel(self.t("⌄  My Projects"), objectName="panelTitle")
-        sidebar_layout.addWidget(self.explorer_project_label)
+        project_header_layout.addWidget(self.explorer_project_label)
+        project_header_layout.addStretch()
+        self.close_folder_button = self.make_button("×", self.close_folder, "wordDetailsClose")
+        self.close_folder_button.setFixedSize(22, 22)
+        self.close_folder_button.setToolTip(self.t("Close Folder"))
+        self.close_folder_button.hide()
+        project_header_layout.addWidget(self.close_folder_button)
+        sidebar_layout.addWidget(project_header)
         self.file_list = QListWidget(objectName="fileList")
         self.file_list.setLayoutDirection(self.direction)
         self.file_list.itemDoubleClicked.connect(self.open_project_file)
         sidebar_layout.addWidget(self.file_list)
+        self.folder_tree = QTreeWidget(objectName="fileTree")
+        self.folder_tree.setHeaderHidden(True)
+        self.folder_tree.setColumnCount(1)
+        self.folder_tree.setLayoutDirection(self.direction)
+        self.folder_tree.itemDoubleClicked.connect(self.tree_item_double_clicked)
+        self.folder_tree.itemExpanded.connect(self.expand_tree_folder)
+        sidebar_layout.addWidget(self.folder_tree)
+        self.folder_tree.hide()
         self.new_file_panel = self.build_new_file_panel()
         sidebar_layout.addWidget(self.new_file_panel)
         self.new_file_panel.hide()
@@ -1176,30 +1409,6 @@ class ArabicPyIDE(QMainWindow):
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.setSpacing(0)
-        self.find_bar = QWidget(objectName="findBar")
-        find_layout = QHBoxLayout(self.find_bar)
-        find_layout.setDirection(self.box_direction)
-        find_layout.setContentsMargins(8, 5, 8, 5)
-        find_layout.setSpacing(5)
-        self.find_input = FindInput(objectName="findInput")
-        self.find_input.setPlaceholderText(self.t("Search in file…"))
-        self.find_input.setClearButtonEnabled(True)
-        self.find_input.setMaximumWidth(320)
-        self.find_input.returnPressed.connect(self.find_next)
-        self.find_input.escapePressed.connect(self.hide_find_bar)
-        find_layout.addWidget(self.find_input)
-        find_next_button = self.make_button("Next", self.find_next)
-        find_next_button.setToolTip(self.t("Next result (Enter)"))
-        find_layout.addWidget(find_next_button)
-        self.find_status = QLabel("", objectName="findStatus")
-        find_layout.addWidget(self.find_status)
-        find_close_button = self.make_button("×", self.hide_find_bar)
-        find_close_button.setFixedWidth(30)
-        find_close_button.setToolTip(self.t("Close (Escape)"))
-        find_layout.addWidget(find_close_button)
-        find_layout.addStretch()
-        self.find_bar.hide()
-        source_layout.addWidget(self.find_bar)
         source_layout.addWidget(self.tab_widget)
         code_splitter.addWidget(source_panel)
 
@@ -1214,6 +1423,7 @@ class ArabicPyIDE(QMainWindow):
         self.python_tab_spacer = QWidget(objectName="pythonTabSpacer")
         python_layout.addWidget(self.python_tab_spacer)
         self.python_preview = CodeEditor()
+        self.python_preview.wordDetailsRequested.connect(self.show_word_details_panel)
         self.python_preview.setObjectName("pythonPreview")
         # Python source is always Latin-script/LTR, independent of UI language.
         self.python_preview.set_text_direction(Qt.LeftToRight)
@@ -1234,6 +1444,7 @@ class ArabicPyIDE(QMainWindow):
         self.rag_library_page.hide()
         editor_layout.addWidget(self.rag_library_page)
         self.editor = CodeEditor()
+        self.editor.wordDetailsRequested.connect(self.show_word_details_panel)
         self.editor.set_text_direction(self.direction)
         self.highlighter = ArabicPyHighlighter(self.editor.document())
         self.editor.setPlainText("no")
@@ -1297,6 +1508,10 @@ class ArabicPyIDE(QMainWindow):
         main_splitter.addWidget(output_panel)
         main_splitter.setSizes([650, 190])
         workspace.addWidget(main_splitter)
+
+        self.word_details_panel = self.build_word_details_panel()
+        self.word_details_panel.hide()
+        workspace.addWidget(self.word_details_panel)
 
         self.ai_chat_panel = QWidget(objectName="aiChatPanel")
         self.ai_chat_panel.setFixedWidth(300)
@@ -1412,6 +1627,7 @@ class ArabicPyIDE(QMainWindow):
         composer_layout.addLayout(composer_icon_row)
         chat_layout.addWidget(self.ai_composer)
         self.apply_ai_chat_theme()
+        self.apply_word_details_theme()
         self.ai_chat_panel.hide()
         workspace.addWidget(self.ai_chat_panel)
         layout.addLayout(workspace)
@@ -1433,6 +1649,9 @@ class ArabicPyIDE(QMainWindow):
         self.android_project_path = None
         self.android_build_process = None
         self.apk_install_process = None
+        self.linux_iso_build_process = None
+        self.linux_builder_install_process = None
+        self.linux_builder_install_stage = None
         self.apk_install_stage = None
         self.python_run_process = None
         self.terminal_process = None
@@ -1455,7 +1674,11 @@ class ArabicPyIDE(QMainWindow):
         self.ai_engine_wait_attempts = 0
         self.ai_response_buffer = bytearray()
         self.updating_from_designer = False
-        self.refresh_file_list()
+        saved_folder = str(QSettings("AlBaa", "AlBaaIDE").value("project_folder", "") or "")
+        if saved_folder and os.path.isdir(saved_folder):
+            self.open_folder_path(saved_folder)
+        else:
+            self.refresh_file_list()
 
     def refresh_file_list(self):
         self.file_list.clear()
@@ -1482,6 +1705,69 @@ class ArabicPyIDE(QMainWindow):
         paths.insert(0, path)
         settings.setValue("project_files", paths)
         self.refresh_file_list()
+
+    def open_folder(self):
+        path = QFileDialog.getExistingDirectory(self, self.t("Open Folder"), "")
+        if not path:
+            return
+        QSettings("AlBaa", "AlBaaIDE").setValue("project_folder", path)
+        self.open_folder_path(path)
+
+    def open_folder_path(self, path):
+        self.project_folder = path
+        self.explorer_project_label.setText(f"⌄  {os.path.basename(path.rstrip(os.sep)) or path}")
+        self.close_folder_button.show()
+        self.file_list.hide()
+        self.folder_tree.show()
+        self.populate_folder_tree(path)
+
+    def close_folder(self, _checked=False):
+        QSettings("AlBaa", "AlBaaIDE").remove("project_folder")
+        self.project_folder = None
+        self.folder_tree.clear()
+        self.folder_tree.hide()
+        self.close_folder_button.hide()
+        self.explorer_project_label.setText(self.t("⌄  My Projects"))
+        self.file_list.show()
+        self.refresh_file_list()
+
+    def populate_folder_tree(self, root_path):
+        self.folder_tree.clear()
+        self._populate_tree_level(self.folder_tree.invisibleRootItem(), root_path)
+
+    def _populate_tree_level(self, parent, dir_path):
+        """Fill one directory level. Directories get a placeholder child so they
+        show an expand arrow without recursing -- see expand_tree_folder()."""
+        try:
+            entries = list(os.scandir(dir_path))
+        except OSError:
+            return
+        dirs = sorted((e for e in entries if e.is_dir()), key=lambda e: e.name.lower())
+        files = sorted((e for e in entries if not e.is_dir()), key=lambda e: e.name.lower())
+        for entry in dirs:
+            item = QTreeWidgetItem(parent, [entry.name])
+            item.setData(0, Qt.UserRole, entry.path)
+            item.setData(0, Qt.UserRole + 1, "dir")
+            placeholder = QTreeWidgetItem(item, ["…"])
+            placeholder.setData(0, Qt.UserRole + 1, "placeholder")
+        for entry in files:
+            item = QTreeWidgetItem(parent, [f"◇  {entry.name}"])
+            item.setData(0, Qt.UserRole, entry.path)
+            item.setData(0, Qt.UserRole + 1, "file")
+
+    def expand_tree_folder(self, item):
+        if item.childCount() != 1:
+            return
+        child = item.child(0)
+        if child.data(0, Qt.UserRole + 1) != "placeholder":
+            return
+        item.removeChild(child)
+        self._populate_tree_level(item, item.data(0, Qt.UserRole))
+
+    def tree_item_double_clicked(self, item, _column):
+        if item.data(0, Qt.UserRole + 1) != "file":
+            return
+        self.load_file(item.data(0, Qt.UserRole))
 
     def align_code_pane_headers(self):
         """Match Python's header height to ArabicPy's document-tab row."""
@@ -1516,6 +1802,7 @@ class ArabicPyIDE(QMainWindow):
 
     def add_editor_tab(self, content="", path=None, code_language="albaa"):
         editor = CodeEditor()
+        editor.wordDetailsRequested.connect(self.show_word_details_panel)
         editor.code_language = code_language
         # Dart/Flutter and Python source are Latin-script, so they stay LTR
         # regardless of the active UI language -- same reasoning as the
@@ -1973,7 +2260,8 @@ class ArabicPyIDE(QMainWindow):
         self.restore_editor_view()
         self.restore_sidebar_explorer_content()
         self.sidebar.show()
-        self.refresh_file_list()
+        if self.project_folder is None:
+            self.refresh_file_list()
         self.set_active_activity(self.activity_buttons[0])
 
     def show_run_panel(self):
@@ -1988,6 +2276,7 @@ class ArabicPyIDE(QMainWindow):
         self.restore_sidebar_explorer_content()
         self.main_splitter.widget(1).show()
         self.output.setPlainText(self.t("Al-Baa\n\nAn Arabic programming language with an editor for writing and running programs.\nUse File > Open or the Open button to get started."))
+        self.set_active_activity(self.activity_buttons[4])
 
     def restore_editor_view(self):
         """Leave the RAG library page (if open) and bring the code editor back."""
@@ -1996,12 +2285,16 @@ class ArabicPyIDE(QMainWindow):
             self.code_splitter.show()
 
     def restore_sidebar_explorer_content(self):
-        """Leave the new-file language panel (if open) and bring the file list back."""
+        """Leave the new-file language panel (if open) and bring the file list/tree back."""
         if self.new_file_panel.isVisible():
             self.new_file_panel.hide()
             self.explorer_title_label.show()
             self.explorer_project_label.show()
-            self.file_list.show()
+            if self.project_folder is not None:
+                self.close_folder_button.show()
+                self.folder_tree.show()
+            else:
+                self.file_list.show()
         self.new_language_button.setChecked(False)
 
     def build_new_file_panel(self):
@@ -2044,7 +2337,9 @@ class ArabicPyIDE(QMainWindow):
         self.restore_editor_view()
         self.explorer_title_label.hide()
         self.explorer_project_label.hide()
+        self.close_folder_button.hide()
         self.file_list.hide()
+        self.folder_tree.hide()
         self.new_file_panel.show()
         self.sidebar.show()
         self.set_active_activity(None)
@@ -2220,6 +2515,8 @@ class ArabicPyIDE(QMainWindow):
 
     def toggle_ai_chat(self, _checked=False, show=None):
         visible = not self.ai_chat_panel.isVisible() if show is None else show
+        if visible and self.word_details_panel.isVisible():
+            self.hide_panel_immediately(self.word_details_panel, 320)
         self.ai_button.setChecked(visible)
         target = 300 if visible else 0  # matches ai_chat_panel's fixed width when open
 
@@ -2228,6 +2525,94 @@ class ArabicPyIDE(QMainWindow):
             self.ai_chat_input.setFocus()
 
         theme.animate_panel(self.ai_chat_panel, target, on_finished=_on_opened if visible else None)
+
+    @staticmethod
+    def word_notes():
+        return load_word_notes()
+
+    def show_word_details_panel(self, word, line):
+        self.word_details_source_word = word
+        saved = self.word_notes().get(word, {})
+        python_word = KEYWORDS.get(word)
+        explanation = (
+            f"This ArabicPy word is equivalent to Python {python_word}."
+            if python_word else
+            "This is a programming word used in the current code."
+        )
+        self.word_details_word.setText(saved.get("word", word))
+        self.word_details_meaning.setText(saved.get("meaning", ""))
+        self.word_details_example.setPlainText(saved.get("example", line))
+        self.word_details_explanation.setPlainText(saved.get("explanation", explanation))
+        self.word_details_subtitle.setText(word)
+
+        if self.ai_chat_panel.isVisible():
+            self.hide_panel_immediately(self.ai_chat_panel, 300)
+            self.ai_button.setChecked(False)
+
+        def _on_opened():
+            self.word_details_meaning.setFocus()
+
+        if self.word_details_panel.isVisible():
+            self.word_details_meaning.setFocus()
+        else:
+            theme.animate_panel(self.word_details_panel, 320, on_finished=_on_opened)
+
+    def close_word_details_panel(self, _checked=False):
+        theme.animate_panel(self.word_details_panel, 0)
+
+    @staticmethod
+    def hide_panel_immediately(panel, normal_width):
+        animation = getattr(panel, "_albaa_panel_anim", None)
+        if animation is not None:
+            animation.stop()
+        panel.hide()
+        panel.setFixedWidth(normal_width)
+
+    def save_word_details_panel(self, _checked=False):
+        source_word = getattr(self, "word_details_source_word", "")
+        if not source_word:
+            return
+        notes = self.word_notes()
+        notes[source_word] = {
+            "word": self.word_details_word.text(),
+            "meaning": self.word_details_meaning.text(),
+            "example": self.word_details_example.toPlainText(),
+            "explanation": self.word_details_explanation.toPlainText(),
+        }
+        QSettings("AlBaa", "AlBaaIDE").setValue(
+            "word_notes", json.dumps(notes, ensure_ascii=False)
+        )
+        self.word_details_subtitle.setText(f"{source_word} · Saved")
+
+    def apply_word_details_theme(self):
+        p = theme.PALETTES[self.theme_mode]
+        panel = theme.glass_fill(p, self.glass_effects)
+        header = theme.glass_fill(p, self.glass_effects, strong=True)
+        border = p.border_glass
+        self.word_details_panel.setStyleSheet(f"""
+            #wordDetailsPanel {{ background:{panel}; border-left:1px solid {border}; }}
+            #wordDetailsHeader {{ background:{header}; border-bottom:1px solid {border}; }}
+            #wordDetailsAvatar {{ background:{p.accent}; color:{p.text_on_accent}; border-radius:6px; font-weight:800; }}
+            #wordDetailsTitle {{ background:transparent; color:{p.text}; font-size:13px; font-weight:700; }}
+            #wordDetailsSubtitle {{ background:transparent; color:{p.text_muted}; font-size:10px; }}
+            #wordDetailsClose {{ background:transparent; color:{p.text}; border:none; font-size:15px; }}
+            #wordDetailsScroll, #wordDetailsBody {{ background:transparent; border:none; }}
+            #wordDetailsWord, #wordDetailsMeaning, #wordDetailsExample, #wordDetailsExplanation {{
+                background:{p.surface}; color:{p.text}; border:1px solid {p.border};
+                border-radius:6px; padding:7px; selection-background-color:{p.selection};
+            }}
+            #wordDetailsWord:focus, #wordDetailsMeaning:focus,
+            #wordDetailsExample:focus, #wordDetailsExplanation:focus {{ border-color:{p.accent}; }}
+            #wordDetailsCancel, #wordDetailsSave {{
+                border-radius:{theme.RADIUS["sm"]}px; padding:7px 14px; font-weight:600; font-size:12px;
+            }}
+            #wordDetailsSave {{ background:{p.accent}; color:{p.text_on_accent}; border:none; }}
+            #wordDetailsSave:hover {{ background:{p.accent_hover}; }}
+            #wordDetailsSave:pressed {{ background:{p.accent_pressed}; }}
+            #wordDetailsCancel {{ background:transparent; color:{p.text_muted}; border:1px solid {p.border}; }}
+            #wordDetailsCancel:hover {{ background:{p.border_glass if self.glass_effects else p.border}; color:{p.text}; }}
+            #wordDetailsCancel:pressed {{ background:{theme.rgba(p.text, 0.1)}; }}
+        """)
 
     def cycle_theme(self, _checked=False):
         """Toggle between Al-Baa's Dark and Light themes."""
@@ -2244,24 +2629,16 @@ class ArabicPyIDE(QMainWindow):
             highlighter.set_theme(self.ide_dark)
         self.settings_button.set_dark_theme(self.ide_dark)
         self.apply_ai_chat_theme()
+        self.apply_word_details_theme()
         self.apply_elevation_effects()
         self.render_ai_messages()
-
-    def toggle_glass_effects(self, _checked=False):
-        """Let glass translucency/shadows be switched off for performance, in any theme."""
-        self.glass_effects = not self.glass_effects
-        QSettings("AlBaa", "AlBaaIDE").setValue("ide_glass_effects", self.glass_effects)
-        self.effects_button.setChecked(self.glass_effects)
-        self.effects_button.setText(self.t("◈ Effects: On") if self.glass_effects else self.t("◇ Effects: Off"))
-        self.setStyleSheet(self.stylesheet())
-        self.apply_ai_chat_theme()
-        self.apply_elevation_effects()
 
     def apply_elevation_effects(self):
         """(Re)apply the soft depth shadows used on the sidebar, AI panel, and dialogs."""
         palette = theme.PALETTES[self.theme_mode]
         theme.apply_elevation(self.sidebar, palette, "md", self.glass_effects)
         theme.apply_elevation(self.ai_chat_panel, palette, "md", self.glass_effects)
+        theme.apply_elevation(self.word_details_panel, palette, "md", self.glass_effects)
 
     def change_language(self):
         """Let the user switch the IDE's language; applying it needs a restart."""
@@ -3627,6 +4004,324 @@ class ArabicPyIDE(QMainWindow):
         self.apk_button.setText(self.t("▣ Build APK"))
         self.apk_progress.hide()
 
+    # -- Al Baa Linux Builder ------------------------------------------------
+    # Mirrors the Android/Buildozer WSL2 pipeline above. The WSL2-install
+    # step is intentionally its own short copy rather than shared with
+    # install_apk_tools()/start_wsl_install() -- see the "v1's WSL2-install
+    # step is independent" design decision in the Al Baa Linux Builder plan.
+    # No function here accepts a name/branding argument; the fixed identity
+    # lives entirely in arabicpy/albaa_linux.py.
+
+    def linux_builder_output_dir(self):
+        return os.path.join(
+            os.environ.get("LOCALAPPDATA", tempfile.gettempdir()), "AlBaa", "linux_builder", "output"
+        )
+
+    @staticmethod
+    def windows_path_to_wsl(path):
+        """C:\\Users\\... -> /mnt/c/Users/... , the path WSL2 uses for the same file."""
+        drive, rest = path[0].lower(), path[2:].replace("\\", "/")
+        return f"/mnt/{drive}{rest}"
+
+    def check_linux_build_disk_space(self):
+        """Return (ok, message). A live-build XFCE run needs headroom both on
+        the Windows host drive (where the WSL2 vhdx grows and the final ISO
+        is copied to) and inside WSL2's own filesystem (the live-build chroot)."""
+        host_root = os.environ.get("LOCALAPPDATA", tempfile.gettempdir())
+        try:
+            host_free_gb = shutil.disk_usage(host_root).free / (1024 ** 3)
+        except OSError:
+            host_free_gb = None
+
+        wsl_free_gb = None
+        check = QProcess(self)
+        check.setProgram("wsl.exe")
+        check.setArguments(["-d", "Ubuntu", "-u", "root", "--", "df", "--output=avail", "-B1", "/"])
+        check.start()
+        if check.waitForStarted(2500) and check.waitForFinished(8000):
+            output = bytes(check.readAllStandardOutput()).decode("utf-8", errors="replace")
+            lines = [line.strip() for line in output.splitlines() if line.strip()]
+            if len(lines) >= 2 and lines[1].isdigit():
+                wsl_free_gb = int(lines[1]) / (1024 ** 3)
+
+        if host_free_gb is not None and host_free_gb < 25:
+            return False, self.t(
+                "Only {free:.1f} GB free on the Windows drive. Al Baa Linux Builder needs at least 25 GB free.",
+                free=host_free_gb,
+            )
+        if wsl_free_gb is not None and wsl_free_gb < 15:
+            return False, self.t(
+                "Only {free:.1f} GB free inside WSL2's Ubuntu filesystem. Al Baa Linux Builder needs at least 15 GB free there.",
+                free=wsl_free_gb,
+            )
+        if host_free_gb is not None and host_free_gb < 35:
+            return True, self.t(
+                "Only {free:.1f} GB free on the Windows drive. The build should fit, but it's close.",
+                free=host_free_gb,
+            )
+        return True, ""
+
+    def linux_builder_tools_are_ready(self):
+        """Return True only when the live-build toolchain is installed in WSL2."""
+        check = QProcess(self)
+        check.setProgram("wsl.exe")
+        check.setArguments(["-d", "Ubuntu", "-u", "root", "--", "test", "-x", "/usr/bin/lb"])
+        check.start()
+        if not check.waitForStarted(2500):
+            return False
+        if not check.waitForFinished(8000):
+            check.kill()
+            return False
+        return check.exitCode() == 0
+
+    def install_linux_builder_tools(self):
+        """Install WSL2 first if needed, then the live-build toolchain."""
+        if self.linux_builder_install_process is not None:
+            self.output.setPlainText(
+                self.t("Al Baa Linux builder tools are already being installed. Wait for it to finish.")
+            )
+            return
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText(self.t("Checking WSL2 and Ubuntu...\n"))
+        self.linux_builder_tools_button.setEnabled(False)
+        self.linux_build_iso_button.setEnabled(False)
+        self.linux_builder_tools_button.setText(self.t("… Checking"))
+        self.linux_iso_progress.setToolTip(self.t("Checking and installing Al Baa Linux builder tools"))
+        self.linux_iso_progress.show()
+        self.linux_builder_install_stage = "check"
+        process = QProcess(self)
+        self.linux_builder_install_process = process
+        process.setProgram("wsl.exe")
+        process.setArguments(["-d", "Ubuntu", "-u", "root", "--", "true"])
+        process.readyReadStandardOutput.connect(self.read_linux_builder_install_output)
+        process.readyReadStandardError.connect(self.read_linux_builder_install_output)
+        process.finished.connect(self.linux_builder_install_finished)
+        process.start()
+
+    def read_linux_builder_install_output(self):
+        process = self.linux_builder_install_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
+        if data:
+            encoding = "utf-16" if b"\x00" in data[:20] else "utf-8"
+            self.output.appendPlainText(data.decode(encoding, errors="replace").rstrip())
+
+    def linux_builder_install_finished(self, exit_code, _status):
+        process = self.linux_builder_install_process
+        if process is not None:
+            self.read_linux_builder_install_output()
+            process.deleteLater()
+        self.linux_builder_install_process = None
+
+        if self.linux_builder_install_stage == "check":
+            if exit_code != 0:
+                self.start_linux_builder_wsl_install()
+                return
+            self.start_linux_builder_tools_install()
+            return
+
+        if self.linux_builder_install_stage == "wsl":
+            if exit_code == 0:
+                message = self.t(
+                    "The WSL2 and Ubuntu installation step finished.\n\n"
+                    "Restart Windows now, then open «Al-Baa» and click "
+                    "«Install Builder Tools» again to finish the live-build toolchain."
+                )
+                self.output.appendPlainText("\n" + message)
+                QMessageBox.information(self, self.t("First Stage Complete"), message)
+            else:
+                message = self.t(
+                    "WSL2 installation failed with code {code}.\n\n"
+                    "The Android menu's «Install APK Tools» offers a Windows component repair "
+                    "option for this same failure -- try that, then click «Install Builder Tools» again.",
+                    code=exit_code,
+                )
+                self.output.appendPlainText("\n" + message)
+                QMessageBox.critical(self, self.t("WSL2 Installation Failed"), message)
+            self.reset_linux_builder_install_button()
+            return
+
+        if exit_code == 0:
+            message = self.t(
+                "Al Baa Linux builder tools installed successfully. You can now click Build Al Baa Linux ISO."
+            )
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.information(self, self.t("Installation Complete"), message)
+        else:
+            message = self.t(
+                "Al Baa Linux builder tools installation failed with code {code}. Check the output log.\n\n"
+                "If Ubuntu is newly installed, open it once and finish its setup, then try again.",
+                code=exit_code,
+            )
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.critical(self, self.t("Installation Failed"), message)
+        self.reset_linux_builder_install_button()
+
+    def start_linux_builder_wsl_install(self):
+        """Run the elevated Windows installer while keeping its lifecycle visible."""
+        self.linux_builder_install_stage = "wsl"
+        self.linux_builder_tools_button.setText(self.t("… Installing WSL2"))
+        self.output.setPlainText(
+            self.t("Windows will ask for administrator permission to install WSL2 and Ubuntu.\n"
+                   "Approve the prompt and wait until it finishes. Don't close «Al-Baa».\n\n")
+        )
+        elevated_script = (
+            "wsl.exe --install --web-download -d Ubuntu; "
+            "$result = $LASTEXITCODE; "
+            "Write-Host ''; "
+            "if ($result -eq 0) { Write-Host 'WSL installation finished.' -ForegroundColor Green } "
+            "else { Write-Host ('WSL installation failed. Exit code: ' + $result) -ForegroundColor Red }; "
+            "Read-Host 'Press Enter to return to AlBaa'; exit $result"
+        )
+        encoded_script = base64.b64encode(elevated_script.encode("utf-16-le")).decode("ascii")
+        command = (
+            "$p = Start-Process -FilePath powershell.exe -WindowStyle Normal "
+            f"-ArgumentList '-NoProfile','-EncodedCommand','{encoded_script}' "
+            "-Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+        )
+        process = QProcess(self)
+        self.linux_builder_install_process = process
+        process.setProgram("powershell.exe")
+        process.setArguments(["-NoProfile", "-Command", command])
+        process.readyReadStandardOutput.connect(self.read_linux_builder_install_output)
+        process.readyReadStandardError.connect(self.read_linux_builder_install_output)
+        process.finished.connect(self.linux_builder_install_finished)
+        process.start()
+
+    def start_linux_builder_tools_install(self):
+        self.linux_builder_install_stage = "tools"
+        self.output.setPlainText(
+            self.t("Starting to install the live-build toolchain inside WSL2...\n"
+                   "This may take a few minutes depending on your internet speed.\n\n")
+        )
+        self.linux_builder_tools_button.setText(self.t("… Installing"))
+        process = QProcess(self)
+        self.linux_builder_install_process = process
+        process.setProgram("wsl.exe")
+        process.setArguments(["-u", "root", "--", "bash", "-lc", albaa_linux.builder_tools_install_script()])
+        process.readyReadStandardOutput.connect(self.read_linux_builder_install_output)
+        process.readyReadStandardError.connect(self.read_linux_builder_install_output)
+        process.finished.connect(self.linux_builder_install_finished)
+        process.start()
+
+    def reset_linux_builder_install_button(self):
+        self.linux_builder_install_stage = None
+        self.linux_builder_tools_button.setEnabled(True)
+        self.linux_build_iso_button.setEnabled(True)
+        self.linux_builder_tools_button.setText(self.t("↓ Install Builder Tools"))
+        self.linux_iso_progress.hide()
+
+    def build_albaa_linux_iso(self):
+        if self.linux_iso_build_process is not None:
+            self.output.setPlainText(self.t("An Al Baa Linux build is already in progress. Wait for it to finish."))
+            return
+        if not self.linux_builder_tools_are_ready():
+            self.main_splitter.widget(1).show()
+            self.output.setPlainText(
+                self.t("Al Baa Linux builder tools aren't fully set up. First click: Install Builder Tools.\n"
+                       "If you just installed WSL2 on Windows, restart the device and click Install again.")
+            )
+            QMessageBox.warning(
+                self, self.t("Builder Tools Not Ready"),
+                self.t("Can't build Al Baa Linux right now.\n\n"
+                       "Click «Install Builder Tools» and complete every step first. "
+                       "You may need to restart Windows.")
+            )
+            return
+        ok, message = self.check_linux_build_disk_space()
+        if not ok:
+            self.main_splitter.widget(1).show()
+            self.output.setPlainText(message)
+            QMessageBox.warning(self, self.t("Not Enough Disk Space"), message)
+            return
+
+        output_dir = self.linux_builder_output_dir()
+        os.makedirs(output_dir, exist_ok=True)
+        output_iso_path = os.path.join(output_dir, albaa_linux.ISO_FILENAME)
+        output_iso_wsl_path = self.windows_path_to_wsl(output_iso_path)
+
+        wallpaper_base64 = ""
+        wallpaper_path = os.path.join(os.path.dirname(__file__), "..", "assets", "albaa.png")
+        if os.path.isfile(wallpaper_path):
+            with open(wallpaper_path, "rb") as file:
+                wallpaper_base64 = base64.b64encode(file.read()).decode("ascii")
+
+        self.main_splitter.widget(1).show()
+        self.output.setPlainText(
+            self.t("Starting the Al Baa Linux build inside WSL2...\n"
+                   "This produces a full Ubuntu-based ISO and can take a long time.\n\n")
+            + (message + "\n\n" if message else "")
+        )
+        process = QProcess(self)
+        self.linux_iso_build_process = process
+        self.linux_build_iso_button.setEnabled(False)
+        self.linux_builder_tools_button.setEnabled(False)
+        self.linux_build_iso_button.setText(self.t("… Building ISO"))
+        self.linux_iso_progress.setToolTip(self.t("Building Al Baa Linux ISO"))
+        self.linux_iso_progress.show()
+        process.setProgram("wsl.exe")
+        process.setArguments([
+            "-d", "Ubuntu", "-u", "root", "--", "bash", "-lc",
+            albaa_linux.lb_build_script(output_iso_wsl_path, wallpaper_base64),
+        ])
+        process.readyReadStandardOutput.connect(self.read_linux_build_output)
+        process.readyReadStandardError.connect(self.read_linux_build_output)
+        process.errorOccurred.connect(self.linux_build_error)
+        process.finished.connect(self.linux_build_finished)
+        process.start()
+
+    def read_linux_build_output(self):
+        process = self.linux_iso_build_process
+        if process is None:
+            return
+        data = bytes(process.readAllStandardOutput()) + bytes(process.readAllStandardError())
+        if data:
+            self.output.appendPlainText(data.decode("utf-8", errors="replace").rstrip())
+
+    def linux_build_error(self, _error):
+        if self.linux_iso_build_process is not None:
+            self.output.appendPlainText(
+                "\n" + self.t("Could not start WSL2/live-build. Make sure they're installed inside WSL.")
+            )
+            self.linux_iso_build_process.deleteLater()
+            self.linux_iso_build_process = None
+        self.linux_build_iso_button.setEnabled(True)
+        self.linux_builder_tools_button.setEnabled(True)
+        self.linux_build_iso_button.setText(self.t("▣ Build Al Baa Linux ISO"))
+        self.linux_iso_progress.hide()
+        QMessageBox.critical(
+            self, self.t("Could Not Build Al Baa Linux"),
+            self.t("Could not run WSL2 or live-build. Click «Install Builder Tools» and try again.")
+        )
+
+    def linux_build_finished(self, exit_code, _status):
+        output_dir = self.linux_builder_output_dir()
+        if exit_code == 0:
+            iso_path = os.path.join(output_dir, albaa_linux.ISO_FILENAME)
+            QSettings("AlBaa", "AlBaaIDE").setValue("linux_builder_last_build_path", iso_path)
+            message = self.t("Al Baa Linux ISO built successfully:\n{path}", path=iso_path)
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.information(self, self.t("Al Baa Linux Built"), message)
+            try:
+                os.startfile(output_dir)
+            except OSError:
+                pass
+        else:
+            message = self.t(
+                "Al Baa Linux build failed with exit code {code}. Check the live-build log in the output.",
+                code=exit_code,
+            )
+            self.output.appendPlainText("\n" + message)
+            QMessageBox.critical(self, self.t("Al Baa Linux Build Failed"), message)
+        if self.linux_iso_build_process is not None:
+            self.linux_iso_build_process.deleteLater()
+            self.linux_iso_build_process = None
+        self.linux_build_iso_button.setEnabled(True)
+        self.linux_builder_tools_button.setEnabled(True)
+        self.linux_build_iso_button.setText(self.t("▣ Build Al Baa Linux ISO"))
+        self.linux_iso_progress.hide()
+
     def new_file(self):
         self.add_editor_tab().setFocus()
         return
@@ -3754,40 +4449,34 @@ class ArabicPyIDE(QMainWindow):
             self.output.setPlainText(self.t("Could not save the file:\n{error}", error=error))
 
     def find_text(self):
+        """Focus the title bar's search box -- the only find UI now, no second bar."""
         self.restore_sidebar_explorer_content()
-        self.find_bar.show()
         selected = self.editor.textCursor().selectedText()
         if selected:
-            self.find_input.setText(selected)
-        self.find_status.clear()
-        self.find_input.setFocus()
-        self.find_input.selectAll()
-
-    def hide_find_bar(self):
-        self.find_bar.hide()
-        self.editor.setFocus()
+            self.title_search_box.setText(selected)
+        self.title_search_box.setFocus()
+        self.title_search_box.selectAll()
+        self.set_active_activity(self.activity_buttons[1])
 
     def find_next(self):
-        text = self.find_input.text()
+        text = self.title_search_box.text()
         if not text:
-            self.find_status.setText(self.t("Type a word to search"))
             return
         found = self.editor.document().find(text, self.editor.textCursor())
         if found.isNull():
             found = self.editor.document().find(text)
         if found.isNull():
-            self.find_status.setText(self.t("No results"))
+            QToolTip.showText(
+                self.title_search_box.mapToGlobal(self.title_search_box.rect().bottomLeft()),
+                self.t("No results"),
+                self.title_search_box,
+            )
             return
         self.editor.setTextCursor(found)
         self.editor.ensureCursorVisible()
-        self.find_status.setText(self.t("Found"))
 
     def search_from_title_bar(self):
-        """The title bar's quick-search box reuses the in-editor find logic."""
-        text = self.title_search_box.text()
-        if not text:
-            return
-        self.find_input.setText(text)
+        """Enter in the title bar's search box jumps to the next match."""
         self.find_next()
 
     def run_code(self):
