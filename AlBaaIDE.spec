@@ -1,10 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import glob
+import os
+
+
+engine_binaries = [
+    (path, 'ai-engine')
+    for path in glob.glob('vendor/llama.cpp/*')
+    if os.path.isfile(path)
+]
+app_binaries = [('dist/AlBaaAIHost.exe', '.')] + engine_binaries
+
 
 a = Analysis(
     ['launch_ide.py'],
     pathex=[],
-    binaries=[],
+    binaries=app_binaries,
     datas=[],
     hiddenimports=[],
     hookspath=[],

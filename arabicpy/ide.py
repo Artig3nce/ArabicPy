@@ -1,6 +1,7 @@
 import contextlib
 import base64
 import ctypes
+import hashlib
 import html
 import io
 import math
@@ -43,6 +44,8 @@ from .android_designer import AndroidDesigner
 from .tauri_export import export_tauri_project
 from .ai import DEFAULT_MODEL, system_prompt_for, reply as albaa_ai_reply
 from .ai_server import AlBaaAIServer, local_ipv4
+from .updater import installer_asset, is_newer_version
+from .version import __version__
 from .embedded_ai import EMBEDDED_BASE_URL, MODELS, llama_server_path, model_path, server_arguments
 from .errors import format_error
 from .rag import (
@@ -749,6 +752,105 @@ class ArabicPyIDE(QMainWindow):
             highlighter.set_theme(self.ide_dark)
         self.settings_button.set_dark_theme(self.ide_dark)
         self.apply_elevation_effects()
+        self.update_manager = QNetworkAccessManager(self)
+        self.update_reply = None
+        self.update_stream = None
+        self.update_asset = None
+        if getattr(sys, "frozen", False) and os.name == "nt":
+            QTimer.singleShot(1500, self.check_for_updates)
+
+    def check_for_updates(self):
+        """Check GitHub Releases in the background each time the packaged IDE starts."""
+        request = QNetworkRequest(QUrl("https://api.github.com/repos/Artig3nce/ArabicPy/releases/latest"))
+        request.setRawHeader(b"Accept", b"application/vnd.github+json")
+        request.setRawHeader(b"User-Agent", b"AlBaa-Updater")
+        request.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+        )
+        self.update_reply = self.update_manager.get(request)
+        self.update_reply.finished.connect(self.update_check_finished)
+
+    def update_check_finished(self):
+        reply = self.update_reply
+        self.update_reply = None
+        if reply is None:
+            return
+        try:
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                return
+            release = json.loads(bytes(reply.readAll()).decode("utf-8"))
+            if not is_newer_version(str(release.get("tag_name", "")), __version__):
+                return
+            asset = installer_asset(release)
+            if asset and asset.get("browser_download_url"):
+                self.download_update(asset)
+        except (TypeError, ValueError, UnicodeError):
+            return
+        finally:
+            reply.deleteLater()
+
+    def download_update(self, asset):
+        """Download a newer installer to per-user storage without blocking the UI."""
+        update_dir = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "AlBaa" / "updates"
+        update_dir.mkdir(parents=True, exist_ok=True)
+        destination = update_dir / str(asset["name"])
+        try:
+            self.update_stream = destination.open("wb")
+        except OSError:
+            return
+        self.update_asset = {**asset, "destination": str(destination)}
+        request = QNetworkRequest(QUrl(str(asset["browser_download_url"])))
+        request.setRawHeader(b"User-Agent", b"AlBaa-Updater")
+        request.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+        )
+        self.update_reply = self.update_manager.get(request)
+        self.update_reply.readyRead.connect(self.write_update_data)
+        self.update_reply.finished.connect(self.update_download_finished)
+
+    def write_update_data(self):
+        if self.update_reply is not None and self.update_stream is not None:
+            self.update_stream.write(bytes(self.update_reply.readAll()))
+
+    def update_download_finished(self):
+        reply, stream, asset = self.update_reply, self.update_stream, self.update_asset
+        self.update_reply = self.update_stream = self.update_asset = None
+        if reply is None or stream is None or asset is None:
+            return
+        self.write_update_tail(reply, stream)
+        destination = Path(asset["destination"])
+        try:
+            valid = reply.error() == QNetworkReply.NetworkError.NoError
+            expected_size = int(asset.get("size", 0) or 0)
+            valid = valid and (not expected_size or destination.stat().st_size == expected_size)
+            digest = str(asset.get("digest", "") or "")
+            if digest.startswith("sha256:"):
+                actual = hashlib.sha256(destination.read_bytes()).hexdigest()
+                valid = valid and actual.lower() == digest.split(":", 1)[1].lower()
+            if valid:
+                self.install_downloaded_update(destination)
+            else:
+                destination.unlink(missing_ok=True)
+        except OSError:
+            destination.unlink(missing_ok=True)
+        finally:
+            reply.deleteLater()
+
+    @staticmethod
+    def write_update_tail(reply, stream):
+        stream.write(bytes(reply.readAll()))
+        stream.close()
+
+    def install_downloaded_update(self, installer):
+        """Start Inno Setup silently, then leave so it can replace and reopen us."""
+        arguments = [
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+            "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS",
+        ]
+        if QProcess.startDetached(str(installer), arguments):
+            QTimer.singleShot(500, QApplication.instance().quit)
 
     def show_fitted(self):
         """Open at a useful normal size while staying inside the desktop."""
@@ -1081,22 +1183,6 @@ class ArabicPyIDE(QMainWindow):
         self.editor = CodeEditor()
         self.editor.set_text_direction(self.direction)
         self.highlighter = ArabicPyHighlighter(self.editor.document())
-        self.editor.setPlainText(
-            'الرقم_الأول = 20\n'
-            'الرقم_الثاني = 5\n\n'
-            'جمع = الرقم_الأول + الرقم_الثاني\n'
-            'الطرح = الرقم_الأول - الرقم_الثاني\n'
-            'الضرب = الرقم_الأول * الرقم_الثاني\n'
-            'القسمة = الرقم_الأول / الرقم_الثاني\n\n'
-            'اطبع("جمع:")\n'
-            'اطبع(جمع)\n'
-            'اطبع("الطرح:")\n'
-            'اطبع(الطرح)\n'
-            'اطبع("الضرب:")\n'
-            'اطبع(الضرب)\n'
-            'اطبع("القسمة:")\n'
-            'اطبع(القسمة)'
-        )
         self.editor.document().modificationChanged.connect(self.update_tab_title)
         self.enable_autosave(self.editor)
         self.editor.undoAvailable.connect(self.update_undo_redo_buttons)

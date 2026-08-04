@@ -1,0 +1,59 @@
+name: Build Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip pyinstaller PySide6 .
+
+      - name: Verify release version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $declared = python -c "from arabicpy.version import __version__; print(__version__)"
+          if ($declared -ne $version) {
+            throw "Tag version $version does not match arabicpy/version.py ($declared)."
+          }
+
+      - name: Prepare embedded AI engine
+        shell: pwsh
+        run: .\prepare_embedded_ai.ps1
+
+      - name: Build application bundle
+        shell: pwsh
+        run: .\build_exe.ps1
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" ".\AlBaaInstaller.iss"
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $installer = ".\dist\installer\AlBaa-Setup-$version-x64.exe"
+          gh release create "${{ github.ref_name }}" $installer --generate-notes --title "Al-Baa $version"
