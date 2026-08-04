@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from .errors import ArabicPyError
 
 
-WIDGET_PATTERN = re.compile(r'^(?P<name>[\w\u0600-\u06ff]+)\s*=\s*(?P<kind>نص|زر|حقل)\("(?P<text>.*)"\)\s*$')
+WIDGET_PATTERN = re.compile(r'^(?P<name>[\w\u0600-\u06ff]+)\s*=\s*(?P<kind>نص|زر|حقل|فيديو)\("(?P<text>.*)"\)\s*$')
 NUMBERED_TEXT_PATTERN = re.compile(
     r'^نص\s+(?P<number>\d+)\s*=\s*(?P<text>.+?)\s*$'
 )
@@ -548,7 +548,10 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
         for target, _value in event.actions
     )
     has_pages = has_page_navigation or bool(program.bottom_navigation) or has_ai
-    widget_classes = {"نص": "Label", "زر": "Button", "حقل": "TextInput", "كلمة_مرور": "TextInput"}
+    widget_classes = {
+        "نص": "Label", "زر": "Button", "حقل": "TextInput",
+        "كلمة_مرور": "TextInput", "فيديو": "Video",
+    }
     imports = sorted({
         widget_classes[widget.kind] for widget in program.widgets if widget.kind in widget_classes
     })
@@ -654,14 +657,19 @@ def generate_kivy(source, ai_server_url=None, ai_token=None):
         widget_class = widget_classes[widget.kind]
         if widget.kind == "نص" and widget.background_color:
             widget_class = "ColoredLabel"
-        if widget.kind == "حقل" and widget.natural_syntax:
+        if widget.kind == "فيديو":
+            option_parts = [
+                f"source={widget.text!r}", "state='play'", "options={'eos': 'loop'}",
+                "allow_fullscreen=True",
+            ]
+        elif widget.kind == "حقل" and widget.natural_syntax:
             option_parts = [f"hint_text={widget.text!r}", "text=''" ]
         else:
             option_parts = [f"text={widget.text!r}"]
-        if widget.text_color:
+        if widget.text_color and widget.kind != "فيديو":
             color_property = "foreground_color" if widget.kind in ("حقل", "كلمة_مرور") else "color"
             option_parts.append(f"{color_property}={hex_to_rgba(widget.text_color)!r}")
-        if widget.background_color:
+        if widget.background_color and widget.kind != "فيديو":
             option_parts.append(
                 f"background_color={hex_to_rgba(widget.background_color)!r}"
             )
@@ -874,16 +882,19 @@ def darken_hex(color, amount=0.12):
     return f"#{red:02X}{green:02X}{blue:02X}"
 
 
-def buildozer_spec(title, ai_enabled=False):
+def buildozer_spec(title, ai_enabled=False, video_enabled=False):
     safe_title = title.replace("\n", " ").strip() or "تطبيق الباء"
+    requirements = "python3==3.12.9,hostpython3==3.12.9,kivy"
+    if video_enabled:
+        requirements += ",ffpyplayer"
     return f"""[app]
 title = {safe_title}
 package.name = albaaapp
 package.domain = org.albaa
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas
+source.include_exts = py,png,jpg,jpeg,kv,atlas,mp4,m4v,mov,webm,mkv
 version = 0.1
-requirements = python3==3.12.9,hostpython3==3.12.9,kivy
+requirements = {requirements}
 orientation = portrait
 fullscreen = 0
 {('android.permissions = INTERNET' if ai_enabled else '')}
@@ -960,7 +971,11 @@ def export_android_project(source, directory, ai_server_url=None, ai_token=None)
     with open(main_path, "w", encoding="utf-8", newline="\n") as file:
         file.write(generate_kivy(source, ai_server_url, ai_token))
     with open(spec_path, "w", encoding="utf-8", newline="\n") as file:
-        file.write(buildozer_spec(program.title, bool(ai_server_url and ai_token)))
+        file.write(buildozer_spec(
+            program.title,
+            bool(ai_server_url and ai_token),
+            any(widget.kind == "فيديو" for widget in program.widgets),
+        ))
     os.makedirs(os.path.dirname(workflow_path), exist_ok=True)
     with open(workflow_path, "w", encoding="utf-8", newline="\n") as file:
         file.write(github_actions_workflow())

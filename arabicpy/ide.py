@@ -767,8 +767,8 @@ class ArabicPyIDE(QMainWindow):
         #windowButton:hover { background: #333333; } #closeButton:hover { background: #c42b1c; color: white; }
         #menuBar, #commandBar { background: #252526; border-bottom: 1px solid #333333; }
         #menuItem { background: transparent; border: none; padding: 4px 10px; color: #d4d4d4; }
-        #menuItem:hover, #toolButton:hover { background: #37373d; }
-        #toolButton { background: transparent; border: none; border-radius: 3px; padding: 6px 10px; color: #d4d4d4; }
+        #menuItem:hover, #toolButton:hover, #themeButton:hover { background: #37373d; }
+        #toolButton, #themeButton { background: transparent; border: none; border-radius: 3px; padding: 6px 10px; color: #d4d4d4; }
         QMenu { background: #252526; color: #cccccc; border: 1px solid #454545; border-radius: 6px; padding: 4px; }
         QMenu::item { background: transparent; padding: 7px 28px 7px 14px; border-radius: 4px; margin: 1px 2px; }
         QMenu::item:selected { background: #094771; color: #ffffff; }
@@ -794,8 +794,8 @@ class ArabicPyIDE(QMainWindow):
         #aiSendButton:hover { background: #1594E8; }
         #aiSendButton:pressed, #aiSendButton:focus { outline: none; }
         #aiSendButton:disabled { background: #1c3a4d; }
-        #themeButton, #aiCloseButton { background: transparent; color: white; border: none; border-radius: 4px; font-size: 15px; padding: 5px 9px; }
-        #themeButton:hover, #aiCloseButton:hover { background: rgba(255,255,255,35); }
+        #aiCloseButton { background: transparent; color: white; border: none; border-radius: 4px; font-size: 15px; padding: 5px 9px; }
+        #aiCloseButton:hover { background: rgba(255,255,255,35); }
         #activityBar { background: #333333; min-width: 48px; max-width: 48px; }
         #activityButton { background: transparent; color: #bdbdbd; border: none; border-radius: 0; font-size: 20px; padding: 11px; }
         #activityButton:hover { background: #454545; color: white; } #activityButton:checked { border-left: 2px solid #007acc; color: white; }
@@ -975,6 +975,12 @@ class ArabicPyIDE(QMainWindow):
         menu_layout.addWidget(self.make_menu_button("Run", [
             ("Run Program", self.run_code), ("Clear Output", self.clear_output),
         ]))
+        menu_layout.addWidget(self.make_menu_button("Android", [
+            ("New Android Project", self.new_android_file),
+            ("Export Android Project...", self.export_android),
+            ("Install APK Tools", self.install_apk_tools),
+            ("Build APK", self.build_android_apk),
+        ]))
         menu_layout.addWidget(self.make_menu_button("Help", [
             ("About Al-Baa", self.show_about),
         ]))
@@ -1036,6 +1042,12 @@ class ArabicPyIDE(QMainWindow):
         self.package_button = self.make_button("▣ Cross-Platform Bundle", self.export_cross_platform)
         self.package_button.setToolTip(self.t("Generate a project for Browser, Windows, Linux, macOS, Android, and iOS"))
         command_layout.addWidget(self.package_button)
+        self.apk_tools_button = self.make_button("↓ Install APK Tools", self.install_apk_tools)
+        self.apk_tools_button.setToolTip(self.t("Install the local Android APK build requirements"))
+        command_layout.addWidget(self.apk_tools_button)
+        self.apk_button = self.make_button("▣ Build APK", self.build_android_apk)
+        self.apk_button.setToolTip(self.t("Export the Android project and build a debug APK"))
+        command_layout.addWidget(self.apk_button)
         self.designer_button = self.make_button("Designer", self.toggle_android_designer)
         command_layout.addWidget(self.designer_button)
         command_layout.addWidget(self.ai_button)
@@ -3158,7 +3170,7 @@ class ArabicPyIDE(QMainWindow):
         self.apk_progress.show()
         process.setProgram("wsl.exe")
         process.setArguments([
-            "--cd", self.android_project_path,
+            "-d", "Ubuntu", "--cd", self.android_project_path,
             "bash", "-lc",
             "BUILDOZER=/opt/albaa-buildozer/bin/buildozer; "
             "if [ ! -x \"$BUILDOZER\" ]; then BUILDOZER=$(command -v buildozer); fi; "
@@ -3176,7 +3188,7 @@ class ArabicPyIDE(QMainWindow):
         check = QProcess(self)
         check.setProgram("wsl.exe")
         check.setArguments([
-            "-u", "root", "--", "test", "-x",
+            "-d", "Ubuntu", "-u", "root", "--", "test", "-x",
             "/opt/albaa-buildozer/bin/buildozer",
         ])
         check.start()
@@ -3417,7 +3429,7 @@ class ArabicPyIDE(QMainWindow):
             self.android_build_process = None
         self.apk_button.setEnabled(True)
         self.apk_tools_button.setEnabled(True)
-        self.apk_button.setText("▣ Build APK")
+        self.apk_button.setText(self.t("▣ Build APK"))
         self.apk_progress.hide()
         QMessageBox.critical(
             self, self.t("Could Not Build APK"),
@@ -3438,7 +3450,7 @@ class ArabicPyIDE(QMainWindow):
             self.android_build_process = None
         self.apk_button.setEnabled(True)
         self.apk_tools_button.setEnabled(True)
-        self.apk_button.setText("▣ Build APK")
+        self.apk_button.setText(self.t("▣ Build APK"))
         self.apk_progress.hide()
 
     def new_file(self):

@@ -101,6 +101,12 @@ class DesignerItem(QFrame):
         elif widget_model.kind == "دردشة":
             control = self._build_chat_preview()
             self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        elif widget_model.kind == "فيديو":
+            source = widget_model.text or _t("Video source", self.language)
+            control = QLabel(f"▶\n{source}")
+            control.setAlignment(Qt.AlignCenter)
+            control.setWordWrap(True)
+            control.setMinimumHeight(140)
         else:
             control = QLineEdit()
             control.setPlaceholderText(widget_model.text)
@@ -347,6 +353,7 @@ class AndroidDesigner(QWidget):
         palette_layout.addWidget(QLabel(self.t("Elements"), objectName="designerTitle"))
         for kind, label in (
             ("نص", self.t("+ Text")), ("زر", self.t("+ Button")), ("حقل", self.t("+ Input Field")),
+            ("فيديو", self.t("+ Video")),
             ("دردشة", self.t("+ AI Chat")),
         ):
             button = QPushButton(label, objectName="designerTool")
@@ -563,9 +570,13 @@ class AndroidDesigner(QWidget):
         self.page_placeholder.setVisible(not page_items)
 
     def add_widget(self, kind):
-        prefixes = {"نص": "Text", "زر": "Button", "حقل": "Field", "دردشة": "Chat"}
+        prefixes = {
+            "نص": "Text", "زر": "Button", "حقل": "Field",
+            "فيديو": "Video", "دردشة": "Chat",
+        }
         defaults = {
             "نص": self.t("New Text"), "زر": self.t("New Button"), "حقل": self.t("Type here"),
+            "فيديو": "video.mp4",
             "دردشة": "",
         }
         used = {widget.name for widget in self.program.widgets}
@@ -576,7 +587,7 @@ class AndroidDesigner(QWidget):
         # The chat widget's colors are fixed in the generated app (matches the
         # IDE's own AI panel), so it doesn't participate in text/background
         # color inheritance the way text/button/field widgets do.
-        if kind != "دردشة":
+        if kind not in ("دردشة", "فيديو"):
             matching_widget = next(
                 (item for item in reversed(self.program.widgets) if item.kind == kind),
                 None,
@@ -657,6 +668,9 @@ class AndroidDesigner(QWidget):
                 # theme's button/surface colors respectively.
                 widget.text_color = theme["button"]
                 widget.background_color = theme["surface"]
+            elif widget.kind == "فيديو":
+                widget.text_color = None
+                widget.background_color = None
             else:
                 widget.text_color = theme["text"]
                 widget.background_color = theme["surface"]

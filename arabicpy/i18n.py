@@ -41,6 +41,10 @@ TRANSLATIONS = {
     "Push App to GitHub": "رفع التطبيق إلى GitHub",
     "Build APK via GitHub": "إنشاء APK عبر GitHub",
     "Build iOS App via GitHub": "إنشاء تطبيق iOS عبر GitHub",
+    "Android": "Android",
+    "Export Android Project...": "تصدير مشروع Android...",
+    "Install APK Tools": "تثبيت أدوات APK",
+    "Build APK": "إنشاء APK",
     "Help": "تعليمات",
     "About Al-Baa": "حول الباء",
 
@@ -399,6 +403,8 @@ TRANSLATIONS = {
         "بدء إصلاح مخزن مكوّنات Windows عبر DISM ثم SFC...\n"
         "قد تستغرق العملية وقتًا طويلًا. لا تغلق نافذة PowerShell.\n\n",
     "↓ Install APK Tools": "↓ تثبيت أدوات APK",
+    "Install the local Android APK build requirements": "تثبيت متطلبات إنشاء APK محليًا",
+    "Export the Android project and build a debug APK": "تصدير مشروع Android وإنشاء ملف APK تجريبي",
     "Could not start WSL2/Buildozer. Make sure they're installed and on PATH inside WSL.":
         "تعذر بدء WSL2/Buildozer. تأكد من تثبيتهما وإضافتهما إلى PATH داخل WSL.",
     "Could Not Build APK": "تعذر إنشاء APK",
@@ -437,6 +443,8 @@ TRANSLATIONS = {
     "+ Text": "+ نص",
     "+ Button": "+ زر",
     "+ Input Field": "+ حقل إدخال",
+    "+ Video": "+ فيديو",
+    "Video source": "مصدر الفيديو",
     "Phone": "هاتف",
     "Tablet": "جهاز لوحي",
     "Desktop": "حاسوب",

@@ -75,6 +75,26 @@ def test_exports_authenticated_lan_ai_client(tmp_path):
     assert "android.permissions = INTERNET" in spec
 
 
+def test_video_widget_is_parsed_generated_and_packaged(tmp_path):
+    source = '''تطبيق "Video App"
+intro = فيديو("media/intro.mp4")
+'''
+
+    program = parse_android(source)
+    assert program.widgets[0].kind == "فيديو"
+    assert program.widgets[0].text == "media/intro.mp4"
+
+    python_code = generate_kivy(source)
+    assert "from kivy.uix.video import Video" in python_code
+    assert "Video(source='media/intro.mp4'" in python_code
+    assert "allow_fullscreen=True" in python_code
+
+    export_android_project(source, tmp_path)
+    spec = (tmp_path / "buildozer.spec").read_text(encoding="utf-8")
+    assert "ffpyplayer" in spec
+    assert "mp4" in spec
+
+
 def test_element_colors_are_generated_for_kivy():
     source = """تطبيق "ألوان"
 رسالة = نص("مرحباً")
