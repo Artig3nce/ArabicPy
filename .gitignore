@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Unrelated third-party clones kept locally for reference, not part of this project
+code-oss/
+kate/
+
+# Local scratch / junk
+New folder/
+New folder (2)/
+sorry/
+wtf/
+اشفث/
+صwwhy/
+صاشف/
+╪╡╪º╪┤┘ü/
+t/
+w/
+m/
+squire/
+dlophon/
