@@ -2,12 +2,15 @@ __pycache__/
 *.pyc
 *.egg-info/
 .venv/
-build/
-dist/
+/build/
+/dist/
 
-# Unrelated third-party clones kept locally for reference, not part of this project
-code-oss/
-kate/
+# Reinstallable deps, compiled build output, and broken nested .git dirs
+# inside the vendored code-oss/kate source trees -- not authored source.
+code-oss/node_modules/
+code-oss/.git/
+kate/build/
+kate/.git/
 
 # Local scratch / junk
 New folder/
